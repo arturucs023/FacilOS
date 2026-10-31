@@ -8,6 +8,7 @@
 #include "seg.h"
 #include "proc.h"
 #include "pag.h"
+#include "ipc.h"
 
 /* v1.9: descriptores y heap son POR PROCESO (ver proc.h). El bloque del
    proceso con el que estamos se toma de proc_actual, de modo que la
@@ -919,8 +920,7 @@ __attribute__((optimize("O0"))) static void sc_37(regs_t *r, int di)
 typedef void (*sc_fn_t)(regs_t *r, int di);
 #define SC_N 40
 static sc_fn_t const sc_tabla[SC_N] = {
-    [0] = sc_00,
-    [1] = sc_01,
+    [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
     [3] = sc_03,
     [4] = sc_04,
@@ -953,8 +953,8 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [31] = sc_31,
     [32] = sc_32,
     [33] = sc_33,
-    [34] = 0,
-    [35] = 0,
+    [34] = sc_ipc_enviar,
+    [35] = sc_ipc_recibir,
     [36] = sc_36,
     [37] = sc_37,
     [38] = 0,
@@ -995,8 +995,8 @@ static const char *const sc_nombre[SC_N] = {
     [31] = "esperar",
     [32] = "ceder",
     [33] = "info_memoria",
-    [34] = "reservada",
-    [35] = "reservada",
+    [34] = "ipc_enviar",
+    [35] = "ipc_recibir",
     [36] = "info_memoria2",
     [37] = "proc_stat",
     [38] = "reservada",

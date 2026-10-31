@@ -79,6 +79,18 @@ typedef struct {
     uint32_t ticks_cpu;         /* ticks PIT visto en ejecucion */
     uint32_t cedes;             /* veces que se le cedio la CPU */
     uint32_t pico_marcos;       /* maximo nmarcos simultaneo */
+
+    /* Buzon IPC (v2.0, entrega 5): cola FIFO de mensajes. */
+#define IPC_NMSG 16
+#define IPC_MAX 64
+    struct {
+        int ocupado;
+        int emisor;
+        uint32_t len;
+        uint8_t datos[IPC_MAX];
+    } buzon[IPC_NMSG];
+    int buz_ini, buz_fin, buz_n;
+    int espera_msg;             /* bloqueado esperando mensaje */
 } proc_t;
 
 extern proc_t proc_tareas[1 + MAXPROC];
@@ -106,6 +118,7 @@ void proc_inicia(void);
 void proc_cede(void);                 /* voluntaria; si no hay nadie, sigue */
 void proc_bloquea_tecla(void);
 void proc_bloquea_ticks(uint32_t hasta);
+void proc_bloquea_msg(void);
 int  proc_espera_hijo(int pid);
 void proc_muere(int rc);              /* no retorna */
 void proc_guarda_usuario(proc_t *p, const void *marco);

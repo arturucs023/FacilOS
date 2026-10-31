@@ -192,6 +192,18 @@ static inline int sys_proc_stat(int pid, unsigned int *buf) {
     return sys_llama(37, pid, (int)buf, 0);
 }
 
+/* v2.0 - IPC por buzones (ver ipc.h del nucleo).
+   enviar: 0 ok, -1 destino/args mal, -2 buzon lleno (no bloquea).
+   recibir: len real (>max = truncado a max), -1 args mal (bloquea si vacio).
+   34-35 reservadas hasta esta entrega; ABI 0-33 intacto. */
+static inline int sys_ipc_enviar(int dst_pid, const void *ptr, int len) {
+    return sys_llama(34, dst_pid, len, (int)ptr);
+}
+
+static inline int sys_ipc_recibir(void *buf, int max, int *emisor) {
+    return sys_llama(35, (int)buf, max, (int)emisor);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2

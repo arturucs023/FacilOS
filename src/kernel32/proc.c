@@ -1,5 +1,6 @@
 #include "proc.h"
 #include "pag.h"
+#include "ipc.h"
 #include "libc.h"
 #include "cpu.h"
 #include "seg.h"
@@ -225,6 +226,7 @@ void proc_fusiona(void) {
         if (!p->usado || p->estado != EST_FIN) continue;
         if (p == proc_actual) continue;
         if (p->reciclable) continue;         /* ya liberado */
+        ipc_limpia_proceso(p);            /* descarta mensajes pendientes */
         /* Chequeo de destruccion: las paginas de usuario presentes en las
            regiones registradas deben coincidir con los marcos anotados.
            Una diferencia indica fuga (mapeado sin anotar) o residuo. */
@@ -432,6 +434,12 @@ void proc_bloquea_ticks(uint32_t hasta) {
     }
     bloquea();
     if (proc_actual) proc_actual->dormir_hasta = 0;
+}
+
+/* Bloqueo generico para esperas con despertar dedicado (IPC): el llamante
+   pone modo=0 y su flag de espera antes de entrar. */
+void proc_bloquea_msg(void) {
+    bloquea();
 }
 
 int proc_espera_hijo(int pid) {

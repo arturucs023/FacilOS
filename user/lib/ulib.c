@@ -546,6 +546,12 @@ int u_info_memoria2(unsigned int *v8) { return sys_info_memoria2(v8); }
 int u_proc_stat(int pid, unsigned int *v5) {
     return sys_proc_stat(pid, v5);
 }
+int u_ipc_enviar(int dst, const void *ptr, int len) {
+    return sys_ipc_enviar(dst, ptr, len);
+}
+int u_ipc_recibir(void *buf, int max, int *emisor) {
+    return sys_ipc_recibir(buf, max, emisor);
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {
