@@ -223,6 +223,7 @@ for _i, _nom in enumerate(_programas):
     haz_programa(_nom, _i == 0, al_disco=(WANT_DISK))
 _apps3 = [
     ("procesos32", ["procesos32.c"], True),
+    ("mem32", ["mem32.c"], True),
     ("planificador32", ["planificador32.c"], True),
     ("contador32", ["contador32.c"], True),
     ("dormir32", ["dormir32.c"], True),

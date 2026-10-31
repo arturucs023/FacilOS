@@ -35,8 +35,15 @@ static void info_memoria(void) {
 void kmain(void)
 {
     uart_init();
-    uart_puts("FacilOS32 v1.9 arranca.\r\n");
+    uart_puts("FacilOS32 v2.0 arranca.\r\n");
     mm_init();
+    {
+        uint32_t ku, kp, kd, kc;
+        int aut = mm_autoprueba();
+        kmalloc_info(&ku, &kp, &kd, &kc);
+        kprintf("kheap: autoprueba=%d usados=%u pico=%u dobles=%u corr=%u\r\n",
+                aut, ku, kp, kd, kc);
+    }
     pag_inicia();
     info_memoria();
     proc_inicia();

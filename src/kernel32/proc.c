@@ -186,12 +186,61 @@ void proc_libera(proc_t *p) {
 /* Recoge los procesos terminados: devuelve sus marcos al pool. Nunca se
    hace desde el propio proceso que muere (su pila de kernel esta en uno
    de esos marcos): lo llama el planificador desde otro contexto. */
+static uint32_t fugas_detectadas = 0;
+uint32_t proc_fugas(void) { return fugas_detectadas; }
+
+/* Registra una region virtual del proceso (0 ok, -1 tabla llena). */
+int proc_vma_add(proc_t *p, uint32_t ini, uint32_t tam, uint32_t tipo) {
+    int i;
+    if (!p || !tam) return -1;
+    if (tipo == VMAR_HEAP) {
+        /* El heap crece monotono desde 0x300000 pero con brk sin alinear
+           los tramos se solapan: union con la region existente. */
+        for (i = 0; i < p->nvmars; i++) {
+            if (p->vmars[i].tipo == VMAR_HEAP &&
+                ini <= p->vmars[i].ini + p->vmars[i].tam) {
+                uint32_t fin = ini + tam;
+                uint32_t fin_old = p->vmars[i].ini + p->vmars[i].tam;
+                if (fin > fin_old)
+                    p->vmars[i].tam = fin - p->vmars[i].ini;
+                return 0;
+            }
+        }
+    }
+    if (p->nvmars >= VMAR_N) return -1;
+    p->vmars[p->nvmars].ini = ini;
+    p->vmars[p->nvmars].tam = tam;
+    p->vmars[p->nvmars].tipo = tipo;
+    p->nvmars++;
+    return 0;
+}
+
 void proc_fusiona(void) {
     for (int i = 1; i <= MAXPROC; i++) {
         proc_t *p = &proc_tareas[i];
         if (!p->usado || p->estado != EST_FIN) continue;
         if (p == proc_actual) continue;
         if (p->reciclable) continue;         /* ya liberado */
+        /* Chequeo de destruccion: las paginas de usuario presentes en las
+           regiones registradas deben coincidir con los marcos anotados.
+           Una diferencia indica fuga (mapeado sin anotar) o residuo. */
+        {
+            uint32_t presentes = 0;
+            for (int v = 0; v < p->nvmars; v++)
+                presentes += pag_cuenta_rango(p->di, p->vmars[v].ini,
+                                              p->vmars[v].tam);
+            if (presentes != (uint32_t)p->nmarcos) {
+                fugas_detectadas++;
+                kprintf("FUGA pid=%d presentes=%u anotados=%d nvmars=%d\n",
+                        p->pid, presentes, p->nmarcos, p->nvmars);
+                for (int v = 0; v < p->nvmars; v++)
+                    kprintf("  vma%d tipo=%u ini=%x tam=%x pres=%u\n", v,
+                            p->vmars[v].tipo, p->vmars[v].ini,
+                            p->vmars[v].tam,
+                            pag_cuenta_rango(p->di, p->vmars[v].ini,
+                                             p->vmars[v].tam));
+            }
+        }
         if (p->pila_kern >= 0) {
             proc_devuelve_pila_kernel(p->pila_kern);
             p->pila_kern = -1;

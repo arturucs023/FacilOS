@@ -33,7 +33,7 @@ static uint32_t ventana_pt[1024] __attribute__((aligned(4096)));
    decenas de procesos se agotarian las PT). */
 static unsigned pt_de_dir[PAG_MAX_PD][2];
 
-static uint8_t mapa_marcos[PAG_RAM_MAX / PAG_MARCO / 8] __attribute__((aligned(4)));
+static uint8_t mapa_marcos[PAG_RAM_MAX / PAG_MARCO / 8] __attribute__((aligned(4)));static uint8_t marco_dueno[PAG_RAM_MAX / PAG_MARCO];
 static uint8_t pd_uso[PAG_MAX_PD];
 static uint8_t pt_uso[PAG_MAX_PT];
 static uint32_t marcos_top = 0;
@@ -41,6 +41,11 @@ static uint32_t ram_total = 0;
 static int e820_ok = 0;
 static int e820_n = 0;
 static int con_paginacion = 0;
+static uint32_t usados_usuario = 0;
+static uint32_t pico_usuario = 0;
+static uint32_t doble_free = 0;
+
+static uint32_t *pt_de(uint32_t *pd, uint32_t virt);
 
 uint32_t pag_dir(unsigned i) { return (uint32_t)pd_pool[i]; }
 uint32_t pag_dir_nucleo(void) { return (uint32_t)pd_pool[0]; }
@@ -59,8 +64,10 @@ static void pon_bit(uint32_t f, int v) {
 
 static void reserva(uint32_t ini, uint32_t fin) {
     if (fin > PAG_RAM_MAX) fin = PAG_RAM_MAX;
-    for (uint32_t a = ini & ~(PAG_MARCO - 1); a < fin; a += PAG_MARCO)
+    for (uint32_t a = ini & ~(PAG_MARCO - 1); a < fin; a += PAG_MARCO) {
         pon_bit(a / PAG_MARCO, 1);
+        marco_dueno[a / PAG_MARCO] = DUENO_RESERVA;
+    }
 }
 
 static void abre(uint32_t base, uint32_t len) {
@@ -69,7 +76,10 @@ static void abre(uint32_t base, uint32_t len) {
     base &= ~(PAG_MARCO - 1);
     for (uint32_t a = base; a < base + len; a += PAG_MARCO) {
         uint32_t f = a / PAG_MARCO;
-        if (f < PAG_RAM_MAX / PAG_MARCO) pon_bit(f, 0);
+        if (f < PAG_RAM_MAX / PAG_MARCO) {
+            pon_bit(f, 0);
+            marco_dueno[f] = DUENO_LIBRE;
+        }
     }
 }
 
@@ -128,6 +138,9 @@ int32_t pag_toma_marco(void) {
     for (uint32_t f = 1; f < marcos_top; f++) {
         if (!bit_marco(f)) {
             pon_bit(f, 1);
+            marco_dueno[f] = DUENO_USUARIO;
+            usados_usuario++;
+            if (usados_usuario > pico_usuario) pico_usuario = usados_usuario;
             return (int32_t)(f * PAG_MARCO);
         }
     }
@@ -136,7 +149,53 @@ int32_t pag_toma_marco(void) {
 
 void pag_devuelve_marco(uint32_t fis) {
     if (fis >= PAG_RAM_MAX) return;
-    pon_bit(fis / PAG_MARCO, 0);
+    uint32_t f = fis / PAG_MARCO;
+    if (!bit_marco(f)) {
+        doble_free++;       /* liberar un marco ya libre: se cuenta, no corrompe */
+        return;
+    }
+    pon_bit(f, 0);
+    if (marco_dueno[f] == DUENO_USUARIO && usados_usuario > 0)
+        usados_usuario--;
+    marco_dueno[f] = DUENO_LIBRE;
+}
+
+uint32_t pag_usados_usuario(void) { return usados_usuario; }
+uint32_t pag_pico_usuario(void) { return pico_usuario; }
+uint32_t pag_doble_free(void) { return doble_free; }
+
+uint32_t pag_pd_usados(void) {
+    uint32_t n = 0;
+    for (unsigned i = 0; i < PAG_MAX_PD; i++) if (pd_uso[i]) n++;
+    return n;
+}
+
+uint32_t pag_pt_usadas(void) {
+    uint32_t n = 0;
+    for (unsigned i = 0; i < PAG_MAX_PT; i++) if (pt_uso[i]) n++;
+    return n;
+}
+
+uint32_t pag_verifica(void) {
+    uint32_t mal = 0;
+    for (uint32_t f = 0; f < marcos_top; f++) {
+        int bit = bit_marco(f);
+        int oc = marco_dueno[f] != DUENO_LIBRE;
+        if (bit != oc) mal++;
+    }
+    return mal;
+}
+
+uint32_t pag_cuenta_rango(unsigned di, uint32_t virt, uint32_t tam) {
+    uint32_t n = 0;
+    if (di >= PAG_MAX_PD) return 0;
+    for (uint32_t v = virt & ~(PAG_MARCO - 1); v < virt + tam; v += PAG_MARCO) {
+        uint32_t *pt = pt_de(pd_pool[di], v);
+        if (!pt) continue;
+        uint32_t e = pt[(v >> 12) & 0x3FF];
+        if ((e & PAG_PRESENTE) && (e & PAG_USUARIO)) n++;
+    }
+    return n;
 }
 
 uint32_t pag_marcos_libres(void) {

@@ -542,6 +542,7 @@ int u_listar(uproc_t *buf, int max) {
 int u_esperar(int pid) { return sys_esperar(pid); }
 int u_ceder(void) { return sys_ceder(); }
 int u_info_memoria(unsigned int *v5) { return sys_info_memoria(v5); }
+int u_info_memoria2(unsigned int *v8) { return sys_info_memoria2(v8); }
 
 const char *u_estado_nombre(int e) {
     switch (e) {

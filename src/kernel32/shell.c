@@ -356,7 +356,7 @@ void shell(void) {
             a1[j] = 0;
             ayuda_cmd(a1);
         } else if (!libc_strcmp(cmd, "version")) {
-            cons_puts("FacilOS32 version 1.8 - Shell 32-bit en C.\n");
+            cons_puts("FacilOS32 version 2.0 - Shell 32-bit en C.\n");
         } else if (!libc_strcmp(cmd, "quien_soy")) {
             cons_puts("Eres invitado, usuario de FacilOS32.\n");
         } else if (!libc_strcmp(cmd, "eco")) {

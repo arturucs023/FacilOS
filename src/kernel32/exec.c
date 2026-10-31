@@ -237,6 +237,9 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
        poder devolverlos al terminar el proceso */
     anota_rango(p, di, 0x200000, plano + bss);
     anota_rango(p, di, 0x2E0000, PILA_USR_PAGS * PAG_MARCO);
+    /* regiones virtuales del proceso (v2.0) */
+    proc_vma_add(p, 0x200000, plano + bss, VMAR_CODIGO);
+    proc_vma_add(p, 0x2E0000, PILA_USR_PAGS * PAG_MARCO, VMAR_PILA);
     return pid;
 }
 
@@ -442,11 +445,13 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
                                 PAG_PRESENTE | PAG_ESCRITURA | PAG_USUARIO))
                 break;
             uint32_t f;
-            if (pag_translada((unsigned)di, v, &f))
+            if (!pag_translada((unsigned)di, v, &f))
                 proc_anota_marco(proc_actual, f & ~(PAG_MARCO - 1));
         }
         if (!pag_valida_usuario((unsigned)di, nuevo, 1, 1)) break;
         *b = nuevo;
+        proc_vma_add(proc_actual, viejo & ~(PAG_MARCO - 1),
+                     nuevo - (viejo & ~(PAG_MARCO - 1)), VMAR_HEAP);
         r->eax = viejo;
         break;
     }
@@ -760,6 +765,27 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
             if (pag_escribe_usr((unsigned)di, r->ebx, v, 20)) break;
         } else {
             for (int i = 0; i < 5; i++) ((uint32_t *)r->ebx)[i] = v[i];
+        }
+        r->eax = 0;
+        break;
+    }
+    case 36: {   /* info_memoria2(buf) -> 0; buf: 8 x uint32 (v2.0).
+                    34-35 reservadas para IPC (etapa 1, sin implementar). */
+        uint32_t v[8];
+        r->eax = (uint32_t)-1;
+        if (di >= 0 && !ptr_ok(di, r->ebx, 32, 1)) break;
+        v[0] = pag_marcos_libres();
+        v[1] = pag_marcos_usados();
+        v[2] = pag_usados_usuario();
+        v[3] = pag_pico_usuario();
+        v[4] = pag_doble_free();
+        v[5] = proc_fugas() + pag_verifica();
+        v[6] = pag_pd_usados();
+        v[7] = pag_pt_usadas();
+        if (di >= 0) {
+            if (pag_escribe_usr((unsigned)di, r->ebx, v, 32)) break;
+        } else {
+            for (int i = 0; i < 8; i++) ((uint32_t *)r->ebx)[i] = v[i];
         }
         r->eax = 0;
         break;

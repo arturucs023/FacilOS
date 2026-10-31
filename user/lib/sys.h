@@ -156,7 +156,10 @@ static inline int sys_hay_tecla(void) {
    pid, estado, rc, grafico, marcos, nombre[16]),
    31=esperar(pid) -> rc del hijo, 32=ceder() -> 0,
    33=info_memoria(buf) -> 0; buf = 5 x uint32 (marcos totales, libres,
-   usados, RAM util, entradas E820). */
+   usados, RAM util, entradas E820).
+   v2.0: 34-35 reservadas para IPC (sin implementar); 36=info_memoria2(buf),
+   buf = 8 x uint32 (libres, usados, usados_usuario, pico_usuario,
+   doble_free, anomalias, pd_usados, pt_usadas). */
 static inline int sys_crear_proceso(const char *nombre, const char *args) {
     return sys_llama(28, (int)nombre, (int)args, 0);
 }
@@ -179,6 +182,10 @@ static inline int sys_ceder(void) {
 
 static inline int sys_info_memoria(unsigned int *buf) {
     return sys_llama(33, (int)buf, 0, 0);
+}
+
+static inline int sys_info_memoria2(unsigned int *buf) {
+    return sys_llama(36, (int)buf, 0, 0);
 }
 
 #define PROC_NUEVO 0

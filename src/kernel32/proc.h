@@ -43,6 +43,18 @@ typedef struct {
     uint32_t k_ebp;             /* EBP del llamante al ceder (marco a retomar) */
     uint32_t k_ret;                        /* etiqueta de vuelta al ceder */
     void *sc_regs;              /* marco de la syscall en curso (por proceso) */
+
+    /* Regiones virtuales del proceso (v2.0: seguimiento para diagnostico
+       y futura asignacion dinamica; el chequeo de destruccion las usa). */
+#define VMAR_N 8
+#define VMAR_CODIGO 1
+#define VMAR_PILA 2
+#define VMAR_HEAP 3
+    struct {
+        uint32_t ini, tam;
+        uint32_t tipo;
+    } vmars[VMAR_N];
+    int nvmars;
     int modo;                   /* 0 = reanudar en anillo 0, 1 = en anillo 3 */
 
     /* Memoria */
@@ -81,6 +93,8 @@ void proc_devuelve_pila_kernel(int slot);
 int proc_cuantos(void);
 int proc_ultimo_pid(void);
 void proc_fusiona(void);                /*回收: libera marcos de terminados */
+uint32_t proc_fugas(void);              /* desajustes destruccion detectados */
+int proc_vma_add(proc_t *p, uint32_t ini, uint32_t tam, uint32_t tipo);
 
 /* --- planificador ---------------------------------------------------- */
 void proc_inicia(void);

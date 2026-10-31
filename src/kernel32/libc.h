@@ -36,6 +36,9 @@ int libc_memcmp(const void *a, const void *b, uint32_t n);
 void mm_init(void);
 void *kmalloc(uint32_t n);
 void kfree(void *p);
+void kmalloc_info(uint32_t *usados, uint32_t *pico, uint32_t *dobles,
+                  uint32_t *corr);
+int mm_autoprueba(void);
 
 /* formateo a serie */
 void kprintf(const char *fmt, ...);

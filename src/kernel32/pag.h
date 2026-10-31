@@ -45,12 +45,23 @@
 void pag_inicia(void);
 int pag_hay_mapa(void);
 
-/* Marcos fisicos. */
+/* Marcos fisicos. Clases de dueño (1 B por marco, 16 KB): detectan
+ * doble liberacion y permiten cuadrar la contabilidad. */
+#define DUENO_LIBRE 0
+#define DUENO_RESERVA 1
+#define DUENO_USUARIO 2
 int32_t pag_toma_marco(void);
 void pag_devuelve_marco(uint32_t fis);
 uint32_t pag_marcos_totales(void);
 uint32_t pag_marcos_libres(void);
 uint32_t pag_marcos_usados(void);
+uint32_t pag_usados_usuario(void);   /* marcos de usuario vivos */
+uint32_t pag_pico_usuario(void);     /* maximo simultaneo */
+uint32_t pag_doble_free(void);       /* intentos de liberar un marco libre */
+uint32_t pag_pd_usados(void);
+uint32_t pag_pt_usadas(void);
+/* Coherencia bitmap <-> tabla de dueños. Devuelve nº de discrepancias. */
+uint32_t pag_verifica(void);
 
 /* Tablas. pag_dir(0) es el directorio del nucleo (plantilla). */
 uint32_t pag_dir(unsigned i);
@@ -77,6 +88,10 @@ void pag_ventana_cierra(void);
  * validacion previa). Devuelve 0 o -1. */
 int pag_escribe_usr(unsigned di, uint32_t virt, const void *src, uint32_t n);
 int pag_lee_usr(unsigned di, uint32_t virt, void *dst, uint32_t n);
+
+/* Cuenta PTEs presentes+usuario en [virt, virt+tam) de un directorio.
+ * Para el chequeo de destruccion (fugas). */
+uint32_t pag_cuenta_rango(unsigned di, uint32_t virt, uint32_t tam);
 
 /* CR3 */
 void pag_usa(unsigned di);
