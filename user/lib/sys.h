@@ -188,6 +188,10 @@ static inline int sys_info_memoria2(unsigned int *buf) {
     return sys_llama(36, (int)buf, 0, 0);
 }
 
+static inline int sys_proc_stat(int pid, unsigned int *buf) {
+    return sys_llama(37, pid, (int)buf, 0);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2

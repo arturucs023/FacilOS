@@ -74,6 +74,11 @@ typedef struct {
     int ultimo_exc;             /* excepcion que lo mato, 0 si ninguna */
     uint32_t loteria;
     int reciclable;             /* terminado y ya nadie lee su rc */
+
+    /* Observabilidad del planificador (v2.0, entrega 3). */
+    uint32_t ticks_cpu;         /* ticks PIT visto en ejecucion */
+    uint32_t cedes;             /* veces que se le cedio la CPU */
+    uint32_t pico_marcos;       /* maximo nmarcos simultaneo */
 } proc_t;
 
 extern proc_t proc_tareas[1 + MAXPROC];

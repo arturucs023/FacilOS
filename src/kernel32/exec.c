@@ -790,6 +790,27 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
         r->eax = 0;
         break;
     }
+    case 37: {   /* proc_stat(pid, buf) -> 0; buf: 5 x uint32 (v2.0):
+                    estado, ticks_cpu, cedes, pico_marcos, nmarcos. */
+        uint32_t v[5];
+        proc_t *q;
+        r->eax = (uint32_t)-1;
+        if (di >= 0 && !ptr_ok(di, r->ecx, 20, 1)) break;
+        q = proc_por_pid((int)r->ebx);
+        if (!q) break;
+        v[0] = (uint32_t)q->estado;
+        v[1] = q->ticks_cpu;
+        v[2] = q->cedes;
+        v[3] = q->pico_marcos;
+        v[4] = (uint32_t)q->nmarcos;
+        if (di >= 0) {
+            if (pag_escribe_usr((unsigned)di, r->ecx, v, 20)) break;
+        } else {
+            for (int i = 0; i < 5; i++) ((uint32_t *)r->ecx)[i] = v[i];
+        }
+        r->eax = 0;
+        break;
+    }
     default:
         r->eax = (uint32_t)-1;
         break;

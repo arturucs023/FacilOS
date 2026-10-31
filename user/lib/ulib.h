@@ -129,6 +129,7 @@ int u_esperar(int pid);
 int u_ceder(void);
 int u_info_memoria(unsigned int *v5);
 int u_info_memoria2(unsigned int *v8);   /* v2.0: 8 palabras (ver sys.h) */
+int u_proc_stat(int pid, unsigned int *v5); /* v2.0: estado,ticks,cedes,pico,nmarcos */
 const char *u_estado_nombre(int e);
 
 #endif

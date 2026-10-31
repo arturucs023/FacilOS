@@ -82,7 +82,11 @@ int proc_hay_graficos(void) {
 /* ---- creacion y destruccion ------------------------------------------ */
 
 static void anota_marco(proc_t *p, uint32_t f) {
-    if (p->nmarcos < MARCOS_MAX) p->marcos[p->nmarcos++] = f;
+    if (p->nmarcos < MARCOS_MAX) {
+        p->marcos[p->nmarcos++] = f;
+        if ((uint32_t)p->nmarcos > p->pico_marcos)
+            p->pico_marcos = (uint32_t)p->nmarcos;
+    }
 }
 
 void proc_anota_marco(proc_t *p, uint32_t fis) { anota_marco(p, fis); }
@@ -324,20 +328,14 @@ static void entra_usuario(proc_t *p) {
     *(--sp) = 0x1B;                       /* cs  (codigo DPL3) */
     *(--sp) = p->eip;                     /* eip */
     tss_pon_esp0(p->esp_k);
-    __asm__ volatile (
-        "movl $0x20, %%eax\n\t"
-        "movl %%eax, %%ds\n\t"
-        "movl %%eax, %%es\n\t"
-        "movl %%eax, %%fs\n\t"
-        "movl %%eax, %%gs\n\t"
-        "movl %1, %%ebx\n\t"
-        "movl %2, %%esi\n\t"
-        "movl %3, %%edi\n\t"
-        "movl %4, %%ebp\n\t"
-        "movl %0, %%esp\n\t"
-        "iret"
-        : : "m"(sp), "m"(p->ebx), "m"(p->esi), "m"(p->edi), "m"(p->ebp)
-        : "eax", "ebx", "esi", "edi", "ebp", "memory");
+    {
+        extern void salta_usuario(uint32_t sp, uint32_t ebx, uint32_t esi,
+                                  uint32_t edi, uint32_t ebp, uint32_t eax,
+                                  uint32_t ecx, uint32_t edx);
+        salta_usuario((uint32_t)sp, p->ebx, p->esi, p->edi, p->ebp,
+                      p->eax, p->ecx, p->edx);
+        for (;;) hlt();
+    }
 }
 
 /* Reanuda en anillo 0: la tarea del sistema (shell) o un proceso que se
@@ -379,6 +377,7 @@ __attribute__((optimize("O0"))) static void cede_a(proc_t *p) {
     proc_actual = p;
     p->estado = EST_EJECUTO;
     p->loteria = ++loteria;
+    p->cedes++;
     if (p->es_usuario && p->modo) {
         pag_usa(p->di);
         entra_usuario(p);

@@ -543,6 +543,9 @@ int u_esperar(int pid) { return sys_esperar(pid); }
 int u_ceder(void) { return sys_ceder(); }
 int u_info_memoria(unsigned int *v5) { return sys_info_memoria(v5); }
 int u_info_memoria2(unsigned int *v8) { return sys_info_memoria2(v8); }
+int u_proc_stat(int pid, unsigned int *v5) {
+    return sys_proc_stat(pid, v5);
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {

@@ -40,8 +40,10 @@ void irq_c(uint32_t *rp) {
         return;
     }
     uint32_t n = r->num - 32;
-    if (n == 0) ticks++;
-    else if (n == 1) {
+    if (n == 0) {
+        ticks++;
+        if (proc_actual) proc_actual->ticks_cpu++;   /* observabilidad RR */
+    } else if (n == 1) {
         teclado_irq();
         proc_despierta_tecla();
     }

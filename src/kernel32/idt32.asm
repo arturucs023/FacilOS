@@ -215,6 +215,27 @@ _retoma_kernel:
     mov esp, [esp+20]
     ret
 
+; Salta a anillo 3 con el marco ya montado (ver entra_usuario en proc.c).
+; Restaura TODOS los registros de proposito general del proceso (incluidos
+; eax/ecx/edx: una preempcion no debe cambiar valores vivos del usuario).
+; cdecl: salta_usuario(sp, ebx, esi, edi, ebp, eax, ecx, edx). No retorna.
+global _salta_usuario
+_salta_usuario:
+    mov eax, 0x20
+    mov ds, eax
+    mov es, eax
+    mov fs, eax
+    mov gs, eax
+    mov ebx, [esp+8]
+    mov esi, [esp+12]
+    mov edi, [esp+16]
+    mov ebp, [esp+20]
+    mov eax, [esp+24]
+    mov ecx, [esp+28]
+    mov edx, [esp+32]
+    mov esp, [esp+4]
+    iret
+
 _irq_comun:
     pusha
     push ds
