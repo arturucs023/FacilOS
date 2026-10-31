@@ -226,6 +226,7 @@ _apps3 = [
     ("mem32", ["mem32.c"], True),
     ("quema32", ["quema32.c"], True),
     ("equidad32", ["equidad32.c"], True),
+    ("sucio32", ["sucio32.c"], True),
     ("planificador32", ["planificador32.c"], True),
     ("contador32", ["contador32.c"], True),
     ("dormir32", ["dormir32.c"], True),

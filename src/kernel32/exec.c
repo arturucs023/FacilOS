@@ -313,36 +313,42 @@ static regs_t *regs_actual(regs_t *r) {
     return r ? r : syscall_regs_ptr;
 }
 
-__attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
-    syscall_regs_ptr = r;
-    /* El marco se guarda por proceso: mientras este cede la CPU, otro
-       proceso puede entrar en syscall_c y cambiar el global. Al reanudar
-       hay que usar el propio (ver regs_actual). */
-    if (proc_actual) proc_actual->sc_regs = r;
-    int di = di_actual();
-    switch (r->eax) {
-    case 0:
+/* ---- syscalls v2.0: tabla central de despacho --------------------
+ * Cada handler conserva intacta la semantica del case original.
+ * Todos llevan optimize("O0"): ver nota en syscall_c (Fase 6).
+ * 34-35 reservadas para IPC (etapa 1, sin implementar). */
+__attribute__((optimize("O0"))) static void sc_00(regs_t *r, int di)
+{
         /* salir: termina el proceso y el planificador sigue con otro. */
         proc_muere((int)r->ebx);
-        break;
-    case 1: {
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_01(regs_t *r, int di)
+ {
         uint32_t len = r->ecx;
         if (len > 2048) len = 2048;
-        if (!ptr_ok(di, r->ebx, len, 0)) { r->eax = (uint32_t)-1; break; }
+        if (!ptr_ok(di, r->ebx, len, 0)) { r->eax = (uint32_t)-1; return; }
         const char *p = (const char *)r->ebx;
         for (uint32_t i = 0; i < len && p[i]; i++) cons_putc(p[i]);
         r->eax = 0;
-        break;
+        return;
     }
-    case 2:
+
+
+__attribute__((optimize("O0"))) static void sc_02(regs_t *r, int di)
+{
         r->eax = irq_ticks();
-        break;
-    case 3: {
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_03(regs_t *r, int di)
+ {
         fds_init();
         const char *pa = (const char *)r->ebx;
         char ruta[128];
         uint32_t i = 0;
-        if (!ptr_ok(di, r->ebx, 1, 0)) { r->eax = (uint32_t)-1; break; }
+        if (!ptr_ok(di, r->ebx, 1, 0)) { r->eax = (uint32_t)-1; return; }
         while (i < 127 && pa[i]) { ruta[i] = pa[i]; i++; }
         ruta[i] = 0;
         int dir;
@@ -361,21 +367,24 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
                 }
             }
         }
-        break;
+        return;
     }
-    case 4: {
+
+
+__attribute__((optimize("O0"))) static void sc_04(regs_t *r, int di)
+ {
         /* v1.6: lectura por offset con trozos de 512 (ficheros grandes). */
         int fd = (int)r->ebx;
         uint8_t *dst = (uint8_t *)r->ecx;
         uint32_t n = r->edx;
         r->eax = (uint32_t)-1;
-        if (!ptr_ok(di, r->ecx, n ? n : 1, 1)) break;
+        if (!ptr_ok(di, r->ecx, n ? n : 1, 1)) return;
         if (fd >= 0 && fd < NFD && fds()[fd] >= 0) {
-            if (!n) { r->eax = 0; break; }
+            if (!n) { r->eax = 0; return; }
             static uint8_t tmp[512];
             uint16_t t = fs_tam(fds()[fd]);
             uint32_t p = fds_pos()[fd];
-            if (p >= t) { r->eax = 0; break; }
+            if (p >= t) { r->eax = 0; return; }
             if (n > (uint32_t)(t - p)) n = t - p;
             uint32_t hechas = 0;
             while (hechas < n) {
@@ -389,16 +398,19 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
             }
             if (hechas) { fds_pos()[fd] = p + hechas; r->eax = hechas; }
         }
-        break;
+        return;
     }
-    case 5: {
+
+
+__attribute__((optimize("O0"))) static void sc_05(regs_t *r, int di)
+ {
         /* v1.6: escribe en la posicion actual (offset), extiende.
            En pos 0 con fichero viejo NO trunca (usar 24). */
         int fd = (int)r->ebx;
         const uint8_t *src = (const uint8_t *)r->ecx;
         uint32_t n = r->edx;
         r->eax = (uint32_t)-1;
-        if (!ptr_ok(di, r->ecx, n ? n : 1, 0)) break;
+        if (!ptr_ok(di, r->ecx, n ? n : 1, 0)) return;
         if (fd >= 0 && fd < NFD && fds()[fd] >= 0) {
             static uint8_t tmp[512];
             uint32_t p = fds_pos()[fd];
@@ -419,23 +431,29 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
                 r->eax = hechas;
             }
         }
-        break;
+        return;
     }
-    case 6: {
+
+
+__attribute__((optimize("O0"))) static void sc_06(regs_t *r, int di)
+ {
         int fd = (int)r->ebx;
         r->eax = (uint32_t)-1;
         if (fd >= 0 && fd < NFD && fds()[fd] >= 0) {
             fds()[fd] = -1;
             r->eax = 0;
         }
-        break;
+        return;
     }
-    case 7: {   /* memoria(n): sbrk con paginas del proceso */
+
+
+__attribute__((optimize("O0"))) static void sc_07(regs_t *r, int di)
+ {   /* memoria(n): sbrk con paginas del proceso */
         uint32_t n = r->ebx;
         uint32_t *b = user_brk();
         r->eax = (uint32_t)-1;
-        if (di < 0) break;                    /* la shell usa kmalloc */
-        if (n > UHEAP_FIN - *b) break;
+        if (di < 0) return;                    /* la shell usa kmalloc */
+        if (n > UHEAP_FIN - *b) return;
         uint32_t viejo = *b;
         uint32_t nuevo = *b + n;
         /* mapea las paginas nuevas que todavia no existan */
@@ -448,18 +466,21 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
             if (!pag_translada((unsigned)di, v, &f))
                 proc_anota_marco(proc_actual, f & ~(PAG_MARCO - 1));
         }
-        if (!pag_valida_usuario((unsigned)di, nuevo, 1, 1)) break;
+        if (!pag_valida_usuario((unsigned)di, nuevo, 1, 1)) return;
         *b = nuevo;
         proc_vma_add(proc_actual, viejo & ~(PAG_MARCO - 1),
                      nuevo - (viejo & ~(PAG_MARCO - 1)), VMAR_HEAP);
         r->eax = viejo;
-        break;
+        return;
     }
-    case 8: {   /* leer_tecla(): bloquea el proceso, no la CPU entera */
+
+
+__attribute__((optimize("O0"))) static void sc_08(regs_t *r, int di)
+ {   /* leer_tecla(): bloquea el proceso, no la CPU entera */
         extern int kbd_tecla(void);
         if (di < 0) {
             r->eax = (uint32_t)kbd_tecla();
-            break;
+            return;
         }
         if (!kbd_hay()) {
             proc_actual->modo = 0;      /* reanuda en anillo 0 */
@@ -467,9 +488,12 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
             r = regs_actual(r);
         }
         r->eax = (uint32_t)kbd_tecla();
-        break;
+        return;
     }
-    case 9: {
+
+
+__attribute__((optimize("O0"))) static void sc_09(regs_t *r, int di)
+ {
         fds_init();
         const char *pa = (const char *)r->ebx;
         char ruta[128];
@@ -477,7 +501,7 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
         int dir;
         char base[32];
         r->eax = (uint32_t)-1;
-        if (!ptr_ok(di, r->ebx, 1, 0)) break;
+        if (!ptr_ok(di, r->ebx, 1, 0)) return;
         while (i < 127 && pa[i]) { ruta[i] = pa[i]; i++; }
         ruta[i] = 0;
         if (!parte_sys(ruta, &dir, base)) {
@@ -495,30 +519,42 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
                 }
             }
         }
-        break;
+        return;
     }
-    case 10:
-        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; break; }
+
+
+__attribute__((optimize("O0"))) static void sc_10(regs_t *r, int di)
+{
+        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
         g_pixel((int)r->ebx, (int)r->ecx, (uint8_t)r->edx);
         r->eax = 0;
-        break;
-    case 11:
-        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; break; }
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_11(regs_t *r, int di)
+{
+        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
         g_linea((int)r->ebx, (int)r->ecx, (int)r->edx, (int)r->esi,
                 (uint8_t)r->edi);
         r->eax = 0;
-        break;
-    case 12:
-        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; break; }
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_12(regs_t *r, int di)
+{
+        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
         g_rect((int)r->ebx, (int)r->ecx, (int)r->edx, (int)r->esi,
                (uint8_t)r->edi);
         r->eax = 0;
-        break;
-    case 13: {
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_13(regs_t *r, int di)
+ {
         const char *p = (const char *)r->edx;
         uint32_t len = r->esi;
         if (len > 256) len = 256;
-        if (!ptr_ok(di, r->edx, len ? len : 1, 0)) { r->eax = (uint32_t)-1; break; }
+        if (!ptr_ok(di, r->edx, len ? len : 1, 0)) { r->eax = (uint32_t)-1; return; }
         gfx_toma(di);
         char tmp[257];
         uint32_t i = 0;
@@ -526,14 +562,20 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
         tmp[i] = 0;
         g_texto((int)r->ebx, (int)r->ecx, tmp, (uint8_t)r->edi);
         r->eax = 0;
-        break;
+        return;
     }
-    case 14:
-        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; break; }
+
+
+__attribute__((optimize("O0"))) static void sc_14(regs_t *r, int di)
+{
+        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
         g_limpiar((uint8_t)r->ebx);
         r->eax = 0;
-        break;
-    case 15: {
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_15(regs_t *r, int di)
+ {
         /* buscar: fd, off (con signo), base 0=ini 1=act 2=fin -> pos. */
         int fd = (int)r->ebx;
         int32_t d = (int32_t)r->ecx;
@@ -548,9 +590,12 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
                 r->eax = (uint32_t)np;
             }
         }
-        break;
+        return;
     }
-    case 16: {
+
+
+__attribute__((optimize("O0"))) static void sc_16(regs_t *r, int di)
+ {
         /* borrar: ruta (fichero o carpeta vacia). */
         const char *pa = (const char *)r->ebx;
         char ruta[128];
@@ -564,52 +609,67 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
             int idx = fs_hijo(dir, base);
             if (idx > 0 && !fs_borrar(idx) && !fs_guardar()) r->eax = 0;
         }
-        break;
+        return;
     }
-    case 17: {   /* dormir(ms): bloquea hasta el tick; no hay bucle activo */
+
+
+__attribute__((optimize("O0"))) static void sc_17(regs_t *r, int di)
+ {   /* dormir(ms): bloquea hasta el tick; no hay bucle activo */
         uint32_t ms = r->ebx;
         if (ms > 600000) ms = 600000;
         r->eax = 0;
         if (di < 0) {
             uint32_t fin = irq_ticks() + (ms + 9) / 10 + 1;
             while ((int32_t)(irq_ticks() - fin) < 0) hlt();
-            break;
+            return;
         }
         uint32_t hasta = irq_ticks() + (ms + 9) / 10 + 1;
         proc_actual->modo = 0;
         proc_bloquea_ticks(hasta);
         r = regs_actual(r);
-        break;
+        return;
     }
-    case 18:
-        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; break; }
+
+
+__attribute__((optimize("O0"))) static void sc_18(regs_t *r, int di)
+{
+        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
         g_destino((int)r->ebx ? 1 : 0);
         r->eax = 0;
-        break;
-    case 19:
-        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; break; }
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_19(regs_t *r, int di)
+{
+        if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
         g_presentar((int)r->ebx, (int)r->ecx, (int)r->edx,
                     (int)r->esi);
         r->eax = 0;
-        break;
-    case 20: {
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_20(regs_t *r, int di)
+ {
         const uint32_t *sp = (const uint32_t *)r->edx;
         uint32_t w, h;
         r->eax = (uint32_t)-1;
-        if (!gfx_es_dueno(di)) break;
+        if (!gfx_es_dueno(di)) return;
         if (sp && ptr_ok(di, r->edx, 8, 0) && (w = sp[0]) >= 1 && w <= 512 &&
             (h = sp[1]) >= 1 && h <= 512 && w * h <= 262144 &&
             ptr_ok(di, r->edx + 8, w * h * 4, 0)) {
             g_sprite((int)r->ebx, (int)r->ecx, (int)w, (int)h, &sp[2]);
             r->eax = 0;
         }
-        break;
+        return;
     }
-    case 21: {
+
+
+__attribute__((optimize("O0"))) static void sc_21(regs_t *r, int di)
+ {
         const uint32_t *sp = (const uint32_t *)r->edx;
         uint32_t w, h;
         r->eax = (uint32_t)-1;
-        if (!gfx_es_dueno(di)) break;
+        if (!gfx_es_dueno(di)) return;
         if (sp && ptr_ok(di, r->edx, 8, 0) && (w = sp[0]) >= 1 && w <= 512 &&
             (h = sp[1]) >= 1 && h <= 512 && w * h <= 262144 &&
             ptr_ok(di, r->edx + 8, w * h * 4, 0)) {
@@ -617,22 +677,31 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
                        r->esi);
             r->eax = 0;
         }
-        break;
+        return;
     }
-    case 22: {
+
+
+__attribute__((optimize("O0"))) static void sc_22(regs_t *r, int di)
+ {
         const int *op = (const int *)r->ebx;
         r->eax = (uint32_t)-1;
-        if (!gfx_es_dueno(di)) break;
+        if (!gfx_es_dueno(di)) return;
         if (op && ptr_ok(di, r->ebx, 24, 0)) {
             g_blit(op[0], op[1], op[2], op[3], op[4], op[5]);
             r->eax = 0;
         }
-        break;
+        return;
     }
-    case 23:
+
+
+__attribute__((optimize("O0"))) static void sc_23(regs_t *r, int di)
+{
         r->eax = g_leer_pixel((int)r->ebx, (int)r->ecx);
-        break;
-    case 24: {
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_24(regs_t *r, int di)
+ {
         int fd = (int)r->ebx;
         uint32_t tam = r->ecx;
         r->eax = (uint32_t)-1;
@@ -642,9 +711,12 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
                 r->eax = 0;
             }
         }
-        break;
+        return;
     }
-    case 25: {
+
+
+__attribute__((optimize("O0"))) static void sc_25(regs_t *r, int di)
+ {
         /* ejecutar hijo preservando al padre: guarda imagen+brk+fds,
            lanza sin reset, restaura y devuelve rc. Sin anidar. */
         const char *pa = (const char *)r->ebx;
@@ -652,12 +724,12 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
         char ruta[128], args[256];
         uint32_t i = 0, k = 0;
         int rc;
-        if (!pa) { r->eax = (uint32_t)-1; break; }
-        if (!ptr_ok(di, r->ebx, 128, 0)) break;
+        if (!pa) { r->eax = (uint32_t)-1; return; }
+        if (!ptr_ok(di, r->ebx, 128, 0)) return;
         while (i < 127 && pa[i]) { ruta[i] = pa[i]; i++; }
         ruta[i] = 0;
         if (aa) {
-            if (!ptr_ok(di, r->ecx, 1, 0)) break;
+            if (!ptr_ok(di, r->ecx, 1, 0)) return;
             while (k < 255 && aa[k]) { args[k] = aa[k]; k++; }
         }
         args[k] = 0;
@@ -666,30 +738,38 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
         rc = kern_ejecutar(0, ruta, args);
         r = regs_actual(r);
         r->eax = (uint32_t)rc;
-        break;
+        return;
     }
-    case 26: {
+
+
+__attribute__((optimize("O0"))) static void sc_26(regs_t *r, int di)
+ {
         extern void shell(void);
         shell_anidada++;
         shell();
         shell_anidada--;
         r->eax = 0;
-        break;
-    }
-    case 27: {
-        extern int kbd_hay(void);
-        r->eax = (uint32_t)kbd_hay();
-        break;
+        return;
     }
 
-    /* ---- v1.9: procesos ------------------------------------------- */
-    case 28: {   /* crear(nombre, args) -> pid (>0) o error */
+
+__attribute__((optimize("O0"))) static void sc_27(regs_t *r, int di)
+ {
+        extern int kbd_hay(void);
+        r->eax = (uint32_t)kbd_hay();
+        return;
+    }
+
+    
+
+__attribute__((optimize("O0"))) static void sc_28(regs_t *r, int di)
+ {   /* crear(nombre, args) -> pid (>0) o error */
         const char *pa = (const char *)r->ebx;
         const char *aa = (const char *)r->ecx;
         char ruta[128], args[256];
         uint32_t i = 0, k = 0;
         r->eax = (uint32_t)-1;
-        if (!pa || !ptr_ok(di, r->ebx, 32, 0)) break;
+        if (!pa || !ptr_ok(di, r->ebx, 32, 0)) return;
         while (i < 127 && pa[i]) { ruta[i] = pa[i]; i++; }
         ruta[i] = 0;
         if (aa && ptr_ok(di, r->ecx, 1, 0)) {
@@ -697,19 +777,26 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
         }
         args[k] = 0;
         r->eax = (uint32_t)kern_crea_proceso(ruta, args, 0);
-        break;
+        return;
     }
-    case 29:     /* mi_pid() */
+
+
+__attribute__((optimize("O0"))) static void sc_29(regs_t *r, int di)
+{
+    /* mi_pid() */
         r->eax = (uint32_t)(proc_actual ? proc_actual->pid : 0);
-        break;
-    case 30: {   /* listar(buf, max) -> numero de tareas escritas */
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_30(regs_t *r, int di)
+ {   /* listar(buf, max) -> numero de tareas escritas */
         /* Cada entrada: pid, estado, rc, grafico, marcos, nombre[16] */
         uint32_t max = r->ecx;
-        if (max == 0) { r->eax = 0; break; }
+        if (max == 0) { r->eax = 0; return; }
         if (max > 1 + MAXPROC) max = 1 + MAXPROC;
         uint32_t n = 0;
         r->eax = 0;
-        if (!ptr_ok(di, r->ebx, 36 * max, 1)) break;
+        if (!ptr_ok(di, r->ebx, 36 * max, 1)) return;
         for (int i = 0; i <= MAXPROC && n < max; i++) {
             proc_t *p = &proc_tareas[i];
             if (!p->usado) continue;
@@ -726,24 +813,31 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
             n++;
         }
         r->eax = n;
-        break;
+        return;
     }
-    case 31: {   /* esperar(pid) -> rc del hijo */
+
+
+__attribute__((optimize("O0"))) static void sc_31(regs_t *r, int di)
+ {   /* esperar(pid) -> rc del hijo */
         int pid = (int)r->ebx;
         r->eax = (uint32_t)-1;
-        if (pid <= 0) break;
+        if (pid <= 0) return;
         if (proc_actual && !proc_actual->es_usuario) {
             /* desde el nucleo no se bloquea: se consulta el estado */
             proc_t *h = proc_por_pid(pid);
             if (h && h->estado == EST_FIN) r->eax = (uint32_t)h->rc;
-            break;
+            return;
         }
         int _rc = proc_espera_hijo(pid);
         r = regs_actual(r);
         r->eax = (uint32_t)_rc;
-        break;
+        return;
     }
-    case 32:     /* ceder() */
+
+
+__attribute__((optimize("O0"))) static void sc_32(regs_t *r, int di)
+{
+    /* ceder() */
         if (proc_actual && proc_actual->es_usuario) {
             proc_actual->modo = 0;
             proc_cede();
@@ -751,29 +845,35 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
         } else {
             r->eax = 0;
         }
-        break;
-    case 33: {   /* info_memoria(buf) -> 0; buf: 5 x uint32 */
+        return;
+}
+
+__attribute__((optimize("O0"))) static void sc_33(regs_t *r, int di)
+ {   /* info_memoria(buf) -> 0; buf: 5 x uint32 */
         uint32_t v[5];
         r->eax = (uint32_t)-1;
-        if (di >= 0 && !ptr_ok(di, r->ebx, 20, 1)) break;
+        if (di >= 0 && !ptr_ok(di, r->ebx, 20, 1)) return;
         v[0] = pag_marcos_totales();
         v[1] = pag_marcos_libres();
         v[2] = pag_marcos_usados();
         v[3] = pag_ram_total();
         v[4] = pag_e820_valido() ? (uint32_t)pag_e820_entradas() : 0;
         if (di >= 0) {
-            if (pag_escribe_usr((unsigned)di, r->ebx, v, 20)) break;
+            if (pag_escribe_usr((unsigned)di, r->ebx, v, 20)) return;
         } else {
             for (int i = 0; i < 5; i++) ((uint32_t *)r->ebx)[i] = v[i];
         }
         r->eax = 0;
-        break;
+        return;
     }
-    case 36: {   /* info_memoria2(buf) -> 0; buf: 8 x uint32 (v2.0).
+
+
+__attribute__((optimize("O0"))) static void sc_36(regs_t *r, int di)
+ {   /* info_memoria2(buf) -> 0; buf: 8 x uint32 (v2.0).
                     34-35 reservadas para IPC (etapa 1, sin implementar). */
         uint32_t v[8];
         r->eax = (uint32_t)-1;
-        if (di >= 0 && !ptr_ok(di, r->ebx, 32, 1)) break;
+        if (di >= 0 && !ptr_ok(di, r->ebx, 32, 1)) return;
         v[0] = pag_marcos_libres();
         v[1] = pag_marcos_usados();
         v[2] = pag_usados_usuario();
@@ -783,38 +883,138 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
         v[6] = pag_pd_usados();
         v[7] = pag_pt_usadas();
         if (di >= 0) {
-            if (pag_escribe_usr((unsigned)di, r->ebx, v, 32)) break;
+            if (pag_escribe_usr((unsigned)di, r->ebx, v, 32)) return;
         } else {
             for (int i = 0; i < 8; i++) ((uint32_t *)r->ebx)[i] = v[i];
         }
         r->eax = 0;
-        break;
+        return;
     }
-    case 37: {   /* proc_stat(pid, buf) -> 0; buf: 5 x uint32 (v2.0):
+
+
+__attribute__((optimize("O0"))) static void sc_37(regs_t *r, int di)
+ {   /* proc_stat(pid, buf) -> 0; buf: 5 x uint32 (v2.0):
                     estado, ticks_cpu, cedes, pico_marcos, nmarcos. */
         uint32_t v[5];
         proc_t *q;
         r->eax = (uint32_t)-1;
-        if (di >= 0 && !ptr_ok(di, r->ecx, 20, 1)) break;
+        if (di >= 0 && !ptr_ok(di, r->ecx, 20, 1)) return;
         q = proc_por_pid((int)r->ebx);
-        if (!q) break;
+        if (!q) return;
         v[0] = (uint32_t)q->estado;
         v[1] = q->ticks_cpu;
         v[2] = q->cedes;
         v[3] = q->pico_marcos;
         v[4] = (uint32_t)q->nmarcos;
         if (di >= 0) {
-            if (pag_escribe_usr((unsigned)di, r->ecx, v, 20)) break;
+            if (pag_escribe_usr((unsigned)di, r->ecx, v, 20)) return;
         } else {
             for (int i = 0; i < 5; i++) ((uint32_t *)r->ecx)[i] = v[i];
         }
         r->eax = 0;
-        break;
+        return;
     }
-    default:
-        r->eax = (uint32_t)-1;
-        break;
-    }
+
+
+typedef void (*sc_fn_t)(regs_t *r, int di);
+#define SC_N 40
+static sc_fn_t const sc_tabla[SC_N] = {
+    [0] = sc_00,
+    [1] = sc_01,
+    [2] = sc_02,
+    [3] = sc_03,
+    [4] = sc_04,
+    [5] = sc_05,
+    [6] = sc_06,
+    [7] = sc_07,
+    [8] = sc_08,
+    [9] = sc_09,
+    [10] = sc_10,
+    [11] = sc_11,
+    [12] = sc_12,
+    [13] = sc_13,
+    [14] = sc_14,
+    [15] = sc_15,
+    [16] = sc_16,
+    [17] = sc_17,
+    [18] = sc_18,
+    [19] = sc_19,
+    [20] = sc_20,
+    [21] = sc_21,
+    [22] = sc_22,
+    [23] = sc_23,
+    [24] = sc_24,
+    [25] = sc_25,
+    [26] = sc_26,
+    [27] = sc_27,
+    [28] = sc_28,
+    [29] = sc_29,
+    [30] = sc_30,
+    [31] = sc_31,
+    [32] = sc_32,
+    [33] = sc_33,
+    [34] = 0,
+    [35] = 0,
+    [36] = sc_36,
+    [37] = sc_37,
+    [38] = 0,
+    [39] = 0,
+};
+static const char *const sc_nombre[SC_N] = {
+    [0] = "salir",
+    [1] = "imprimir",
+    [2] = "ticks",
+    [3] = "abrir",
+    [4] = "leer",
+    [5] = "escribir",
+    [6] = "cerrar",
+    [7] = "memoria",
+    [8] = "leer_tecla",
+    [9] = "crear",
+    [10] = "pixel",
+    [11] = "linea",
+    [12] = "rectangulo",
+    [13] = "texto",
+    [14] = "limpiar_pantalla",
+    [15] = "buscar",
+    [16] = "borrar",
+    [17] = "dormir",
+    [18] = "destino",
+    [19] = "presentar",
+    [20] = "sprite",
+    [21] = "sprite_t",
+    [22] = "blit",
+    [23] = "leer_pixel",
+    [24] = "truncar",
+    [25] = "ejecutar",
+    [26] = "terminal",
+    [27] = "hay_tecla",
+    [28] = "crear_proceso",
+    [29] = "mi_pid",
+    [30] = "listar",
+    [31] = "esperar",
+    [32] = "ceder",
+    [33] = "info_memoria",
+    [34] = "reservada",
+    [35] = "reservada",
+    [36] = "info_memoria2",
+    [37] = "proc_stat",
+    [38] = "reservada",
+    [39] = "reservada",
+};
+static uint32_t sc_count[SC_N];
+
+__attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
+    syscall_regs_ptr = r;
+    /* El marco se guarda por proceso: mientras este cede la CPU, otro
+       proceso puede entrar en syscall_c y cambiar el global. Al reanudar
+       hay que usar el propio (ver regs_actual). */
+    if (proc_actual) proc_actual->sc_regs = r;
+    int di = di_actual();
+    uint32_t n = r->eax;
+    if (n >= SC_N || !sc_tabla[n]) { r->eax = (uint32_t)-1; return; }
+    sc_count[n]++;
+    sc_tabla[n](r, di);
 }
 
 void syscall_init(void) {
