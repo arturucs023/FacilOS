@@ -70,7 +70,7 @@ def wsec(lba, data):
 pvd = bytearray(2048)
 pvd[0] = 1; pvd[1:6] = b"CD001"; pvd[6] = 1
 pvd[8:40] = b"FACILOS".ljust(32, b" ")
-pvd[40:72] = b"FACILOS_V18_32".ljust(32, b" ")
+pvd[40:72] = b"FACILOS_V20_32".ljust(32, b" ")
 struct.pack_into("<I", pvd, 80, len(iso) // 2048)
 struct.pack_into(">I", pvd, 84, len(iso) // 2048)
 now = datetime.datetime.now()
@@ -257,7 +257,7 @@ _fin = IMG_LBA + (_nimg * 512 + 2047) // 2048
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v1.9-32.iso"
+out_iso = ISO_DIR / "FacilOS-v2.0-32.iso"
 _iso = bytes(iso[:_fin * 2048])
 out_iso.write_bytes(_iso)
 print(f"OK {out_iso} {len(_iso)} bytes ({_fin} sectores, "
