@@ -4,6 +4,7 @@
 #include "irq.h"
 #include "gfx.h"
 #include "fs.h"
+#include "vfs.h"
 #include "teclado.h"
 #include "seg.h"
 #include "proc.h"
@@ -90,8 +91,8 @@ typedef struct {
 } origen_t;
 
 static int abre_origen(const char *base, origen_t *o) {
-    int idx = fs_hijo(exec_base_dir, base);
-    if (idx >= 0 && fs_tipo(idx) == 2) {
+    int idx = vfs_actual->hijo(exec_base_dir, base);
+    if (idx >= 0 && vfs_actual->tipo(idx) == 2) {
         o->idx = idx;
         o->es_cd = 0;
         return 0;
@@ -110,7 +111,7 @@ static int lee_origen(origen_t *o, uint32_t off, void *buf, uint32_t n) {
         int r = cdcat_leer(o->idx, off, buf, n);
         return r < 0 ? r : (int)n;
     }
-    int r = fs_leer_parcial(o->idx, off, buf, n);
+    int r = vfs_actual->leer_parcial(o->idx, off, buf, n);
     return r <= 0 ? r : (int)n;
 }
 
@@ -119,7 +120,7 @@ static uint32_t origen_tam(origen_t *o) {
         extern int cdcat_tam(int i);
         return (uint32_t)cdcat_tam(o->idx);
     }
-    return (uint32_t)fs_tam(o->idx);
+    return (uint32_t)vfs_actual->tam(o->idx);
 }
 
 /* Pila de anillo 0 del proceso (8 paginas = 32 KB). */
@@ -356,8 +357,8 @@ __attribute__((optimize("O0"))) static void sc_03(regs_t *r, int di)
         char base[32];
         r->eax = (uint32_t)-1;
         if (!parte_sys(ruta, &dir, base)) {
-            int idx = fs_hijo(dir, base);
-            if (idx >= 0 && fs_tipo(idx) == 2) {
+            int idx = vfs_actual->hijo(dir, base);
+            if (idx >= 0 && vfs_actual->tipo(idx) == 2) {
                 for (int f = 0; f < NFD; f++) {
                     if (fds()[f] < 0) {
                         fds()[f] = idx;
@@ -383,7 +384,7 @@ __attribute__((optimize("O0"))) static void sc_04(regs_t *r, int di)
         if (fd >= 0 && fd < NFD && fds()[fd] >= 0) {
             if (!n) { r->eax = 0; return; }
             static uint8_t tmp[512];
-            uint16_t t = fs_tam(fds()[fd]);
+            uint16_t t = vfs_actual->tam(fds()[fd]);
             uint32_t p = fds_pos()[fd];
             if (p >= t) { r->eax = 0; return; }
             if (n > (uint32_t)(t - p)) n = t - p;
@@ -391,7 +392,7 @@ __attribute__((optimize("O0"))) static void sc_04(regs_t *r, int di)
             while (hechas < n) {
                 uint32_t trozo = n - hechas;
                 if (trozo > 512) trozo = 512;
-                int le = fs_leer_parcial(fds()[fd], p + hechas, tmp, trozo);
+                int le = vfs_actual->leer_parcial(fds()[fd], p + hechas, tmp, trozo);
                 if (le <= 0) { if (!hechas) r->eax = (uint32_t)le; break; }
                 for (int i = 0; i < le; i++) dst[hechas + i] = tmp[i];
                 hechas += (uint32_t)le;
@@ -421,13 +422,13 @@ __attribute__((optimize("O0"))) static void sc_05(regs_t *r, int di)
                 uint32_t trozo = n - hechas;
                 if (trozo > 512) trozo = 512;
                 for (uint32_t i = 0; i < trozo; i++) tmp[i] = src[hechas + i];
-                if (fs_escribir_parcial(fds()[fd], p + hechas, tmp, trozo)) {
+                if (vfs_actual->escribir_parcial(fds()[fd], p + hechas, tmp, trozo)) {
                     mal = 1;
                     break;
                 }
                 hechas += trozo;
             }
-            if (!mal && !fs_guardar()) {
+            if (!mal && !vfs_actual->sincroniza()) {
                 fds_pos()[fd] = p + hechas;
                 r->eax = hechas;
             }
@@ -506,14 +507,14 @@ __attribute__((optimize("O0"))) static void sc_09(regs_t *r, int di)
         while (i < 127 && pa[i]) { ruta[i] = pa[i]; i++; }
         ruta[i] = 0;
         if (!parte_sys(ruta, &dir, base)) {
-            int idx = fs_hijo(dir, base);
-            if (idx < 0) idx = fs_crear(2, dir, base);
+            int idx = vfs_actual->hijo(dir, base);
+            if (idx < 0) idx = vfs_actual->crear(2, dir, base);
             if (idx >= 0) {
                 for (int f = 0; f < NFD; f++) {
                     if (fds()[f] < 0) {
                         fds()[f] = idx;
                         fds_pos()[f] = 0;
-                        if (fs_guardar()) { fds()[f] = -1; break; }
+                        if (vfs_actual->sincroniza()) { fds()[f] = -1; break; }
                         r->eax = (uint32_t)f;
                         break;
                     }
@@ -583,7 +584,7 @@ __attribute__((optimize("O0"))) static void sc_15(regs_t *r, int di)
         uint32_t base = r->edx;
         r->eax = (uint32_t)-1;
         if (fd >= 0 && fd < NFD && fds()[fd] >= 0 && base <= 2) {
-            int32_t t = (int32_t)fs_tam(fds()[fd]);
+            int32_t t = (int32_t)vfs_actual->tam(fds()[fd]);
             int32_t p = (int32_t)fds_pos()[fd];
             int32_t np = base == 0 ? d : (base == 1 ? p + d : t + d);
             if (np >= 0 && np <= t) {
@@ -607,8 +608,8 @@ __attribute__((optimize("O0"))) static void sc_16(regs_t *r, int di)
         char base[32];
         r->eax = (uint32_t)-1;
         if (!parte_sys(ruta, &dir, base)) {
-            int idx = fs_hijo(dir, base);
-            if (idx > 0 && !fs_borrar(idx) && !fs_guardar()) r->eax = 0;
+            int idx = vfs_actual->hijo(dir, base);
+            if (idx > 0 && !vfs_actual->borrar(idx) && !vfs_actual->sincroniza()) r->eax = 0;
         }
         return;
     }
@@ -707,7 +708,7 @@ __attribute__((optimize("O0"))) static void sc_24(regs_t *r, int di)
         uint32_t tam = r->ecx;
         r->eax = (uint32_t)-1;
         if (fd >= 0 && fd < NFD && fds()[fd] >= 0) {
-            if (!fs_truncar(fds()[fd], tam) && !fs_guardar()) {
+            if (!vfs_actual->truncar(fds()[fd], tam) && !vfs_actual->sincroniza()) {
                 if (fds_pos()[fd] > tam) fds_pos()[fd] = tam;
                 r->eax = 0;
             }
