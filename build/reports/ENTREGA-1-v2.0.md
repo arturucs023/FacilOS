@@ -1,6 +1,6 @@
 # v2.0 Etapa 1 — ENTREGA 1: auditoría, arquitectura objetivo y plan
 
-Estado: COMPLETADA. Base: v1.9 estable (copia en `C:\Users\artur\Documents\sistema`,
+Estado: COMPLETADA. Base: v1.9 estable (árbol de referencia intacto;
 intacta; trabajo en `sistema-v2.0`, git `e28077a` + esta entrega).
 ISO v2.0 base: `build/iso/FacilOS-v2.0-32.iso` (1 517 568 B), arranque + shell
 verificados en QEMU (`build/logs/v20_boot1.log`).

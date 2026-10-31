@@ -30,7 +30,7 @@ formato ejecutable F32X, shell y aplicaciones independientes.
 ## Requisitos (Windows)
 
 - Python 3 (`python tools/build32.py`).
-- GCC MinGW i686 (`C:\Users\artur\gcc32\mingw32\bin\gcc.exe`).
+- GCC MinGW i686 (ruta configurable en `tools/build32.py`).
 - NASM incluido en `tools/nasm/`.
 - QEMU i386 (`C:\Program Files\qemu\qemu-system-i386.exe`).
 
