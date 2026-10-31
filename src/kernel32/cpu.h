@@ -32,6 +32,7 @@ static inline void cpu_if_restaura(uint32_t f) {
 
 /* --- v1.9: control de pagina (CR0/CR2/CR3) y TLB ------------------- */
 #define CR0_PG 0x80000000u
+#define CR0_WP 0x00010000u   /* v2.0: protege paginas de solo lectura tambien de escrituras del nucleo */
 
 static inline uint32_t cpu_cr0(void) {
     uint32_t v;

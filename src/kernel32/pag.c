@@ -436,7 +436,10 @@ void pag_inicia(void) {
 
     ventana_alta();
     pag_usa(0);
-    cpu_cr0_pon(cpu_cr0() | CR0_PG);
+    /* v2.0: WP=1 (ver D9). El nucleo escribe memoria de usuario solo por la
+       ventana (supervisor) o en paginas RW validadas; las escrituras a
+       paginas RO petan tambien desde Ring0. */
+    cpu_cr0_pon(cpu_cr0() | CR0_PG | CR0_WP);
     con_paginacion = 1;
     cpu_tlb_todo();
 }
