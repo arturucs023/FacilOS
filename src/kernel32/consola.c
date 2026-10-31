@@ -6,7 +6,8 @@
 static int usa_gfx = 0;
 
 void cons_init(void) {
-    gfx_init();
+    /* v2.0: gfx_init lo hace el driver de pantalla (drv_init_todos),
+       siempre antes de aqui; solo se lee el estado. */
     usa_gfx = gfx_activo();
     if (!usa_gfx) vga_cls();
 }

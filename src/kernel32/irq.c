@@ -2,6 +2,7 @@
 #include "libc.h"
 #include "cpu.h"
 #include "proc.h"
+#include "ktimer.h"
 
 /* IRQ y excepciones de FacilOS32 v1.9. */
 
@@ -43,6 +44,7 @@ void irq_c(uint32_t *rp) {
     if (n == 0) {
         ticks++;
         if (proc_actual) proc_actual->ticks_cpu++;   /* observabilidad RR */
+        kt_tick();
     } else if (n == 1) {
         teclado_irq();
         proc_despierta_tecla();

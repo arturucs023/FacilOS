@@ -16,6 +16,7 @@ extern int fs_migrar;
 extern int fs_inicializado;
 
 void fs_init(void);
+int ramfs_init(void);   /* entrada para el registro de drivers (v2.0) */
 int fs_guardar(void);
 /* resolver ruta -> indice (0..63) o -1. Acepta abs/rel/../. */
 int fs_resuelve(const char *ruta);

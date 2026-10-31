@@ -11,6 +11,11 @@
 #include "pag.h"
 #include "proc.h"
 #include "bootinfo.h"
+#include "ktimer.h"
+#include "drv.h"
+#include "teclado.h"
+#include "gfx.h"
+#include "fs.h"
 
 /* v1.9: el arranque enciende la paginacion y el planificador antes de
    tocar nada mas. Despues crea el menu como PROCESO (espacio de
@@ -50,6 +55,16 @@ void kmain(void)
     idt_init();
     seg_init();
     sti();
+    {
+        int kta = kt_autoprueba();
+        kprintf("ktimer: autoprueba=%d\r\n", kta);
+    }
+    /* v2.0: drivers con contrato (pantalla, teclado, pit, ramfs). */
+    drv_registra("pantalla", pantalla_init);
+    drv_registra("teclado", teclado_init);
+    drv_registra("pit", pit_drv_init);
+    drv_registra("ramfs", ramfs_init);
+    drv_init_todos();
     cons_init();
     cdcat_inicia();
     {
@@ -70,8 +85,8 @@ void kmain(void)
             kprintf("%c%c%c%c\r\n", h[0], h[1], h[2], h[3]);
         }
     }
-    fs_init();
-
+    /* v2.0: el FS RAM lo inicia su driver (drv_init_todos); shell()
+       tambien lo pide (idempotente). */
     /* El menu arranca como proceso grafico, igual que en v1.7/v1.8. */
     int pid = kern_crea_proceso("menu", "", 1);
     if (pid < 0) {

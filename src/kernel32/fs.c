@@ -163,8 +163,7 @@ static int nombre_ok(const char *n) {
 }
 
 void fs_init(void) {
-    if (fs_inicializado) return;
-    fs_inicializado = 1;
+    if (fs_inicializado) return;    fs_inicializado = 1;
     fs_limpia();
     fs_disco_ok = 0;
     fs_migrar = 0;
@@ -233,6 +232,12 @@ void fs_init(void) {
         if (suma_fich(i, t) != e_suma(i)) { fs_limpia(); return; }
     }
     if (cab[14] <= 1) teclado_es = cab[14];
+}
+
+/* Entrada para el registro de drivers (v2.0): el FS RAM siempre inicia. */
+int ramfs_init(void) {
+    fs_init();
+    return 0;
 }
 
 int fs_guardar(void) {

@@ -9,6 +9,8 @@ typedef struct {
 } regs_t;
 
 void idt_init(void);
+void pit_init(void);
+int pit_drv_init(void);
 void irq_escucha(uint8_t irq, void (*h)(void));
 uint32_t irq_ticks(void);
 

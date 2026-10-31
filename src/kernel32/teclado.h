@@ -17,5 +17,6 @@ void teclado_irq(void);
 /* 1 = espanol (defecto), 0 = americano */
 extern int teclado_es;
 void teclado_pon(int es);
+int teclado_init(void);
 
 #endif

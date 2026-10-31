@@ -4,6 +4,8 @@
 
 void gfx_init(void);
 int gfx_activo(void);
+/* Entrada para el registro de drivers (v2.0): 0 si hay video VESA. */
+int pantalla_init(void);
 void gfx_clear(void);
 void gfx_putc(char c, uint8_t attr);
 void gfx_puts(const char *s);
@@ -20,8 +22,7 @@ void g_limpiar(uint8_t color);
 /* v1.6: dibujo con destino (0 frente, 1 dorso en 0xA00000) + blit.
    Por defecto frente (compat v1.5). La consola siempre va al frente. */
 void g_destino(int d);
-void g_presentar(int x, int y, int w, int h);
-void g_dorso_limpia(void);
+void g_presentar(int x, int y, int w, int h);void g_dorso_limpia(void);
 void g_sprite(int x, int y, int w, int h, const uint32_t *pix);
 void g_sprite_t(int x, int y, int w, int h, const uint32_t *pix,
                 uint32_t clave);

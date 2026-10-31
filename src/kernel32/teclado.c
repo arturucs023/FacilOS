@@ -43,6 +43,15 @@ static void tk_mete(int v) {
 
 void teclado_pon(int es) { teclado_es = es ? 1 : 0; }
 
+/* Inicializacion v2.0 (registro de drivers): deja la cola y los
+   modificadores en estado conocido. */
+int teclado_init(void) {
+    tk_ini = tk_fin = 0;
+    tk_ext = 0;
+    sh_izq = sh_der = bloqmay = 0;
+    return 0;
+}
+
 void teclado_irq(void) {
     uint8_t sc = inb(0x60);
     if (sc == 0xE0) { tk_ext = 1; return; }

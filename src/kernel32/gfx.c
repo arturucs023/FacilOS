@@ -40,6 +40,11 @@ void gfx_init(void) {
 }
 
 int gfx_activo(void) { return lfb != 0; }
+
+int pantalla_init(void) {
+    gfx_init();
+    return gfx_activo() ? 0 : -1;
+}
 uint16_t gfx_w(void) { return GW; }
 uint16_t gfx_h(void) { return GH; }
 

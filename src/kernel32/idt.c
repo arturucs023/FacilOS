@@ -37,6 +37,21 @@ static void pon_trampa(int n, uint32_t dir) {
 
 extern void idt_cargar(void);
 
+/* PIT canal 0 a 100 Hz (v2.0: funcion propia para el registro de
+   drivers; la llama idt_init en el mismo punto que antes). */
+void pit_init(void) {
+    /* PIT canal 0 a 100 Hz: 1193182/100 = 11931 */
+    outb(0x43, 0x34); io_espera();
+    outb(0x40, 11931 & 0xFF); io_espera();
+    outb(0x40, (11931 >> 8) & 0xFF); io_espera();
+}
+
+/* Entrada para el registro de drivers (v2.0). */
+int pit_drv_init(void) {
+    pit_init();
+    return 0;
+}
+
 void idt_init(void) {
     for (int i = 0; i < 32; i++) pon_puerta(i, isr_tabla[i]);
     for (int i = 0; i < 16; i++) pon_puerta(32 + i, irq_tabla[i]);
@@ -55,9 +70,6 @@ void idt_init(void) {
     outb(0xA1, 0x01); io_espera();
     outb(0x21, 0xFC); io_espera();
     outb(0xA1, 0xFF); io_espera();
-    /* PIT canal 0 a 100 Hz: 1193182/100 = 11931 */
-    outb(0x43, 0x34); io_espera();
-    outb(0x40, 11931 & 0xFF); io_espera();
-    outb(0x40, (11931 >> 8) & 0xFF); io_espera();
+    /* v2.0: el PIT lo programa su driver (pit_init) via drv_init_todos. */
     idt_cargar();
 }
