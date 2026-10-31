@@ -118,6 +118,16 @@ int kbd_tecla(void) {
         }
         sti();
         hlt();
+        /* Etapa2: lo que haya llegado en la ventana (o durante el hlt)
+           se consume aqui; solo se bloquea con la cola vacia. */
+        cli();
+        if (tk_ini != tk_fin) {
+            int v = tk_cola[tk_ini];
+            tk_ini = (tk_ini + 1) % TK_N;
+            sti();
+            return v;
+        }
+        sti();
         /* v1.9: si seguimos sin tecla, cede la CPU en vez de
            esperar en bucle con la IRQResolution dormida. La IRQ de
            teclado nos devuelve aqui (estado LISTO). */

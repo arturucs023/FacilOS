@@ -242,6 +242,13 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
     /* regiones virtuales del proceso (v2.0) */
     proc_vma_add(p, 0x200000, plano + bss, VMAR_CODIGO);
     proc_vma_add(p, 0x2E0000, PILA_USR_PAGS * PAG_MARCO, VMAR_PILA);
+    /* Publicacion atomica: hasta aqui nadie podia verlo (NUEVO). */
+    {
+        uint32_t fl = cpu_eflags();
+        cli();
+        p->estado = EST_LISTO;
+        cpu_if_restaura(fl);
+    }
     return pid;
 }
 

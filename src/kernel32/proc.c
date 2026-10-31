@@ -159,9 +159,11 @@ int proc_crea(const char *nombre, unsigned di, uint32_t eip, uint32_t esp) {
         p->nombre[0] = 'p'; p->nombre[1] = (char)('0' + (p->pid % 10));
         p->nombre[2] = 0;
     }
-    p->estado = EST_LISTO;
-    p->es_usuario = 1;
-    p->di = di;
+    /* v2.0-etapa2: nace NUEVO (no seleccionable) y kern_crea_proceso lo
+       publica a LISTO cuando esp_k/modo estan asignados. Asi no existe
+       ventana con proceso a medio inicializar visible al planificador. */
+    p->estado = EST_NUEVO;
+    p->es_usuario = 1;    p->di = di;
     p->cr3 = pag_dir(di);
     p->eip = eip;
     p->esp = esp;
@@ -390,9 +392,12 @@ __attribute__((optimize("O0"))) static void cede_a(proc_t *p) {
 
 /* Bloquea la tarea actual y no vuelve hasta que una IRQ la despierta.
    El estado pasa a LISTO en proc_despierta_tecla / proc_tick /
-   proc_despierta_hijos. Con IF=0 al entrar y al salir. */
+   proc_despierta_hijos. Con IF=0 al entrar y al salir.
+   Etapa2: no pisa un LISTO concurrente (un despertar entre el preset del
+   llamante y esta funcion debe sobrevivir; el llamante revalida). */
 static void bloquea(void) {
-    if (proc_actual) proc_actual->estado = EST_BLOQ;
+    if (proc_actual && proc_actual->estado != EST_LISTO)
+        proc_actual->estado = EST_BLOQ;
     for (;;) {
         int i = elige_otra();
         if (i >= 0) {
@@ -419,10 +424,17 @@ void proc_cede(void) {
 }
 
 void proc_bloquea_tecla(void) {
+    /* Etapa2: fija BLOQ bajo cli junto al flag. Si una tecla llega entre
+       el flag y el BLOQ, el despertar no veria BLOQ y se perderia hasta la
+       siguiente tecla. */
+    uint32_t fl = cpu_eflags();
+    cli();
     if (proc_actual) {
         proc_actual->espera_tecla = 1;
         proc_actual->modo = 0;   /* se reanuda dentro de la syscall */
+        proc_actual->estado = EST_BLOQ;
     }
+    cpu_if_restaura(fl);
     bloquea();
     if (proc_actual) proc_actual->espera_tecla = 0;
 }
@@ -437,7 +449,9 @@ void proc_bloquea_ticks(uint32_t hasta) {
 }
 
 /* Bloqueo generico para esperas con despertar dedicado (IPC): el llamante
-   pone modo=0 y su flag de espera antes de entrar. */
+   pone modo=0 y su flag de espera antes de entrar. El despertador (enviar)
+   es otra syscall: en mononucleo no se intercala aqui (necesita la CPU que
+   tiene el que espera), asi que basta el BLOQ normal de bloquea(). */
 void proc_bloquea_msg(void) {
     bloquea();
 }

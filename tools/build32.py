@@ -229,6 +229,7 @@ _apps3 = [
     ("sucio32", ["sucio32.c"], True),
     ("ipc_hijo", ["ipc_hijo.c"], True),
     ("ipc32", ["ipc32.c"], True),
+    ("estres_mem", ["estres_mem.c"], True),
     ("planificador32", ["planificador32.c"], True),
     ("contador32", ["contador32.c"], True),
     ("dormir32", ["dormir32.c"], True),
