@@ -1,0 +1,19 @@
+target remote 127.0.0.1:4674
+set architecture i386
+file build/kernel32.pe
+break *0x200005
+continue
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+info registers eax ebx ecx edx esi edi ebp esp eip
+quit

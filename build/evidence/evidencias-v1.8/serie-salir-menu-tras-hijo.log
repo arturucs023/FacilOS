@@ -1,0 +1,19 @@
+FacilOS32 v1.8 arranca.
+programas en la ISO: 13
+menu rc=0
+Sin disco de datos (v1.8: los programas vienen de la ISO). Memoria temporal.
+FacilOS32 shell. Escribe ayuda.
+facil32:/> t1_lib
+t1_lib v1.6
+cadenas...
+printf...
+dec=-7 uns=7 hex=ff str=ok ch=! pct=%
+-12345 abcd
+memoria...
+ficheros...
+tiempo...
+ticks-antes=3641
+dormir100 rc=0 ticks-despues=3652 dt=11
+t1: 258 pruebas 0 fallos
+retorno: 0
+facil32:/> 

@@ -1,0 +1,133 @@
+========================================================================
+FacilOS32 v1.8 - INFORME DE PRUEBAS
+Metodo: QEMU 11.1 (SeaBIOS), solo la ISO, sin disco de datos
+========================================================================
+
+ build\FacilOS-v1.8-32.iso   1517568 bytes (2964 sectores)
+ kernel32.bin                   36392 bytes
+ carga util dentro de la ISO    137256 bytes (134 KB)
+ programas dentro de la ISO     13 (todos)
+ comando de arranque            qemu-system-i386 -cdrom <iso> -m 32
+
+ Herramientas: tools/qrun.py (monitor de QEMU: teclas, capturas de
+ pantalla y volcado del log serie) y tools/qwin.ps1 (igual, con tope de
+ tiempo). Como la consola se refleja en la serie desde v1.8, casi todo
+ se verifica con el log; lo grafico, con capturas.
+
+ARRANQUE Y MENU
+A1 arranque directo al menu .... "FacilOS32 v1.8 arranca." + "programas
+  en la ISO: 13"; el menu se dibuja con sus 9 entradas y "Calculadora"
+  resaltada. Sin disco: "Sin disco de datos (v1.8: los programas vienen
+  de la ISO). Memoria temporal." OK
+A2 navegacion con flechas ...... {DOWN} x2 -> Reloj y Adivina resaltados;
+  {UP} -> Calculadora. OK
+A3 la copia CHS es exacta ...... 128/128 sectores del kernel y 68/68 de
+  la carga util coinciden byte a byte con la ISO (comparado desde el
+  propio nucleo). OK
+A4 entrada y salida del menu ... "Salir" (8 flechas) + Enter -> terminal
+  de texto del sistema, limpia, y "version" responde
+  "FacilOS32 version 1.8 - Shell 32-bit en C." OK
+A5 salida despues de un hijo .... calculadora -> q -> ESC: el menu sale
+  bien a la terminal del sistema ("menu rc=0") y la shell responde. Este
+  camino fallaba con PANICO #UD (ver G8). OK
+
+LANZADOR DE PROGRAMAS (todo desde el catalogo de la ISO)
+B1 Calculadora ................. {RET} la abre desde la ISO. Operaciones:
+  12-4= -> 8, 7*6= -> 42, 7+6= -> 13, 10/3= -> 3 (trunca). ESC/q
+  vuelve al menu con la seleccion intacta. OK
+B2 Reloj ....................... 00:00:40, "desde el arranque", q sale y
+  el menu se redibuja. OK
+B3 Adivina ..................... 50 -> "mayor...", 10 -> "mayor...",
+  q sale. OK
+B4 Editor de texto ............. pide nombre, escribe "hola iso v1.8",
+  ESC g -> "ok 14 bytes". OK
+B5 Visor de archivos ........... el mismo nombre -> "hola iso v1.8". OK
+B6 Paint32 ..................... flechas mueven el punto, c cambia de
+  color, q sale. OK
+B7 Demo del sistema ............ 1 graficos 0 fallos, 2 ficheros 0
+  fallos, 3 memoria 0 fallos, 4 banco (presentar 800x600: 50 ticks),
+  q sale. OK
+B8 Terminal del menu (7) ....... abre la shell anidada; "salir" vuelve
+  al menu. OK
+B9 ESC en el menu .............. entra en la terminal de texto del
+  sistema, limpia, responde version / espacio_disco. OK
+
+SUBSISTEMA DE FICHEROS SIN DISCO (RAM)
+C1 crear y escribir ............ editor16 crea nota.txt y guarda
+  14 bytes; el visor lo relee integro. OK
+C2 multi-sector ................ t1_lib escribe 2048 bytes y los
+  comprueba: 258 pruebas 0 fallos (13 fallos antes por el tope de un
+  sector; resuelto con el pool RAM). OK
+C3 8 KB y 16 KB ................ demo16 "ficheros multisector (8 KB)"
+  0 fallos; banco: escribir 16 KB / leer 16 KB sin fallos. OK
+C4 500 bloques malloc/free ..... "vivos tras poda: 150", 0 fallos. OK
+C5 realocar ................... 3->1 bloques, 4000->0 bytes ocupados. OK
+
+REGRESION CON DISCO (ruta de v1.5-v1.7)
+D1 disco FACILOS2 reconocido ... con build/FacilOS-v1.7-32-datos.img:
+  "Disco de datos listo. Archivos recuperados.", 13 archivos,
+  31451 bytes, t1_lib 258/0, demo16 ficheros 0 fallos. OK
+D2 El Torito del BIOS ......... el arranque por CHS y el parcheo de
+  LBAs siguen siendo los de v1.8 con disco delante. OK
+
+ARQUITECTURA (resumen de lo que se toco en v1.8)
+E1 El Torito medio=2, count=1, RBA 21; imagen de 2880 sectores; el
+  arranque lee por CHS (18 sectores/pista, 2 cabezas) porque el int
+  0x13 del BIOS solo sirve con la emulacion de disquete. Los IRQ se
+  deshabilitan durante la copia (si no, los handlers del BIOS la
+  pisan). OK
+E2 El nucleo ya no llama al BIOS: cd_sector(lba) lee de la copia en
+  RAM; el catalogo se monta una vez (cdcat_inicia) y cdcat_carga copia
+  el programa SIN cabecera a 0x200000, igual que el cargador del
+  disco (prog.ld enlaza el plano para 0x200000). OK
+E3 El kernel sigue siendo el mismo: mismo arranque en anillo 3, mismos
+  28 syscalls, mismo gestor de memoria. El nucleo mede 36 KB (v1.7:
+  36296) pese a cd.c/cdcat.c. OK
+
+FALLOS ENCONTRADOS Y CORREGIDOS EN ESTA SESION
+G1 cdcat_carga copiaba la cabecera F32X y lanzaba en 0x200000, con lo
+  que el codigo quedaba 20 bytes desplazado: menus y apps con textos
+  basura, y el BSS a cero se comia el final del plano. Corregido: se
+  copia el plano sin cabecera y la entrada es ent.
+G2 fs_init marcaba el disco valido despues de validar los ficheros, y
+  la validacion usaba sec_lee, que con fs_disco_ok=0 leia del pool
+  RAM: las sumas no cuadraban y un disco bueno se rechazaba. Se marca
+  antes del bucle de tramos y fs_limpia() vuelve a ponerlo a 0.
+G3 Sin disco, fs_guardar() fallaba y no se podia crear ningun fichero;
+  ahora es un no-op con exito (la RAM no se persiste).
+G4 El tope de tamano por fichero (FS_MAX_TAM) impedia ficheros de mas
+  de un sector en RAM. Ahora el limite depende del medio.
+G5 "ejecutar <prog>" exigia que el fichero existiera en el disco; con
+  los programas en la ISO hay que aceptar tambien el catalogo, y
+  ahora un nombre suelto ("hola") tambien lanza el programa.
+G6 Herramienta: qrun.py envio teclas mas rapido que el hold de 100 ms
+  de QEMU y las pulsaciones se solapaban; ahora el hueco entre teclas es
+  de 120 ms. Y tools/qwin.ps1 partia en dos los argumentos con espacios
+  al pasarlos a Start-Process (por eso el espacio llegaba como Enter).
+G7 La tabla del teclado (ES) devolvia los signos '+' y '*' en CP437
+  (167/168). Los programas de usuario comparan con '+' (43) y '*' (42)
+  y la shell solo acepta 32..126, asi que esas dos teclas no hacian
+  nada: la calculadora multiplicaba mal. Ahora la tabla da ASCII. OK
+  (nota de pruebas: '+' en el harness es la tecla '*' de US; para la
+  '+' española hay que usar {K:0x1b}.)
+G8 kern_esp_save (el punto de vuelta al nucleo de cada programa) lo
+  sobrescribe entrar_usuario al lanzar un hijo con la syscall 25, y
+  no se restauraba: al salir despues el padre (menu con ESC) saltaba a
+  un marco viejo y petaba con PANICO ex=6 eip=13. Ahora los casos 25 y
+  26 guardan y restauran kern_esp_save. OK
+  (venia de v1.7: alli solo se probaba salir del menu sin hijos.)
+
+EVIDENCIAS (build/evidencias-v1.8)
+  00-menu-inicial.png, 01-menu-navegacion.png, 05-menu-visor.png
+                                    menu y navegacion con flechas
+  02-calculadora-12-4-8.png, 02-calculadora-7x6-42.png   calculadora
+  03-reloj.png, 04-demo-graficos.png                   reloj y demo
+  serie-t1_lib-t2_gfx.log                                biblioteca y gfx
+  serie-demo16.log                                       las 4 secciones
+  serie-editor-visor.log                                 crear y releer
+  serie-salir-menu-tras-hijo.log                         A5 (el PANICO G8)
+  serie-terminal-y-salida.log                            terminal y salida
+  serie-con-disco.log                                    regresion con disco
+
+RESULTADO: 22/22
+======================================================================

@@ -1,0 +1,78 @@
+FacilOS32 v1.6 - Plataforma para software complejo (anillo 3)
+Hecho desde cero, sin Linux, Windows, DOS, GRUB ni dependencias externas.
+Toolchain: MinGW-w64 i686 (gcc -m32 -ffreestanding -nostdlib) + NASM.
+ASM solo en arranque/IDT/GDT/TSS (src32/*.asm); todo lo demas en C.
+Linea 16-bit (v1.3) y v1.5-32 intactas; v1.6 es evolucion de la 32-bit.
+Requiere >=16 MB de RAM (QEMU -m 32 verificado).
+===============================================================================
+
+ARCHIVOS
+- FacilOS-v1.6-32.iso ..... ISO 32-bit (El Torito) con nucleo 32 KB.
+- FacilOS-v1.6-32-datos.img Disco 10 MB: 5 programas v1.5 + 4 nuevos.
+- src32/ .................. nucleo (fs multi, 25 syscalls, gfx doble,
+                            PIT 100 Hz, shell, TSS/anillo 3).
+- prog/ ................... sys.h (API), ulib.h/c (biblioteca C propia),
+                            5 clasicos + t1/t2/editor16/demo16.
+- tools/build32.py ........ constructor (F32X v3, inyecta multisector).
+
+DISCO v1.2 EXTENDIDO (compatible: mismo magic, misma cabecera, mismo
+checksum global tabla+64 sectores -> la linea 16-bit sigue verificando)
+- Entrada 42 B: tipo/padre/nombre(32)/tam u16 (hasta 65535)/seg u16
+  [36..37]/suma u32 [38..41] (bytes de fecha, siempre cero en 32-bit).
+- seg=0: heredado (1 sector en idx, <=512 B, fechas intactas).
+- seg>=64: tramo [seg, seg+techo(tam/512)) en LBA 7+seg (first-fit,
+  sin GC: al reescribir se reubica y el tramo viejo se reutiliza).
+- Suma por fichero verificada en arranque (disco invalido si falla).
+- Sin disco: tope 512 B (modo RAM temporal, como antes).
+
+MEMORIA (fijos, documentados)
+- 0x100000 nucleo (<=128 KB) | 0x200000 programa (plano+bss <=768 KB,
+  fichero <=65535, bss <=256 KB) | pila usuario tope 0x2F0000 (64 KB)
+- args 0x2F0000 | heap usuario sbrk 0x300000-0x800000 (5 MB)
+- heap nucleo 0x800000-0xA00000 (2 MB) | dorso gfx 0xA00000 (800x600x32)
+- TSS esp0 0x8F000. Pila de programa: no arrays gigantes (ver __chkstk).
+
+F32X v3 (cabecera 20 B igual que v2, ver=3): entry/tam/bss. v1/v2 siguen
+cargando. La shell carga por tramos de 512 directo a 0x200000.
+
+SYSCALLS int 0x80 (0-14 como v1.5; el nucleo preserva todo menos eax)
+ 5 escribir = offset (extiende, NO trunca; antes reemplazaba: documentado)
+ 15 buscar(fd,off,base) 0=ini 1=act 2=fin (off con signo) -> pos
+ 16 borrar(ruta) fichero o carpeta vacia | 17 dormir(ms) 100 Hz con sti
+ 18 destino(0 frente/1 dorso) | 19 presentar(x,y,w,h) dorso->frente
+ 20 sprite(x,y,ptr{w,h,pix}) | 21 sprite_t(x,y,ptr,clave)
+ 22 blit(ptr{x0,y0,w,h,x1,y1}, con solape) | 23 leer_pixel(x,y)->XRGB
+ 24 truncar(fd,tam) (crece con ceros)
+ Puerta 0x80 tipo interrupcion DPL3: entra con IF=0; quien espera hace sti
+ (kbd_tecla ya lo hacia; dormir faltaba -> se colgaba; cazado en v1.6).
+
+ULIB (prog/ulib.h/c, ~460 lineas): cadenas (+strncmp/strncpy/strcat/
+strchr/atoi/itoa/utoa), memmove, malloc/free/realloc/calloc (+magia,
+doble-free seguro, union bidireccional, crecer en sitio, stats), UFILE
+sin bufer (r/w/a, fread/fwrite por tramos, fseek INI/ACT/FIN, ftell,
+fsize, fijar_tam, remove), printf %d %u %x %s %c %%, lee_linea, gfx
+(destino/presentar/pixel/linea/rect/texto/limpiar/sprite/blit/punto,
+U_RGB, USPRITE), ticks/dormir. Los static cero ocupan fichero (COFF
+.data): para buferes grandes usa malloc. Sonda __chkstk_ms no-op incluida
+(sin paginacion la pila siempre esta presente).
+
+PROGRAMAS (ejecutar <prog> [args]; args recortados en 0x2F0000)
+- hola/visor32/editor32/paint32/benchmark32: v1.5 intactos (v2, <=512).
+- t1_lib (198 lin, 7 KB): 258 pruebas (cadenas, printf, malloc/tortura/
+  union, ficheros 2 KB + seeks + parcial, dormir) -> rc = fallos.
+- t2_gfx (112 lin, 3.5 KB): 12 pruebas (dorso, sprites, transparencia,
+  blit con solape, lectura, anim 30 cuadros) -> rc = fallos.
+- editor16 (106 lin, 3 KB): editor sin tope (malloc, truncar), ESC g/s.
+- demo16 (458 lin en 5 modulos, 9.5 KB): menu con 4 escenas (mosaico/
+  rebote 120 cuadros/oleaje/transparencias, ficheros 8 KB, memoria 500
+  bloques, banco syscalls/mem/gfx/ficheros).
+
+LIMITACIONES v1.6 (documentadas, no bugs):
+- Fichero <=65535 B, 64 entradas, sin journaling (corte = tabla rota).
+- escribir parcial en trozos de 512 en nucleo (bucle transparente).
+- Modos de fichero solo a nivel ulib (el nucleo no los impone).
+- Sin VESA-dinamico, sin E820 (se asumen 16 MB), teclado sin Tab/Fn.
+- Sin escritorio/ventanas/raton: HITO pendiente = app C de varios miles
+  de lineas estable (mayor actual: demo16, 458 lin/9.5 KB, estable).
+
+PRUEBAS (QEMU, 9 regresion + 6 nuevas, todas OK): INFORME-v1.6-32.txt.

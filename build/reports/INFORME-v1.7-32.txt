@@ -1,0 +1,71 @@
+INFORME v1.7-32 - Entorno grafico + apps (QEMU)
+Metodo: tools/qrun.py (teclas por monitor, capturas, serie). Copias en temp.
+Kernel 36296 B. 13 programas. 15/15 pruebas OK (4 de v1.5 + 4 de v1.6 +
+7 de v1.7). NOTA: la consola va al framebuffer, la serie solo registra el
+arranque; toda la verificacion es por captura de pantalla.
+
+ARRANQUE Y MENU
+A1 arranque directo al menu ... sin disco/ISO: "Disco de datos listo",
+  menu dibujado con 9 entradas, "Calculadora" resaltada. OK.
+A2 navegacion con flechas ..... {DOWN} -> Reloj resaltado; {UP} -> Calculadora;
+  7 flechas -> Terminal resaltado. Capturas. OK.
+A3 lanzar por Enter .......... Enter en Calculadora abre la app; al salir
+  (q) el menu se redibuja con la seleccion intacta. OK.
+
+CALCULADORA (Enter en la entrada 1)
+B1 12-4= ...................... muestra 8 (recorte de la captura). OK.
+B2 sin argumentos extra ...... muestra 0 initially, acepta digitos. OK.
+B3borra con q/ESC ............ el hijo sale, rc 0, menu redibujado. OK.
+  Nota: el harness de pruebas no "*" ni "="; se mapearon a shift-equal y
+  shift-0 segun la tabla CP437 del BIOS (0x1B '+/*', 0x0B '0/=').
+
+RELOJ
+C1 contador ................... HH:MM:SS avanza (00:00:16 -> 00:00:19 en dos
+  capturas separadas) y q sale. OK.
+
+ADIVINA
+D1 pistas ..................... 10 -> "mayor...", 100 -> "menor...". OK.
+
+TERMINAL DESDE EL MENU (entrada 8)
+E1 abre la shell .............. "FacilOS32 shell. Escribe ayuda." y
+  ver_archivos lista los 13 programas. OK.
+E2 "salir" en la terminal ..... vuelve al menu (no sale del sistema). OK.
+E3 ESC en el menu ............. entra en la terminal de texto del sistema
+  limpia (sin restos del menu) y responde a "version". OK.
+
+REGRESION v1.5/v1.6 (sin fallos)
+R1 t1_lib ..................... 258 pruebas 0 fallos; dormir100 dt=11. OK.
+R2 t2_gfx ..................... 12 pruebas 0 fallos; 30 cuadros 90 ticks. OK.
+R3 editor32 ................... BASE -> -EDITADO -> ok -> BASE-EDITADO. OK.
+R4 hola ....................... anillo 3, ticks, retorno 42. OK.
+R5 benchmark32/visor32 ......... mem 100 + 50 sc; vuelca el fichero. OK.
+R6 shell ...................... crear/leer/copiar/buscar funcionando
+  (buscar "Z" -> "no encontrado": correcto, el fichero no tiene Z). OK.
+R7 migracion v1.1 ............. (v1.6, sin cambios en FS). OK.
+
+INCIDENCIAS CAZADAS (3 bugs reales, todos por probar)
+I-1 pila de anillo 0 compartida (el gordo) .............................
+  Sintoma: al abrir una app desde el menu, al salir el sistema moria
+  (PANICO ex=6 "instruccion invalida" eip=0x13) o se colgaba en silencio;
+  la calculadora si se veia. Diagnosis: instrumentando el caso 0 de la
+  syscall, el marco guardado del padre (kern_esp_save) tenia "ret=0x10"
+  y esp0=0x8F000. Causa: padre e hijo usaban la MISMA pila de IRQ; el
+  trabajo en anillo 0 del hijo (locales de 384 B del caso 25 + marcos)
+  crecia hacia abajo y pisaba el marco del padre a 0x8ED80 (640 B de
+  margen). Al volver, _salir_usuario retornaba a un 0x10 cualquiera.
+  FIX (seg.c): pila de IRQ por nivel: 0x8F000 para el nivel 0 y tramos de
+  64 KB bajando desde 0x580000 para los anidados; zona 0x480000-0x580000
+  reservada (heap de usuario recortado de 5 MB a 1.5 MB). OK.
+I-2 fs_init() tarde ............ el arranque hacia kern_ejecutar antes de
+  fs_init(), asi que el FS no estaba montado -> caia a la terminal.
+  FIX: fs_init() en k32main antes del menu. OK.
+I-3 menu sucio al salir ....... la consola de texto escribe en el frente y
+  el menu quedaba debajo; y las apps se dibujaban encima del menu.
+  FIX (menu.c): limpiar el frente antes de cada hijo y al salir. OK.
+Ademas, fallo de HERRAMIENTA (no del SO): qrun anadia Enter a cada
+  comando, asi que "{DOWN}" seleccionaba ademas. Se anadio el sufijo "~"
+  (crudo) y las teclas que faltaban (* = + etc.).
+
+PENDIENTE: lo pedido por el usuario en la conversacion (aun NO hecho):
+  - meter los programas DENTRO de la ISO (hoy van en el disco de datos).
+  - explicar/ajustar el tamano de la ISO (1.5 MB fijo) y del .img (10 MB).

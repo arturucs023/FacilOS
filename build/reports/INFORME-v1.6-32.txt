@@ -1,0 +1,62 @@
+INFORME v1.6-32 - Bateria QEMU (15/15 OK)
+Metodo: tools/qrun.py (teclas + captura + serie) con copias en temp.
+Regresion R1-R9 (v1.5) + nuevas N1-N6. kernel32.bin 32008 B.
+
+R1 arranque .................. serie "v1.6", shell "version 1.6". OK.
+R2 ver_archivos ............... 9 programas (5 v2 + t1/t2/editor16/demo16
+  v3 con seg 64/78/85/92 y sumas OK, checksum global OK). OK.
+R3 hola ...................... anillo 3 + ticks=1974 (PIT 100 Hz: ~20 s de
+  sesion) + retorno 42. OK.
+R4 visor32 ................... un BASE-VISOR + retorno 0. OK.
+R5 editor32 .................. BASE -> -EDITADO -> ok -> retorno 0 ->
+  leer BASE-EDITADO. OK.
+R6 benchmark32 ................ mem 100 + 50 syscalls + retorno 0. OK.
+R7 paint32 ................... rojo (408,308) + verde (400,308) exactos
+  (destino por defecto = frente, sin cambios). OK.
+R8 editor32 sin args ......... uso + retorno 1. OK.
+R9 migracion v1.1 ............ detecta, guardar, FACILOS2 checksum OK. OK.
+
+N1 t1_lib .................... 258 pruebas 0 fallos, retorno 0.
+  t1dat tam=2048 seg=112 suma OK en disco (multisector desde anillo 3).
+  Cazados por t1 (tests mal, no lib): memmove-atras (vector mal
+  calculado: "0123434789") y reuso-fragmentos (fuga de 13 bloques en el
+  propio test). Cazado POR t1 (bug real): une_vecinos solo unia hacia
+  adelante; con lista LIFO las arenas sbrk jamas se unian (nb1 enorme).
+  FIX: union bidireccional con prev (ulib + mm.c nucleo, mismo patron).
+  Al reescribir el merge se metio auto-bucle (s->sig = q->sig = s):
+  colgaba todo recuento -> FIX con rest temporal. Leccion del hito.
+N2 editor16 .................. abre t1dat (2048), anexa "-E16", guarda:
+  tam=2053, cola "-E16\n", suma OK, retorno 0. OK.
+N3 t2_gfx .................... 12 pruebas 0 fallos, retorno 0; 30 cuadros
+  en 90 ticks (3/cuadro: dormir16 exacto). Cazado por t2 (test mal):
+  celda (404,74) era clave magenta, no verde -> se mira (408,74). OK.
+N4 demo16 .................... menu 1-4+q: mosaico/rebote 120 cuadros en
+  367 ticks/oleaje 60 pasos blit/transparencias (graficos: 0 fallos),
+  ficheros 8 KB crear/seek/parche/anexar/borrar (0 fallos), memoria 500
+  bloques con poda 150 vivos y union a 1 nodo (0 fallos), banco (50
+  limpiar/presentar, 16 KB R/W con tiempos), menu invalido rechazado,
+  q -> fin + retorno 0. App C de 458 lineas/9.5 KB estable. OK.
+N5 shell multisector ......... copiar t1dat->t1cop (2053 B identicos,
+  truncar+tramos), buscar_texto Z -> posicion 86 (primera Z natural con
+  patron x7: 86*7 mod 256 = 0x5A; determinista), leer_archivo por tramos
+  (binario + texto). OK.
+N6 dormir/temporizacion (I-1) . FALLO INICIAL: t1 y t2 se colgaban en el
+  primer dormir (pantalla quieta en "tiempo..."/"anim..."). Dialisis:
+  ticks-antes imprimia (u_ticks OK), dormir no volvia; timeout de giro
+  -> rc=-3 con dt=1 (ticks casi congelados en syscall); hola-hola en
+  shell avanzaba ~100/s (PIT bien en anillo 0). Medicion eflags en
+  syscall -> IF=0. CAUSA: puerta 0x80 = 0xEE = tipo INTERRUPCION DPL3
+  (no trampa: tipo 0xE), la CPU limpia IF al entrar. kbd_tecla sobrevive
+  porque hace sti() (patron existente). FIX: sti() en caso 17 antes del
+  bucle hlt. Tras FIX: dormir100 dt=11 ticks exactos, t1 y t2 completan.
+  Comentario corregido en idt.c (pon_trampa). Leccion del hito.
+
+HERRAMIENTAS: inyecta con first-fit (>=64) + sumas (cazado solape por
+  condicion OR mal: s+n>=b en vez de s+n<=b -> todos a seg 64; FIX).
+  -fzero-initialized-in-bss inerte con -fdata-sections (COMDAT .data$):
+  los static cero ocupan fichero (demo 13.3->9.3 KB al pasar a malloc);
+  documentado en LEEME. __chkstk_ms no-op anadida a ulib (marcos >4 KB).
+
+PENDIENTE (futuro, no regresiones): app multi-KLOC (hito de salida para
+  escritorio), journaling, E820, VESA-dinamico, Tab/Fn, VDI v1.6.
+  Transitorios: ninguno. Todo reproducible con build32.py + qrun.py.

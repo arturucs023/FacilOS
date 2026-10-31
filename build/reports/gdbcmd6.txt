@@ -1,0 +1,11 @@
+target remote 127.0.0.1:4674
+set architecture i386
+file build/kernel32.pe
+break *0x10008f
+continue
+x/8xw $esp
+info registers esp ebp eip
+stepi
+stepi
+info registers esp ebp eip cs ss
+quit

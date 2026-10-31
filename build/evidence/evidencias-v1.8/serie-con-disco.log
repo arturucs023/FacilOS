@@ -1,0 +1,26 @@
+FacilOS32 v1.8 arranca.
+programas en la ISO: 13
+menu rc=0
+Disco de datos listo. Archivos recuperados.
+FacilOS32 shell. Escribe ayuda.
+facil32:/> t1_lib
+t1_lib v1.6
+cadenas...
+printf...
+dec=-7 uns=7 hex=ff str=ok ch=! pct=%
+-12345 abcd
+memoria...
+ficheros...
+tiempo...
+ticks-antes=2339
+dormir100 rc=0 ticks-despues=2350 dt=11
+t1: 258 pruebas 0 fallos
+retorno: 0
+facil32:/> espacio_disco
+Espacio en disco:
+  Ocupados: 15
+  Libres: 49
+  Archivos: 14
+  Carpetas: 1
+  Bytes en archivos: 33499
+facil32:/> 

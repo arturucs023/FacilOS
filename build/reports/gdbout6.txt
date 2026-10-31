@@ -1,0 +1,27 @@
+0x0000fff0 in ?? ()
+The target architecture is set to "i386".
+Breakpoint 1 at 0x10008f
+
+Breakpoint 1, 0x0010008f in entrar_usuario ()
+0x8fc1c:	0x00200000	0x0000001b	0x00000216	0x002f0000
+0x8fc2c:	0x00000023	0x0008fee3	0xfffffff7	0x001021bd
+esp            0x8fc1c             0x8fc1c
+ebp            0x8fc34             0x8fc34
+eip            0x10008f            0x10008f <entrar_usuario+44>
+0x00200000 in ?? ()
+0x00200009 in ?? ()
+esp            0x2efffc            0x2efffc
+ebp            0x8fc34             0x8fc34
+eip            0x200009            0x200009
+cs             0x1b                27
+ss             0x23                35
+A debugging session is active.
+
+	Inferior 1 [process 1] will be detached.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]
+[Inferior 1 (process 1) detached]
+
+STDERR:
+warning: No executable has been specified and target does not support
+determining executable automatically.  Try using the "file" command.

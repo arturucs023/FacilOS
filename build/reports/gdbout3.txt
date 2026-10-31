@@ -1,0 +1,36 @@
+0x0000fff0 in ?? ()
+The target architecture is set to "i386".
+Breakpoint 1 at 0x200005
+
+Breakpoint 1, 0x00200005 in ?? ()
+0x00000000 in ?? ()
+0x00000001 in ?? ()
+0x00000003 in ?? ()
+0x001000c9 in isr6 ()
+0x001000cb in isr6 ()
+0x001000cd in isr6 ()
+0x00100325 in isr_comun ()
+0x00100326 in isr_comun ()
+0x00100327 in isr_comun ()
+0x00100328 in isr_comun ()
+0x0010032a in isr_comun ()
+0x0010032c in isr_comun ()
+eax            0x2a                42
+ebx            0x2f0000            3080192
+ecx            0x4                 4
+edx            0x0                 0
+esi            0x200000            2097152
+edi            0x1c0               448
+ebp            0x8fc34             0x8fc34
+esp            0x8fbf0             0x8fbf0
+eip            0x10032c            0x10032c <isr_comun+7>
+A debugging session is active.
+
+	Inferior 1 [process 1] will be detached.
+
+Quit anyway? (y or n) [answered Y; input not from terminal]
+[Inferior 1 (process 1) detached]
+
+STDERR:
+warning: No executable has been specified and target does not support
+determining executable automatically.  Try using the "file" command.

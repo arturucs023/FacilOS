@@ -1,0 +1,105 @@
+========================================================================
+FacilOS32 v1.8 - LEEME
+Un solo fichero: la ISO lleva dentro los 13 programas
+========================================================================
+
+Que hay de nuevo en v1.8
+------------------------
+* Los 13 programas van DENTRO de la ISO. No hace falta disco de datos,
+  ni segundo fichero, ni montar nada: se arranca desde el CD y ya.
+* La ISO es de solo lectura: el arranque copia el nucleo y el catalogo
+  de programas a RAM y trabaja desde ahi (0x100000 y 0x200000).
+* Sin disco, el sistema de archivos sigue funcionando en RAM
+  (pool de 256 KB en 0x600000): puedes crear y editar ficheros, no se
+  guardan al apagar.
+* La consola (pantalla) se refleja en el puerto serie: el log de QEMU
+  ya no solo cuenta el arranque, tambien los programas de texto.
+* En la terminal, escribir el nombre de un programa basta ("hola",
+  "t1_lib"...); "ejecutar <nombre>" sigue valiendo.
+
+Como arrancar
+-------------
+    qemu-system-i386 -cdrom build/FacilOS-v1.8-32.iso -m 32
+
+  Arranca directo al menu grafico. Con flechas eliges, Enter lanza,
+  ESC o "Salir" vuelve a la terminal de texto del sistema.
+
+  En VirtualBox: maquina 32 bits, 32 MB de RAM, CD/DVD con la ISO.
+  (Aviso conocido: VirtualBox puede no repintar el LFB; en QEMU se ve
+  bien. El contenido y los tests de este informe son de QEMU.)
+
+  Compatibilidad: si enganchas un disco de datos FACILOS2 (por ejemplo
+  build/FacilOS-v1.7-32-datos.img), todo funciona como en v1.7 y los
+  programas se toman del disco si existen y de la ISO si no.
+
+Como recompilar
+---------------
+    python tools/build32.py
+
+  Necesita nasm (tools/nasm) y un gcc de 32 bits (C:\Users\artur\gcc32).
+  Genera build/FacilOS-v1.8-32.iso. Con --disco genera ademas una
+  imagen de datos para probar la ruta de disco.
+
+Como se organiza la ISO
+-----------------------
+  LBA 0            sector de arranque (512 B, El Torito, medio=2)
+  LBA 1..128       kernel32.bin (36 KB) -> se copia a 0x100000
+  LBA 129          catalogo F32C (2 KB): 13 entradas de 32 B
+  LBA 130..196     los 13 programas F32X, uno tras otro
+  resto            relleno hasta la imagen de 1.44 MB que exige el BIOS
+
+  El arranque lee por CHS (AH=02) porque el BIOS solo permite arrancar
+  desde la "disquete virtual" de El Torito. Los LBAs del catalogo y de
+  los datos van parcheados en el sector de arranque (bytes 496-501).
+
+  Formato del catalogo (F32C): "F32C", ver=1, n, dat_lba, y n entradas
+  de 32 B: nombre[15], tipo, lba(4), tam(4).
+
+  Formato de cada programa (F32X v1/v2/v3): "F32X", ver, ent, tam, bss
+  y a continuacion el plano de codigo. El cargador quita la cabecera y
+  carga el plano en 0x200000 (ver prog/prog.ld); la entrada es ent.
+
+Tamano de la ISO: la limitacion del BIOS, no del contenido
+----------------------------------------------------------
+  Util real dentro de la ISO:      134 KB  (kernel 36 KB + 13 programas)
+  Tamano del fichero:           1.44 MB
+
+  Motivo: para arrancar, SeaBIOS solo admite El Torito con emulacion de
+  disquete (medio=2), y esa imagen tiene que medir 1.44 MB (2880
+  sectores). Sin emulacion (medio=0) carga el sector de arranque, pero
+  ni el DL ni la lectura por LBA del CD sirven, y con medio=2 e imagen
+  corta o sin "sector count = 1" el BIOS se queda colgado. Probeado en
+  QEMU 11.1 / SeaBIOS.
+
+  Para bajar a ~150 KB de verdad haria falta dejar de usar el BIOS para
+  el CD: un pequeño driver ATAPI/PIO en el arranque (leer el CD por
+  puertos 0x1F0 en modo real) y una ISO normal, sin imagen de disquete.
+  Es el siguiente paso natural si el tamano importa.
+
+Memoria (QEMU -m 32)
+--------------------
+  0x0006000  fuente 8x16 del BIOS
+  0x0007000  datos del arranque (VESA, LBAs de la ISO)
+  0x0009000  pila del arranque
+  0x0010000  copia del kernel (128 KB) -> 0x100000
+  0x0020000  copia de la carga util (68 sectores) -> catalogo + programas
+  0x0100000  kernel (128 KB de ventana)
+  0x0200000  programas en anillo 3 (codigo + BSS + pila de usuario)
+  0x0580000  pilas de IRQ anidadas (64 KB por nivel)
+  0x0600000  pool de datos del sistema de archivos (256 KB, sin disco)
+  0x0800000  heap del kernel (2 MB)
+  0x0A00000  marco-back del LFB (800x600x32)
+  0x0C00000  copia de preservacion del padre (syscall 25)
+  0x0FD00000 LFB de VESA
+
+Pruebas
+-------
+  Ver build/INFORME-v1.8-32.txt (bateria completa, 22/22) y las capturas
+  y logs en build/evidencias-v1.8/.
+  Herramienta: tools/qrun.py (teclas por monitor de QEMU, capturas y
+  log serie) y tools/qwin.ps1 (lo mismo con tope de tiempo).
+
+  Notas del harness: {UP}/{DOWN}/{LEFT}/{RIGHT}/{RET}/{ESC} y un "~" al
+  final para no anadir Enter; {SHOT:ruta} = captura; {SLEEP:seg} =
+  espera (las apps tardan 1-2 s en redibujar 800x600); {K:0x1b} = tecla
+  cruda de QEMU (scancode en hexadecimal).

@@ -1,0 +1,67 @@
+FacilOS32 v1.7 - Entorno grafico (menu) + calculadora y mas
+Hecho desde cero, sin Linux, Windows, DOS, GRUB ni dependencias externas.
+Toolchain: MinGW-w64 i686 (gcc -m32 -ffreestanding -nostdlib) + NASM.
+Arranca DIRECTO en el entorno grafico (menu). Sin raton: flechas + Enter.
+Linea 16-bit (v1.3) y 32-bit v1.5/v1.6 intactas.
+===============================================================================
+
+ARRANQUE
+  1. El nucleo carga "menu" y lo ejecuta en anillo 3.
+  2. Menu: 9 entradas, resaltado con flechas, Enter abre, ESC sale.
+  3. Al salir del menu (ESC o "Salir") entra la terminal de texto.
+  4. Sin disco de datos: arranca igual, avisando por consola.
+
+MENU (flechas arriba/abajo, Enter, ESC)
+  1 Calculadora .... 0-9 + - * / Enter(=) C Retroceso q/ESC  (12-4= -> 8)
+  2 Reloj .......... HH:MM:SS desde el arranque, q/ESC
+  3 Adivina ........ numero 1-100 con pistas mayor/menor, cuenta intentos
+  4 Editor de texto  pide nombre (grafico), editor16: ESC g=guardar, ESC s
+  5 Visor de archivos pide nombre, vuelca el fichero
+  6 Paint .......... dibuja: flechas, espacio, c=color, x=limpiar, q
+  7 Demo del sistema abre demo16 (menu de 4 escenas)
+  8 Terminal ....... shell de texto dentro del menu; "salir" vuelve al menu
+  9 Salir .......... vuelve a la terminal de texto del sistema
+  Editor/Visor piden el nombre con un campo de texto grafico (eco en dorso).
+
+NUEVO EN EL NUCLEO (v1.7)
+- Cargador compartido kern_ejecutar2(dir,base,args,fresco) usado por la
+  shell, el arranque y la syscall 25. Antes estaba duplicado en shell.c.
+- syscall 25 ejecutar: lanza un hijo en anillo 3 PRESERVANDO al padre
+  (copia su imagen a 0xC00000 y restaura al volver; guarda fds y brk).
+  No se puede anidar dos veces seguidas (en_sys25).
+- syscall 26 terminal: abre la shell anidada (shell_anidada++); "salir"
+  en terminal vuelve al menu, "menu" relanza el entorno.
+- syscall 27 hay_tecla: consulta sin bloquear (reloj, bucles).
+- lanzar_usuario2(..., fresco): fresco=0 = hijo anidado.
+- Pila de anillo 0 propia por nivel (ver abajo: bug I-1).
+- shell: comandos "menu" y "salir"; ayuda los lista.
+- k32main: fs_init() antes del menu (si no, el FS no estaba montado y el
+  arranque caia a la terminal: cazado al probar).
+
+MAPA DE MEMORIA v1.7 (documentado, requiere >=16 MB)
+  0x100000 nucleo (<=128 KB)  0x200000 programa (plano+bss <=768 KB)
+  0x2F0000 args (pila de usuario por debajo, 64 KB utiles)
+  0x300000-0x480000 heap de usuario (1.5 MB, sbrk)
+  0x480000-0x580000 RESERVADO: pilas de anillo 0 de hijos anidados
+  0x580000-0x800000 libre     0x800000-0xA00000 heap del nucleo (2 MB)
+  0xA00000 dorso grafico      0xC00000-0xCF0000 copia del padre (sys 25)
+  Pila anillo 0 del nivel 0: 0x8F000 (64 KB, la de siempre).
+  Cada nivel anidado (fresco=0) toma un tramo de 64 KB bajando desde
+  0x580000:，最多 8 niveles antes de reutilizar.
+
+PROGRAMAS EN EL DISCO (13): hola, editor32, visor32, paint32,
+  benchmark32 (v1.5) | t1_lib, t2_gfx, editor16, demo16 (v1.6) |
+  menu, calculadora, reloj, adivina (v1.7).
+
+REGRESION v1.5/v1.6 (QEMU, todas OK, ver INFORME-v1.7-32.txt)
+  hola (anillo 3, rc 42), editor32 (BASE-EDITADO), visor32, paint32
+  (pixeles exactos), benchmark32, t1_lib 258/0, t2_gfx 12/0, demo16 4
+  escenas, migracion v1.1->v1.2, shell (crear/leer/copiar/buscar).
+
+LIMITACIONES v1.7
+- Sin raton (por decision: flechas+Enter), sin ventanas, sin escritorio.
+- sys25 no anidable; el padre se restaura copiando 768 KB (lento pero
+  invisible: el menu redibuja tras volver).
+- El menu necesita el FS montado; sin disco arranca en terminal.
+- Heredado de v1.6: ficheros <=65535 B, sin journaling, sin VESA
+  dinamico, sin E820, teclado sin Tab/Fn.

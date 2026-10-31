@@ -1,0 +1,45 @@
+INFORME v1.5-32 - Bateria QEMU (9/9 OK, 27/09/2026)
+Metodo: tools/qrun.py (teclas por monitor + captura + serie) con copia
+del disco en temp (original intacto). Pantallazos leidos a pixel.
+Tamano plano+fichero (limite 512): hola 284, editor32 471, visor32 316,
+paint32 504, benchmark32 428. kernel32.bin 27752 B (128 sectores sobran).
+
+P1 arranque+version .......... serie "FacilOS32 v1.5 arranca.", shell
+  "version 1.5". OK.
+P2 ver_archivos .............. lista hola editor32 visor32 paint32
+  benchmark32 (inyecta.py en cadena OK). OK.
+P3 ejecutar hola ............. "Hola desde programa F32X." + "anillo 3"
+  (GDT/TSS/iret verificados) + "ticks=463" + "retorno: 42" (salir+rc). OK.
+P4 visor32 (I-1) ............. FALLO INICIAL: "BASE-VISOR" repetido hasta
+  llenar pantalla y programa colgado. Causa: syscall leer(4) siempre
+  devolvia desde offset 0 (sin posicion por fd). FIX: fds_pos[16] en
+  exec.c (0 en abrir/crear, avanza en leer, 0=EOF). Tras FIX: un solo
+  "BASE-VISOR" + "retorno: 0". Tambien probado con binario (corta en
+  NUL). OK.
+P5 editor32 (I-2) ............ FALLO INICIAL: tras escribir linea, ESC no
+  salia (la "g" entraba como texto). Causa: teclado.c sin scancode 0x01
+  (ESC). FIX: tk_mete(27) junto a Enter/Retroceso. Tras FIX, cadena
+  completa: abrir "prueba" (eco "BASE"), escribir "-EDITADO"+Enter,
+  ESC g -> "ok" + "retorno: 0"; "leer_archivo prueba" -> "BASE-EDITADO";
+  imagen de disco: prueba tam=13 ("BASE-EDITADO\n") + checksum tabla OK.
+  Editor verificado punta a punta (anillo3 -> FS -> ATA). OK.
+P6 benchmark32 ................ "b32", "mem x100: 0 t n=100" (100 sbrk de
+  64 B OK), 50 puntos de syscall, "fin", "retorno: 0". OK.
+P7 paint32 ................... titulo + dibujo con flechas/espacio/c:
+  censo de pixeles = gris+blanco (texto) + 2 de lienzo: rojo (170,0,0)
+  en (408,308) [der+abajo+espacio] y verde (0,170,0) en (400,308)
+  [izq+espacio, color rotado]. Posiciones y colores EXACTOS + "retorno:
+  0". Gfx desde anillo 3 verificado. OK.
+P8 editor32 sin args ......... "uso: ed f" + "retorno: 1" (uso + codigo
+  de error). OK.
+P9 migracion v1.1 (regresion) . disco v11-origen: "v1.1 detectado...",
+  guardar -> "Guardado en disco.", imagen resultante magic FACILOS2 +
+  checksum OK (vacio como el origen). Núcleo v1.5 no rompe v1.1. OK.
+
+INCIDENCIAS: I-1 offset de lectura (exec.c), I-2 ESC (teclado.c). Sin
+transitorios. Diseno documentado (no bug): escribir(5) reemplaza; apps
+con sys.h por el tope 512 (ulib sin enlazar); editor32 en ASM (en C
+minimo 1152 B > 492); args ya recortados por la shell.
+
+PENDIENTE (futuro): programas multisector, escritura parcial, VESA-
+dinamico, E820, VDI v1.5 (VBoxManage ausente), VirtualBox grafico.

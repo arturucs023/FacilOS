@@ -1,0 +1,66 @@
+INFORME FacilOS32 v1.4 - Nucleos hibridos ASM+C probados en QEMU
+===============================================================================
+Binarios: boot32.bin 512 B, kernel32.bin 23524 B,
+FacilOS-v1.4-32.iso 1517568 B, FacilOS-v1.4-32-datos.img 10 MB (con "hola").
+Metodo: QEMU i386 + monitor (sendkey/screendump/xp) + serie + -d int;
+inspect12.py desde fuera; EIP de fallo via objdump.
+
+CAPA 0 - TOOLCHAIN Y ARRANQUE
+ T0. MinGW-w64 i686 + NASM: kernel C minimo (serie+VGA) arranca en PM ..... OK
+     (shot32.png). Enlace PE con .text en 0x100000 + objcopy a plano.
+     Nombres COFF con _ (entry32.asm en -f win32).
+
+CAPA 1 - IDT + IRQ + LIBC
+ T1. IDT 256 + PIC (timer+teclado) + kmalloc/kfree + kprintf + strcmp ..... OK
+     (reuso c==a, ticks=91/182/273, scancodes make+break).
+ T2. Excepciones: int $0 -> PANICO ex=0 eip=... + halt ..................... OK
+     (Leccion: GCC -O1 elimina `1/z` volatil; usar int $0 para probar.)
+
+CAPA 2 - CONSOLA + TECLADO + VESA
+ T3. Consola VGA (scroll + cursor HW) + teclado ES por IRQ ................ OK
+     (eco, 24 lineas con scroll visible shot32s.png, flechas UP/DOWN).
+ T4. VESA 800x600x32 prefijado en loader + fuente + consola gfx en C ...... OK
+     (shot32g4.png). Leccion: segmento!=lineal (ES=0x0600, no 0x6000);
+     y 1130 copiar ANTES del modo (volcado xp: 'A' correcta en 0x60000
+     demostro que la copia iba a otro sitio).
+
+CAPA 3 - ATA + FS + SHELL
+ T5. ATA PIO LBA28 + FS v1.2 identico (crear/escribir/leer/copiar/mover/
+     renombrar/buscar/editar/borrar/ver/espacio/guardar/historial/fecha
+     RTC/teclado) + persistencia entre reinicios .......................... OK
+     (shot32fs.png, shot32v.png: counts 3/61/1/2/7 cuadran).
+ T6. Migracion v1.1 en 32-bit: aviso amarillo, ver/leer en RAM, guardar,
+     reboot verde con viejos + dato "contenido_v11" intactos ............... OK
+     (shotmig32.png).
+ T7. fecha RTC 26/09/26 20:09:39 (separadores corregidos) ................. OK
+ BUG GRAVE (caza mayor): ata_leer(LBA_TAB, tabla, 6) escribia 3072 B en un
+     array de 2688 -> 384 B sobre gfx_vars + inicio del IDT -> pantalla
+     negra + triple-falta en la primera IRQ (EIP=cli tras hlt, error IDT
+     0x102). Detectado por: -d int (EIP) + volcado IDT en shell (d64=0).
+     Fix: buffer tabsec de 6 sectores + memcpy (kernel 23460).
+     El mismo patron en v1.1 (tab11 pila, 256 B de mas) tambien corregido.
+
+CAPA 4 - CARGADOR + SYSCALLS
+ T8. F32X (cabecera 16 B, base 0x200000) + int 0x80 (imprimir/ticks) ...... OK
+     (shotexecD.png: "Hola desde programa F32X." + "ticks=425" +
+     "retorno: 42", shell viva).
+     Lecciones: (1) entry = offset en PLANO, no en fichero (era 0 y debia
+     ser 16 -> se ejecuta la cabecera); el cargador copia solo el plano.
+     (2) NASM-win32 necesita [SECTION .text] para exportar (_start salia
+     como U). (3) prog.ld debe unir .rdata de COFF (no .rodata ELF).
+     (4) sin "memory" en el clobber del int, GCC borra los buffers
+     (stores muertos -> prints vacios).
+ T9. Errores: inexistente, no-F32X, version/entry/tam mal -> mensajes ..... OK
+     (shotfin.png). Header real: F32X/ver=1/entry=0/size=292.
+
+PENDIENTE DOCUMENTADO (futuro, base DOOM)
+ - E820 real en loader v2 (heap validado) + deteccion RAM.
+ - Modo usuario (anillos, TSS, syscalls con proteccion).
+ - ELF + mas syscalls (ficheros, memoria, video) para DOOM.
+ - VESA dinamico en 32-bit (trampolin a modo real o VM86).
+ - resolucion/editor completo/historial-flechas en shell32 (parcial).
+ - Migracion v1.1 probada en 32-bit (codigo presente, test T6).
+ - Teclado americano ES Merchant? (mapeo base presente).
+
+EVIDENCIAS: shot32.png, shot32s.png, shot32g4.png, shot32fs.png,
+shot32v.png, shotexecD.png, shotfin.png.

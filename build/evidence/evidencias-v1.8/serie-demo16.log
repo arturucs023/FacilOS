@@ -1,0 +1,70 @@
+FacilOS32 v1.8 arranca.
+programas en la ISO: 13
+Sin disco de datos (v1.8: los programas vienen de la ISO). Memoria temporal.
+FacilOS32 shell. Escribe ayuda.
+facil32:/> demo16
+demo16: plataforma v1.6
+
+demo16 v1.6
+1 graficos  2 ficheros  3 memoria  4 banco  q salir
+elige: 1
+
+== mosaico ==
+   mosaico presentado (0,0,800,320)
+
+== rebote (120 cuadros) ==
+120 cuadros en 364 ticks (30/10 cuadros)
+
+== oleaje con blit ==
+   oleaje: 60 pasos con blit [-1,0]
+
+== transparencias ==
+   nave sobre fondo (clave magenta)
+graficos: 0 fallos
+
+demo16 v1.6
+1 graficos  2 ficheros  3 memoria  4 banco  q salir
+elige: 2
+
+== ficheros multisector (8 KB) ==
+ficheros: 0 fallos
+
+demo16 v1.6
+1 graficos  2 ficheros  3 memoria  4 banco  q salir
+elige: 3
+
+== memoria (500 bloques) ==
+vivos tras poda: 150
+bloques 3->1 ocup 4000->0 libre 119712->123744
+memoria: 0 fallos
+
+demo16 v1.6
+1 graficos  2 ficheros  3 memoria  4 banco  q salir
+elige: 4
+
+== banco: syscalls ==
+........................................................................................................................................................................................................
+200 imprimir: 0 ticks
+200 ticks: 0 ticks
+
+== banco: memoria ==
+100 malloc+free 256 B: 0 ticks
+20 sbrk 1 KB: 0 ticks (fuga a proposito: se resetea)
+
+== banco: graficos ==
+50 limpiar 800x600: 4 ticks
+50 presentar: 50 ticks
+1000 leer_pixel: 0 ticks
+
+== banco: ficheros ==
+escribir 16 KB: 0 ticks
+leer 16 KB: 0 ticks
+banco fin.
+
+demo16 v1.6
+1 graficos  2 ficheros  3 memoria  4 banco  q salir
+elige: q
+fin demo16.
+retorno: 0
+facil32:/> salir
+Saliendo de la terminal...

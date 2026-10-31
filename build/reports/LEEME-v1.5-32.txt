@@ -1,0 +1,67 @@
+FacilOS32 v1.5 - Espacio de usuario (anillo 3) + 4 aplicaciones
+Hecho desde cero, sin Linux, Windows, DOS, GRUB ni bibliotecas externas.
+Toolchain: MinGW-w64 i686 (solo gcc -m32 -ffreestanding -nostdlib) + NASM.
+La linea 16-bit (v1.3) sigue intacta; la 32-bit sube de v1.4 a v1.5.
+===============================================================================
+
+ARCHIVOS
+- FacilOS-v1.5-32.iso ..... ISO de arranque 32-bit (1.5 MB, El Torito).
+- FacilOS-v1.5-32-datos.img Disco 10 MB formato v1.2 con 5 programas.
+- (VDI: VBoxManage convertfromraw FacilOS-v1.5-32-datos.img out.vdi)
+- src32/ .................. nucleo (ASM arranque/IDT/GDT + C).
+- prog/ ................... sys.h (syscalls), start.asm, hola/visor/paint/
+                            benchmark en C, editor32 en ASM, ulib (SDK).
+- tools/build32.py ........ constructor + inyecta.py (inyecta los 5).
+
+ANILLO 3 (seg.c)
+- GDT con segmentos de usuario (DPL3) + TSS (esp0 0x8F000) + iret a
+  programa. Puerta 0x80 DPL3. lanzar_usuario(entry, args@0x2F0000).
+- Programa: base 0x200000, pila usuario 0x2E0000, heap sbrk 0x300000-
+  0x400000, args recortados y terminados en NUL en 0x2F0000.
+- F32X v2: cabecera 20 B (magic, ver, entry offset en plano, tam
+  fichero, bss_tam). BSS a cero al cargar (NOLOAD en fichero).
+
+SYSCALLS int 0x80 (prog/sys.h; el nucleo preserva todo menos eax)
+  0 salir(cod) -> la shell muestra "retorno: N"
+  1 imprimir(ptr,len) .... corta en NUL y en 2048 (pasa len de sobra)
+  2 ticks ................ timer IRQ0
+  3 abrir / 9 crear ...... devuelven fd (16 fds, offset propio desde 0)
+  4 leer ................. avanza offset; 0 = fin de fichero
+  5 escribir ............. REEMPLAZA el fichero (max 512) + guarda a disco
+  6 cerrar
+  7 memoria(n) ........... sbrk (sube de 4 en 4)
+  8 leer_tecla ........... bloquea; ASCII o 0x101-0x104 (flechas); ESC=27
+  10 pixel 11 linea 12 rectangulo 13 texto 14 limpiar_pantalla (LFB gfx)
+
+APLICACIONES (en disco; "ejecutar <prog> [args]")
+- hola (284 B) ......... demo minima; imprime, dice anillo, ticks, rc 42.
+- visor32 (316 B) ...... vuelca archivo a pantalla por bloques de 128.
+- editor32 (471 B) ..... editor: abre/muestra, escribe/Enter/Retroceso,
+                         ESC g=guardar (crea si no existe), ESC s=salir.
+                         Es por ANEXADO (no edita en medio). "uso: ed f".
+- paint32 (504 B) ...... dibuja en LFB: flechas, espacio, c=color, x=
+                         limpiar, q=salir. Titulo corto por los 512 B.
+- benchmark32 (428 B) .. 100 sbrk+relleno y 50 syscalls, tiempos en ticks.
+
+PRESUPUESTO 512 B (fichero FS = 1 sector; caben 492 de plano + 20 cab):
+- Las apps usan sys.h directo (wrappers inline). ulib.c queda como SDK
+  fuente para futuros programas multisector (NO se enlaza: no cabria).
+- editor32 es ASM pelado (registros fijos ESI/EBP/EDI, syscalls de 7 B);
+  en C no bajaba de 1152 B. paint32/bench recortados al byte (ver codigo).
+
+SHELL: ejecutar prog args | args sin espacios iniciales (la shell los
+recorta; los programas pueden asumirlo) | "retorno: N" al salir.
+
+ARREGLOS v1.5 (cazados probando las apps en QEMU, ver INFORME):
+- leer(4) no avanzaba offset: visor imprimia el fichero en bucle.
+  Ahora cada fd lleva posicion (0 en abrir/crear, 0 = EOF).
+- Teclado sin ESC (sc 0x01): editor no podia salir. Anadido (27).
+
+LIMITACIONES v1.5 (documentadas):
+- Programas <= 512 B de fichero; BSS <= 64 KB; sin reubicacion (fijo).
+- escribir reemplaza (sin escritura parcial con offset).
+- Sin VESA-dinamico (0x143 o texto); heap fijo; E820 pospuesto.
+- QEMU verificado. VirtualBox: solo arrangue; LFB con incidencia de
+  repintado del lado host ya conocida (el invitado dibuja bien).
+
+PRUEBAS REALES (QEMU, 9/9): ver INFORME-v1.5-32.txt.

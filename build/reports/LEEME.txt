@@ -1,0 +1,63 @@
+FacilOS v1.3 - Sistema facil en espanol (shell + disco + graficos basicos)
+Hecho desde cero en ensamblador x86 16-bit, modo real, solo BIOS. Sin Linux ni Windows.
+(C y C++ independientes, desde cero y sin sistema, aprobados para fases futuras.)
+===============================================================================
+
+ARCHIVOS EN build:
+- FacilOS-v1.3.iso ....... ISO de arranque (1.5 MB, El Torito). Solo lectura.
+- FacilOS-v1.3-datos.img . Disco de datos 10 MB (imagen RAW, formato v1.2 compatible).
+- FacilOS-v1.3-datos.vdi . El mismo disco en formato VirtualBox.
+- FacilOS-v1.1.iso / FacilOS-v1.2.iso / discos v1.1/v1.2 .... conservados.
+- boot.bin, kernel.bin, floppy.img : piezas intermedias.
+- src/*.asm : fuentes (boot.asm, kernel.asm, kernel_v11.asm).
+- tools/*.py : generadores e inspectores (mkiso12/13, mkfloppy, mkdatos, qrun...).
+- shotpg.png / shotpg1024.png / shot13.png : prueba_grafica en QEMU.
+- shot16.png / shot24.png : prueba_grafica forzada a 16/24 bpp.
+- shot600/1080/scroll/vbox_*.png : evidencias v1.2 conservadas.
+- LEEME.txt / INFORME.txt : este archivo y la bateria de pruebas (48).
+
+NOVEDADES v1.3 (sobre v1.2, sin romper nada):
+- Primitivas graficas reutilizables (solo modo grafico, con clipping obligatorio):
+    video_pixel(x, y, color) ......... un pixel, con clip
+    video_rectangulo(x, y, w, h, color) relleno con clip (rep stosd/stosw)
+    video_linea(x1, y1, x2, y2, color) Bresenham todas direcciones + clip
+    video_limpiar(color) ............. rellena todo (respeta pitch)
+    video_texto_xy(x, y, texto, color) fuente 8x16 en cualquier posicion
+  Coordenadas negativas se recortan (Ej: rectangulo(-20,-10,100,100) dibuja
+  solo lo visible sin corromper nada). Nunca se escribe fuera del framebuffer.
+- Colores nombrados (attrs CGA): COLOR_NEGRO/AZUL/VERDE/CYAN/ROJO/MAGENTA/
+  MARRON/GRIS/GRIS_OSCURO/AZUL_CLARO/VERDE_CLARO/CYAN_CLARO/ROJO_CLARO/
+  MAGENTA_CLARO/AMARILLO/BLANCO. 32bpp XRGB, 24bpp BGR, 16bpp con las
+  mascaras reales del modo VBE (con reserva a 5:6:5).
+- Framebuffer siempre dinamico (PhysBasePtr), pitch real de VBE (sin asumir
+  pitch = ancho*BPP), modos con bit LFB exigido, validacion + vuelta a texto
+  ante cualquier fallo.
+- Comando prueba_grafica : test visual diagnostico (fondo, rectangulos,
+  lineas H/V/diagonales, puntos, texto, colores, sondas de clipping) mas
+  resumen (resolucion/BPP/pitch + OKs). Requiere modo grafico.
+- Renderer propio tambien para el cursor (guion XOR) y la terminal grafica;
+  en modo grafico NO se usa BIOS para dibujar (solo para fijar el modo).
+
+COMO USAR EN QEMU (entorno principal de pruebas):
+  qemu-system-i386 -cdrom build/FacilOS-v1.3.iso -hda build/FacilOS-v1.3-datos.img -boot order=d -m 32
+  facil:/> resolucion 800x600
+  facil:/> prueba_grafica
+  facil:/> resolucion 80x25
+
+COMO USAR EN VIRTUALBOX (secundario; ver problema conocido abajo):
+  Igual que v1.2 con FacilOS-v1.3.iso + FacilOS-v1.3-datos.vdi.
+
+COMANDOS (todos con _ , opciones con --): mismos de v1.2 mas:
+  prueba_grafica ......... test visual (requiere modo grafico)
+
+LIMITACIONES v1.3 (documentadas, no simuladas):
+- 64 entradas max, 512 letras por archivo, nombres 31 sin espacios (igual v1.2).
+- Sin raton, ventanas, escritorio ni multitarea (fases v1.4+).
+- Editor/historial/disco: igual que v1.2.
+- PROBLEMA CONOCIDO VirtualBox: en el equipo del usuario (7.2.2/VBoxVGA),
+  el modo texto refresca bien pero la ventana no repinta el framebuffer en
+  modo grafico (el invitado dibuja bien: al forzar repintado aparece todo).
+  En QEMU funciona perfecto. QEMU es el entorno de referencia de v1.3.
+  No se metieron hacks especulativos por este motivo.
+
+PRUEBAS REALES (QEMU, no simuladas): ver INFORME.txt (48 pruebas).

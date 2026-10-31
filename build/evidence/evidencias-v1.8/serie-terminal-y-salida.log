@@ -1,0 +1,12 @@
+FacilOS32 v1.8 arranca.
+programas en la ISO: 13
+Sin disco de datos (v1.8: los programas vienen de la ISO). Memoria temporal.
+FacilOS32 shell. Escribe ayuda.
+facil32:/> salir
+Saliendo de la terminal...
+menu rc=0
+Sin disco de datos (v1.8: los programas vienen de la ISO). Memoria temporal.
+FacilOS32 shell. Escribe ayuda.
+facil32:/> version
+FacilOS32 version 1.8 - Shell 32-bit en C.
+facil32:/> 

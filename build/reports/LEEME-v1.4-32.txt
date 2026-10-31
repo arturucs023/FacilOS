@@ -1,0 +1,49 @@
+FacilOS32 v1.4 - Nucleo 32-bit hibrido ASM + C (linea experimental)
+Hecho desde cero, sin Linux, Windows, DOS, GRUB ni bibliotecas externas.
+Toolchain: MinGW-w64 i686 (solo gcc -m32 -ffreestanding -nostdlib) + NASM.
+La linea 16-bit (v1.3) sigue intacta y funcional; esta es la via 32-bit.
+===============================================================================
+
+ARCHIVOS
+- FacilOS-v1.4-32.iso ..... ISO de arranque 32-bit (1.5 MB, El Torito).
+- FacilOS-v1.4-32-datos.img Disco 10 MB formato v1.2 compatible, con "hola".
+- FacilOS-v1.4-32-datos.vdi  El mismo disco en formato VirtualBox.
+- src32/ .................. fuentes 32-bit (ASM arranque/IDT + C).
+- prog/ ................... programas ejemplo (hola.c, sys.h, start.asm).
+- tools/build32.py ........ constructor completo + tools/inyecta.py.
+
+ARQUITECTURA
+- boot32.asm (16-bit, 512 B): A20, VESA 800x600x32 (modo 0x143 verificado,
+  reserva a texto), fuente 8x16 a 0x6000, bootinfo en 0x7000, carga 128
+  sectores a 0x10000, GDT plana, salto a protegido, copia a 0x100000.
+- entry32.asm: pila 0x90000, puesta a cero de BSS, llamada a kmain.
+- Enlace PE (ld solo sabe PE) con .text exactamente en 0x100000 +
+  objcopy a plano. Ojo COFF: los simbolos C llevan _ delante en ASM.
+- kernel C: IDT 256 + PIC (timer+teclado) + 20 excepciones con panico,
+  libc propia (string/memoria, kmalloc first-fit con union, kprintf),
+  consola texto VGA (scroll+cursor HW) y grafica LFB 32bpp (fuente BIOS),
+  teclado ES/americano por IRQ, ATA PIO LBA28, FS formato v1.2 identico
+  (incluye migracion v1.1->RAM), shell con ~25 comandos, RTC para fecha.
+- Ejecutables F32X: cabecera 16 B (magic, version, entry offset en plano,
+  tam), base 0x200000, syscall int 0x80 (1=imprimir, 2=ticks), retorno
+  con ret. Ojo programs: [SECTION .text] obligatorio en NASM-win32 para
+  exportar, y "memory" en el clobber del int (si no, GCC borra buffers).
+
+SHELL 32-bit (subconjunto documentado, mismos nombres que 16-bit):
+  ayuda ver_archivos entrar_carpeta donde_estoy crear_carpeta crear_archivo
+  escribir_archivo leer_archivo copiar_archivo mover_archivo
+  renombrar_archivo buscar_texto editar_archivo borrar_archivo
+  borrar_carpeta espacio_disco guardar version limpiar eco fecha quien_soy
+  historial teclado ejecutar
+  Sin resolucion en 32-bit (el modo lo fija el loader; cambiarlo requiere
+  retorno a modo real = futuro).
+
+LIMITACIONES v1.4-32 (documentadas):
+- Todo en anillo 0 (sin modo usuario; anillos/TSS = futuro).
+- Heap fijo 2 MB en 0x400000 (asume RAM alta; E820 pospuesto en loader v2).
+- Programas <= 512 B, sin BSS inicializado, una sola seccion plana.
+- Syscalls: imprimir y ticks (el resto = futuro, base DOOM).
+- Sin VESA-dinamico en 32-bit (0x143 o texto).
+- QEMU es el entorno de pruebas. VirtualBox sin probar en 32-bit.
+
+PRUEBAS REALES (QEMU): ver INFORME-v1.4-32.txt.

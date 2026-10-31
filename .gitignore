@@ -1,0 +1,6 @@
+﻿# Artefactos regenerables del build
+build/bin/
+build/logs/
+build/images/
+build/programs/
+__pycache__/

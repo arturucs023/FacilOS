@@ -1,0 +1,17 @@
+target remote 127.0.0.1:4674
+set architecture i386
+file C:/Users/artur/Documents/sistema/build/kernel32.pe
+break *0x100090
+continue
+info registers esp ebp eip
+x/4xw $esp
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+stepi
+info registers esp ebp eip
+quit

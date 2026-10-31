@@ -1,0 +1,124 @@
+INFORME FacilOS v1.3 - Bateria de 48 pruebas reales (QEMU; VBox secundario)
+===============================================================================
+Binarios: boot.bin 512 B, kernel.bin 27073 B, floppy.img 1.44 MB,
+FacilOS-v1.3.iso 1517568 B, FacilOS-v1.3-datos.img 10 MB (checksum 0x30).
+Metodo: QEMU i386 + monitor (sendkey) + serial + screendump; inspectores
+inspect11.py / inspect12.py desde fuera; hash SHA256 para "disco intacto".
+
+DISCO FRESCO v1.2
+ 1. Arranque ISO+HDD: banner v1.2 + verde "Disco de datos listo..." + facil:/> ... OK
+ 2. ayuda / ayuda escribir_archivo (sintaxis [--agregar] corregida) ............ OK
+ 3. fecha -> 26/09/2026 + hora ................................................ OK
+ 4. crear_carpeta docs + ver por secciones CARPETAS/ARCHIVOS ................... OK
+ 5. entrar_carpeta docs/../..// + donde_estoy + prompt azul facil:/docs> ....... OK
+ 6. crear/escribir/leer archivo (10 B) ........................................ OK
+ 7. copiar_archivo nota docs/copia (ruta destino) .............................. OK
+ 8. renombrar_archivo copia -> copia2 ......................................... OK
+ 9. buscar_texto copia2 hola -> posicion 0 .................................... OK
+10. mover_archivo copia2 /movida + leer_archivo movida ........................ OK
+11. ver_archivos --todo con fechas DD/MM/AA ................................... OK
+12. espacio_disco (5 ocup, 3 arch, 2 carp, 20 B) ............................... OK
+13. guardar + reboot: verde + archivos intactos ................................ OK
+14. teclado es/us + persistencia tras guardar+reboot ........................... OK
+15. historial (lista 1-7) + flechas arriba re-ejecutan ......................... OK
+16. editar_archivo: agrega lineas, :guardar guarda, :salir descarta ............ OK
+17. eco/quien_soy/info_sistema/version/limpiar ................................. OK
+18. resolucion lista 20 modos unicos ........................................... OK
+19. resolucion 800x600 + captura nitida (shot600.png) .......................... OK
+20. resolucion 1920x1080 + captura (shot1080.png) + vuelta a 80x25 ............. OK
+21. scroll VESA 800x600 con 20 ecos (shotscroll.png) ........................... OK
+22. crear duplicado -> "Ya existe"; comando malo -> "No entiendo" .............. OK
+23. escribir --agregar antepuesto pega al final ................................ OK
+24. borrar_archivo + leer posterior -> "No existe" ............................. OK
+25. borrar_carpeta con contenido exige --forzar; con --forzar borra ............ OK
+26. reiniciar rearranca (banner de nuevo, sin cuelgue) ......................... OK
+
+MIGRACION v1.1 -> v1.2
+27. Disco v1.1 (viejos/ + dato "contenido v11"): aviso amarillo, ver muestra
+    ambas, leer devuelve contenido, guardar escribe FACILOS2 checksum OK,
+    reboot verde con todo persistente ........................................ OK
+28. Solo-lectura sobre v1.1 (ver/espacio): imagen SHA256 identica ............. OK
+
+ROBUSTEZ
+29. Disco corrupto (tabla a FF): rojo "Disco con error...", RAM limpia usable .. OK
+30. Disco lleno: 63->64 crea bien; 65 -> "No hay espacio (max 64 cosas)." ...... OK
+31. Sin disco (-hda omitido): amarillo, RAM funciona, guardar se niega ......... OK
+32. VDI 10 MB generado (convertfromraw, dinamico 3 MB) ......................... OK
+33. VirtualBox 7 (VBoxVGA): resolucion 800x600 con texto visible .............. OK
+34. VirtualBox: ver_archivos + 1024x768 + vuelta a 80x25 ...................... OK
+35. Modo inexistente (999x999): error rojo, sigue operativo, sin modo rancio . OK
+36. Render 16bpp forzado en QEMU 800x600: texto nitido ........................ OK
+37. Cursor propio en grafico (guion XOR): visible tras prompt en QEMU y VBox . OK
+38. Render 24bpp forzado en QEMU 800x600: texto nitido ........................ OK
+
+BUGS ENCONTRADOS Y CORREGIDOS DURANTE v1.2
+ B1. Bootloader CHS: `mov cx,18` destruia la pista en CH -> basura pasado el
+     sector 36 (fallaba pista>=1). Fix: recalcular CHS+destino por intento + via
+     LBA AH=42 primero. (Bug heredado de v1.0.)
+ B2. Conversion v1.1: DI = idx*36*42 por reutilizar AX tras el primer mul.
+     Fix: restaurar AX=idx antes del x42. (Detectado por RAM vacia tras migrar.)
+ B3. Proceso: la ISO se construye desde floppy.img; olvidar regenerarlo deja el
+     nucleo viejo dentro (varias "pruebas fallidas" eran binario rancio).
+ B4. Ayuda: escribir_archivo documentaba [--agregar] al final; la sintaxis real
+     es antepuesta. Corregidos resumen y detalle.
+ B5. VESA en VirtualBox: el texto en modo grafico usaba BIOS INT 10h AH=02/09,
+     que el BIOS de VBox no implementa en VESA (pantalla negra, shell viva).
+     Fix: render propio 8x16 sobre LFB (video_glifo, bpp 32/24/16, fuente BIOS
+     cacheada) sin llamar al BIOS. Verificado en VBox 800x600 y 1024x768.
+ B6. Endurecido vbe_fijar: valida W/H/pitch/bpp/LFB y fuente no vacia; ante
+     cualquier fallo vuelve a texto 80x25 con error rojo (nunca pantalla
+     ciega). vbe_buscar ya no reutiliza el modo de la busqueda anterior.
+     La lista muestra bpp (Ej: 800x600x32).
+ B7. Tras fijar el modo se comprueba con VBE 4F03 que quedo activo; si el
+     BIOS no cambio de verdad, se vuelve a texto con error en vez de dibujar
+     a ciegas. Re-verificado en QEMU y VirtualBox (kernel 24016).
+ B8. Sin cursor en grafico parecia petado (el BIOS no lo dibuja en VESA).
+     Fix: cursor propio (guion bajo XOR en filas 14-15, bpp 32/24/16) que se
+     borra antes de cada celda y se redibuja despues; limpiar/texto lo
+     reinician. vbox_cursor.png lo muestra en VirtualBox (kernel 24341).
+ B9. En algunos VirtualBox la ventana no repinta tras el cambio (el invitado
+     dibuja bien: al forzar repintado con un dialogo aparece todo).
+     Se probo avisar con VBE 4F07 por celda como evento de estado, pero en el
+     VBox afectado no ayudo y pudo colgar la salida (RETIRADO). Queda
+     documentado como limite del entorno, no del invitado (kernel 24341).
+ B10. Comparacion QEMU vs VirtualBox con volcado VBE crudo (comando temporal
+     vbedebug, retirado tras medir): mismo modo 0143 para 800x600x32, mismos
+     X/Y/pitch/bpp/modelo/bancos; LFB distinto (se lee dinamico); atributos
+     00BB vs 009B (bit 5). Render 32/24/16 probado con captura. Unico cambio
+     en codigo: buscar exige bit LFB (D7) en atributos (kernel 24352).
+
+GRAFICOS v1.3 (QEMU; VBox solo compatibilidad, ver B9)
+39. prueba_grafica 800x600 (Test A): fondo, cajas, lineas, puntos, textos,
+    resumen 800x600/BPP32/Pitch3200 + captura (shotpg.png) ................... OK
+40. prueba_grafica 1024x768 (Test B): layout relativo correcto (shotpg1024) .. OK
+41. vuelta a 80x25 (Test C): texto nitido, shell intacta ...................... OK
+42. ciclos 80x25->800x600->80x25->1024x768->80x25->800x600 (Test D) ........... OK
+43. primitivas una a una: pixel, rectangulo, linea, texto, limpiar (Test E) ... OK
+44. prueba_grafica forzada 16bpp (pitch 1600) y 24bpp (pitch 2400, Test F) .... OK
+45. modo inexistente 999x999 (Test G): rojo, sin cambio, operativo ............ OK
+46. clipping: rect(-20,216) visible parcial, linea(-30,236) recortada,
+    pixel(9999,9999) invisible, texto parcial al borde + "Clip OK" ........... OK
+47. regresion FS completa en nucleo v1.3: rutas, crear/leer/copiar/mover/
+    renombrar/buscar/borrar, editor, historial, teclado, guardar+reboot,
+    migracion v1.1, corrupto/lleno/sin disco ................................ OK
+48. v1.3 en 1920x1080: prueba_grafica + version 1.3 + vuelta a 80x25 ......... OK
+
+BUGS ENCONTRADOS Y CORREGIDOS DURANTE v1.3
+ B11. video_rect_fill con `rep stosd` sin a32 usaba DI (16 bits) y corrompia
+      la RAM baja colgando la prueba. Fix: a32 explicito (igual que scroll).
+ B12. video_rectangulo calculaba y*pitch con x (cajas a y=0) y el mul pisaba
+      EDX=h'. Fix: y real + h' en pila. Detectado por captura (caja roja).
+ B13. video_texto_xy pisaba AL antes de ESI (glifos corridos). Fix: ESI justo
+      tras leer el char. Detectado por captura.
+ B14. Bresenham y clip de rect en sin-signo fallaban con negativos (linea de
+      64616 pasos en vez de 920). Fix: aritmetica con signo + clip real.
+ B15. Contador de cajas destruido por el ancho + temps locales con ambito mal
+      (mismo patron que v1.2). Fix: temp pg_i + temps globales.
+ NOTA. Unico transitorio no reproducido: un glifo en una captura 24bpp
+      (repetido 2 veces identico: limpio). Sin fix inventado; queda registrado.
+
+EVIDENCIAS: shot600.png, shot1080.png, shotscroll.png,
+vbox_fix1/2/3.png (800x600, ver, 1024x768 en VirtualBox),
+vbox_cursor.png (cursor propio en VirtualBox),
+shotpg.png (prueba 800x600), shotpg1024.png (prueba 1024x768),
+shot13.png (prueba 1920x1080 v1.3), shot16.png / shot24.png (16/24 bpp).

@@ -1,0 +1,26 @@
+target remote 127.0.0.1:4674
+set architecture i386
+file build/kernel32.pe
+break *0x200039
+break *0x200057
+break *0x20006d
+break *0x200078
+break *0x2000a0
+break *0x2000c3
+continue
+info registers eax ebx ecx edx esi edi ebp esp eip
+continue
+info registers eax ebx ecx edx esi edi ebp esp eip
+continue
+info registers eax ebx ecx edx esi edi ebp esp eip
+continue
+info registers eax ebx ecx edx esi edi ebp esp eip
+continue
+info registers eax ebx ecx edx esi edi ebp esp eip
+continue
+info registers eax ebx ecx edx esi edi ebp esp eip
+continue
+info registers eax ebx ecx edx esi edi ebp esp eip
+continue
+info registers eax ebx ecx edx esi edi ebp esp eip
+quit

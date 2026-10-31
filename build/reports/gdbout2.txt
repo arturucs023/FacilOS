@@ -1,0 +1,70 @@
+0x0000fff0 in ?? ()
+The target architecture is set to "i386".
+Breakpoint 1 at 0x200039
+Breakpoint 2 at 0x200057
+Breakpoint 3 at 0x20006d
+Breakpoint 4 at 0x200078
+Breakpoint 5 at 0x2000a0
+Breakpoint 6 at 0x2000c3
+
+Breakpoint 1, 0x00200039 in ?? ()
+eax            0x1                 1
+ebx            0x20012c            2097452
+ecx            0x1a                26
+edx            0x0                 0
+esi            0x200000            2097152
+edi            0x1c0               448
+ebp            0x8fc34             0x8fc34
+esp            0x2effd8            0x2effd8
+eip            0x200039            0x200039
+
+Breakpoint 6, 0x002000c3 in ?? ()
+eax            0x1                 1
+ebx            0x200147            2097479
+ecx            0x9                 9
+edx            0x0                 0
+esi            0x200000            2097152
+edi            0x1c0               448
+ebp            0x8fc34             0x8fc34
+esp            0x2effd8            0x2effd8
+eip            0x2000c3            0x2000c3
+
+Breakpoint 3, 0x0020006d in ?? ()
+eax            0x1                 1
+ebx            0x20015b            2097499
+ecx            0x6                 6
+edx            0x0                 0
+esi            0x200000            2097152
+edi            0x1c0               448
+ebp            0x8fc34             0x8fc34
+esp            0x2effd8            0x2effd8
+eip            0x20006d            0x20006d
+
+Breakpoint 4, 0x00200078 in ?? ()
+eax            0x2                 2
+ebx            0x0                 0
+ecx            0x0                 0
+edx            0x0                 0
+esi            0x200000            2097152
+edi            0x1c0               448
+ebp            0x8fc34             0x8fc34
+esp            0x2effd8            0x2effd8
+eip            0x200078            0x200078
+
+Breakpoint 5, 0x002000a0 in ?? ()
+eax            0x1                 1
+ebx            0x2effe4            3080164
+ecx            0x4                 4
+edx            0x0                 0
+esi            0x3                 3
+edi            0x1c0               448
+ebp            0x8fc34             0x8fc34
+esp            0x2effd8            0x2effd8
+eip            0x2000a0            0x2000a0
+[Inferior 1 (process 1) exited normally]
+
+STDERR:
+warning: No executable has been specified and target does not support
+determining executable automatically.  Try using the "file" command.
+build/gdbcmd2.txt:21: Error in sourced command file:
+The program has no registers now.
