@@ -314,7 +314,9 @@ static int siguiente_foco(void) {
     return -1;
 }
 
-static void atiende_reg(int de, const char *b, int r) {
+/* REG en bucle (diferido=0: el frame que sigue ya incluye la ventana)
+   o en espera de ACK (diferido=1: entra en la pasada extra). */
+static void atiende_reg(int de, const char *b, int r, int diferido) {
     int k = 4, w = 0, h = 0, id;
     char idm[16], tit[24];
     int q = 0;
@@ -358,7 +360,7 @@ static void atiende_reg(int de, const char *b, int r) {
     u_ipc_enviar(de, idm, u_strlen(idm) + 1);
     trae_frente(id);
     fija_foco(id);
-    nuevo_marco = 1;
+    if (diferido) nuevo_marco = 1;
 }
 
 /* Responde "INF w h" (geometria util) a un cliente. */
@@ -413,7 +415,7 @@ static void espera_ack(int idx) {
                 continue;
             }
             if (r >= 3 && b[0] == 'R' && b[1] == 'E' && b[2] == 'G') {
-                atiende_reg(de, b, r);
+                atiende_reg(de, b, r, 1);
                 if (!vents[idx].usado || vents[idx].pid != pid) return;
                 continue;
             }
@@ -737,7 +739,7 @@ int main(void) {
             int r = u_ipc_recibir(b, 64, &de);
             if (r < 0) continue;
             if (r >= 3 && b[0] == 'R' && b[1] == 'E' && b[2] == 'G') {
-                atiende_reg(de, b, r);
+                atiende_reg(de, b, r, 0);
                 frame();
             } else if (r >= 3 && b[0] == 'B' && b[1] == 'Y' &&
                        b[2] == 'E') {

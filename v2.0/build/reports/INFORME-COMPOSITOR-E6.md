@@ -14,6 +14,8 @@ reframe; INF se atiende también en espera (deadlock detectado con
 sysinfo y corregido).
 Un cliente lento solo congela su ventana; uno muerto se barre; el daño
 queda acotado al frame (repaint total corrige).
+E6 tardío: el REG del bucle principal ya no marca pasada extra (el frame
+que sigue lo incluye): una sola recomposición por apertura.
 
 ## Rendimiento medido (Fase P, sin FPS inventados)
 - Frame vacío (fondo+barra+cursor): ms (imperceptible en capturas).
