@@ -209,6 +209,15 @@ static inline int sys_ipc_hay(void) {
     return sys_llama(40, 0, 0, 0);
 }
 
+/* v2.0-etapa4: raton PS/2. leer bloquea hasta un paquete; v3=[x,y,bot]. */
+static inline int sys_raton(unsigned int *v3) {
+    return sys_llama(38, (int)v3, 0, 0);
+}
+
+static inline int sys_hay_raton(void) {
+    return sys_llama(39, 0, 0, 0);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2

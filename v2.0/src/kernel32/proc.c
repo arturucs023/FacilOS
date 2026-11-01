@@ -456,6 +456,20 @@ void proc_bloquea_msg(void) {
     bloquea();
 }
 
+/* Raton: igual patron que tecla (despertador async en IRQ12). */
+void proc_bloquea_raton(void) {
+    uint32_t fl = cpu_eflags();
+    cli();
+    if (proc_actual) {
+        proc_actual->espera_raton = 1;
+        proc_actual->modo = 0;
+        proc_actual->estado = EST_BLOQ;
+    }
+    cpu_if_restaura(fl);
+    bloquea();
+    if (proc_actual) proc_actual->espera_raton = 0;
+}
+
 int proc_espera_hijo(int pid) {
     if (proc_actual) proc_actual->modo = 0;
     for (;;) {

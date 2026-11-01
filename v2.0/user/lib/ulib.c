@@ -555,6 +555,12 @@ int u_ipc_recibir(void *buf, int max, int *emisor) {
 int u_ipc_hay(void) {
     return sys_ipc_hay();
 }
+int u_raton(unsigned int *v3) {
+    return sys_raton(v3);
+}
+int u_hay_raton(void) {
+    return sys_hay_raton();
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {

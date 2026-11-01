@@ -14,6 +14,7 @@
 #include "ktimer.h"
 #include "drv.h"
 #include "blk.h"
+#include "ps2.h"
 #include "teclado.h"
 #include "gfx.h"
 #include "fs.h"
@@ -65,6 +66,7 @@ void kmain(void)
     /* v2.0: drivers con contrato (pantalla, teclado, pit, ramfs). */
     drv_registra("pantalla", pantalla_init);
     drv_registra("teclado", teclado_init);
+    drv_registra("raton", ps2_init);
     drv_registra("pit", pit_drv_init);
     drv_registra("ramfs", ramfs_init);
     drv_init_todos();

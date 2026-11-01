@@ -77,6 +77,14 @@ for c in CMDS:
     if c.startswith("{SHOT:"):
         f.write(f"screendump {c[6:-1]}\n".encode()); f.flush(); time.sleep(1.5)
         continue
+    if c.startswith("{MOU:"):
+        # {MOU:x:y} = mover puntero (requiere raton PS/2 en el invitado)
+        xy = c[5:-1]
+        f.write(f"mouse_move {xy.replace(':', ' ')}\n".encode()); f.flush(); time.sleep(0.5)
+        continue
+    if c.startswith("{BTN:"):
+        f.write(f"mouse_button {c[5:-1]}\n".encode()); f.flush(); time.sleep(0.5)
+        continue
     if c.startswith("{SLEEP:"):
         time.sleep(float(c[7:-1])); continue
     crudo = c.endswith("~")

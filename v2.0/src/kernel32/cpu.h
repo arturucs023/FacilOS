@@ -62,6 +62,18 @@ static inline void cpu_tlb_invalida(uint32_t virt) {
 static inline void cpu_tlb_todo(void) {
     __asm__ volatile ("movl %%cr3, %%eax\n\tmovl %%eax, %%cr3" : : : "eax", "memory");
 }
+/* --- v2.0-etapa4: MSR (para APIC; rdmsr/wrmsr fallan con #GP si el MSR no
+   existe: solo usar 0x1B en 686+, presente en QEMU y todo HW real SL. */
+static inline uint64_t cpu_rdmsr(uint32_t msr) {
+    uint32_t lo, hi;
+    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((uint64_t)hi << 32) | lo;
+}
+static inline void cpu_wrmsr(uint32_t msr, uint64_t v) {
+    __asm__ volatile ("wrmsr" : : "a"((uint32_t)v),
+                      "d"((uint32_t)(v >> 32)), "c"(msr));
+}
+
 static inline void cpu_iret(void) {
     __asm__ volatile ("iret");
 }

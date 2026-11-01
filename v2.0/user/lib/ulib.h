@@ -133,6 +133,8 @@ int u_proc_stat(int pid, unsigned int *v5); /* v2.0: estado,ticks,cedes,pico,nma
 int u_ipc_enviar(int dst, const void *ptr, int len);
 int u_ipc_recibir(void *buf, int max, int *emisor);
 int u_ipc_hay(void);   /* mensajes pendientes (no bloquea) */
+int u_raton(unsigned int *v3);   /* [x,y,botones], bloquea hasta paquete */
+int u_hay_raton(void);           /* paquetes pendientes (no bloquea) */
 const char *u_estado_nombre(int e);
 
 #endif

@@ -23,6 +23,7 @@ typedef struct {
 static ventana_t vents[NVENT];
 static int nz = 0;
 static int foco_id = -1;
+static int mx = 400, my = 300, mb = 0;
 
 /* Si durante la espera de ACK llega un REG, su ventana entra en la
    siguiente pasada de frame (si no, no se dibujaria hasta la proxima
@@ -185,6 +186,32 @@ static void espera_ack(int pid) {
     }
 }
 
+/* Cursor v1 (etapa 4, E4): caja blanca con borde negro, dibujado el
+   ultimo de cada frame (encima de todo). */
+static void dibuja_cursor(void) {
+    u_rectangulo(mx, my, 12, 12, C_NEGRO);
+    u_rectangulo(mx + 1, my + 1, 10, 10, C_BLANCO);
+}
+
+/* Ventana superior bajo (x,y), o -1. */
+static int ventana_en(int x, int y) {
+    int o, k, mejor = -1, mejorz = -1;
+    for (o = 0; o < nz + 4; o++) {
+        for (k = 0; k < NVENT; k++) {
+            ventana_t *v = &vents[k];
+            if (!v->usado || !v->visible || v->z != o) continue;
+            if (x >= v->x && x < v->x + v->w && y >= v->y &&
+                y < v->y + v->h) {
+                if (v->z > mejorz) {
+                    mejorz = v->z;
+                    mejor = k;
+                }
+            }
+        }
+    }
+    return mejor;
+}
+
 static void frame(void) {
     int ids[NVENT], nn = 0, o, k, q;
     /* instantanea ordenada por z */
@@ -253,6 +280,8 @@ static void frame(void) {
             u_ipc_enviar(v->pid, m, u_strlen(m) + 1);
             espera_ack(v->pid);
         }
+    asegura_propiedad();
+    dibuja_cursor();
     if (nuevo_marco) {
         nuevo_marco = 0;
         frame();
@@ -362,6 +391,46 @@ int main(void) {
                 u_ipc_enviar(vents[foco_id].pid, m, u_strlen(m) + 1);
                 frame();
             }
+        } else if (u_hay_raton()) {
+            unsigned int e[3];
+            int id;
+            if (u_raton(e)) continue;
+            mx = (int)e[0];
+            my = (int)e[1];
+            mb = (int)e[2];
+            /* El cursor mide 12x12: se recorta para que quede visible. */
+            if (mx > PANT_W - 12) mx = PANT_W - 12;
+            if (my > PANT_H - 12) my = PANT_H - 12;
+            id = ventana_en(mx, my);
+            if (id < 0) {
+                frame();    /* el cursor se redibuja aunque este fuera */
+                continue;
+            }
+            if (mb & 1) fija_foco(id);
+            {
+                char m[32], nx[12], ny[12], nb[12];
+                int t = 0;
+                u_itoa(mx, nx);
+                u_itoa(my, ny);
+                u_itoa(mb, nb);
+                m[t++] = 'M';
+                m[t++] = 'O';
+                m[t++] = 'U';
+                m[t++] = ' ';
+                {
+                    int q = 0;
+                    while (nx[q] && t < 29) m[t++] = nx[q++];
+                    m[t++] = ' ';
+                    q = 0;
+                    while (ny[q] && t < 29) m[t++] = ny[q++];
+                    m[t++] = ' ';
+                    q = 0;
+                    while (nb[q] && t < 29) m[t++] = nb[q++];
+                    m[t] = 0;
+                }
+                u_ipc_enviar(vents[id].pid, m, t + 1);
+            }
+            frame();
         } else {
             u_dormir(20);
         }

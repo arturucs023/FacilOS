@@ -3,6 +3,7 @@
 #include "cpu.h"
 #include "proc.h"
 #include "ktimer.h"
+#include "apic.h"
 
 /* IRQ y excepciones de FacilOS32 v1.9. */
 
@@ -50,8 +51,12 @@ void irq_c(uint32_t *rp) {
         proc_despierta_tecla();
     }
     if (manej[n]) manej[n]();
-    if (n >= 8) outb(0xA0, 0x20);
-    outb(0x20, 0x20);
+    if (n == 12 && apic_irq12) {
+        apic_eoi();             /* vino por IOAPIC/LAPIC, no por el i8259 */
+    } else {
+        if (n >= 8) outb(0xA0, 0x20);
+        outb(0x20, 0x20);
+    }
 
     /* Preemptivo: el PIT marca el final de la ofreta del proceso. Solo
        se roba la CPU si la IRQ vino de anillo 3 (ahi el marco trae el

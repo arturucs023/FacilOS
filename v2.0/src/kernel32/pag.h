@@ -31,6 +31,8 @@
 #define PAG_ESCRITURA 0x02u
 #define PAG_USUARIO 0x04u
 #define PAG_CACHE 0x08u
+/* v2.0-etapa4: bit PCD del PTE (4): MMIO sin cache (APIC). */
+#define PAG_NOCACHE 0x10u
 #define PAG_TAMANO (PAG_MARCO * 1024u)   /* 4 MiB: un directorio */
 
 #define PAG_BASE_TABLAS 0xC00000u

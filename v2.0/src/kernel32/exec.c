@@ -10,6 +10,7 @@
 #include "proc.h"
 #include "pag.h"
 #include "ipc.h"
+#include "ps2.h"
 
 /* v1.9: descriptores y heap son POR PROCESO (ver proc.h). El bloque del
    proceso con el que estamos se toma de proc_actual, de modo que la
@@ -965,8 +966,8 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [35] = sc_ipc_recibir,
     [36] = sc_36,
     [37] = sc_37,
-    [38] = 0,
-    [39] = 0,
+    [38] = sc_raton,
+    [39] = sc_raton_hay,
     [40] = sc_ipc_hay,
 };
 static const char *const sc_nombre[SC_N] = {
@@ -1008,8 +1009,8 @@ static const char *const sc_nombre[SC_N] = {
     [35] = "ipc_recibir",
     [36] = "info_memoria2",
     [37] = "proc_stat",
-    [38] = "reservada",
-    [39] = "reservada",
+    [38] = "leer_raton",
+    [39] = "hay_raton",
     [40] = "ipc_hay",
 };
 static uint32_t sc_count[SC_N];

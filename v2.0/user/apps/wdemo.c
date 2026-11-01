@@ -9,6 +9,7 @@ void __main(void) {
 int main(void) {
     const char *a = u_args();
     int srv = 0, id = -1, x = 0, y = 0, tecla = -1;
+    int rx = -1, ry = -1, rb = -1;
     char b[64];
     int de = 0;
     while (*a == ' ') a++;
@@ -37,6 +38,47 @@ int main(void) {
             u_rectangulo(x, y + 20, 400, 180, C_VERDE);
             u_texto(x + 16, y + 60, "ventana demo", C_BLANCO);
             u_texto(x + 16, y + 90, "id dibujado", C_BLANCO);
+            if (rx >= 0) {
+                char t[24];
+                int ti = 0;
+                t[ti++] = 'r';
+                t[ti++] = ':';
+                {
+                    char nb[12];
+                    int j = 0, v = rx;
+                    if (!v) nb[j++] = '0';
+                    else {
+                        char rv[12];
+                        int ri = 0;
+                        while (v && ri < 11) {
+                            rv[ri++] = (char)('0' + v % 10);
+                            v /= 10;
+                        }
+                        while (ri) nb[j++] = rv[--ri];
+                    }
+                    nb[j] = 0;
+                    j = 0;
+                    while (nb[j] && ti < 20) t[ti++] = nb[j++];
+                    t[ti++] = ',';
+                    v = ry;
+                    j = 0;
+                    if (!v) nb[j++] = '0';
+                    else {
+                        char rv[12];
+                        int ri = 0;
+                        while (v && ri < 11) {
+                            rv[ri++] = (char)('0' + v % 10);
+                            v /= 10;
+                        }
+                        while (ri) nb[j++] = rv[--ri];
+                    }
+                    nb[j] = 0;
+                    j = 0;
+                    while (nb[j] && ti < 20) t[ti++] = nb[j++];
+                    t[ti] = 0;
+                }
+                u_texto(x + 16, y + 150, t, C_BLANCO);
+            }
             if (tecla >= 0) {
                 char t[16];
                 int ti = 0;
@@ -60,6 +102,17 @@ int main(void) {
             int k = 4;
             while (k < r && (b[k] < '0' || b[k] > '9')) k++;
             tecla = u_atoi(b + k);
+        }
+        else if (r >= 4 && b[0] == 'M' && b[1] == 'O' && b[2] == 'U') {
+            int k = 4;
+            while (k < r && (b[k] < '0' || b[k] > '9')) k++;
+            rx = u_atoi(b + k);
+            while (k < r && b[k] >= '0' && b[k] <= '9') k++;
+            while (k < r && (b[k] < '0' || b[k] > '9')) k++;
+            ry = u_atoi(b + k);
+            while (k < r && b[k] >= '0' && b[k] <= '9') k++;
+            while (k < r && (b[k] < '0' || b[k] > '9')) k++;
+            rb = u_atoi(b + k);
         }
         (void)id;
         (void)x;

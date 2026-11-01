@@ -395,6 +395,18 @@ static void mapea_lfb(void) {
     }
 }
 
+/* v2.0-etapa4: IOAPIC (0xFEC00000) + LAPIC (0xFEE00000), identidad,
+   supervisor, sin cache. Antes de crear procesos para que todos los
+   directorios la hereden (el IRQ del raton puede llegar con cualquier
+   CR3 y su EOI debe funcionar siempre). Si no hay APIC, las lecturas
+   dan ~0xFFFFFFFF y el driver de raton lo detecta (sin tocar nada). */
+static void mapea_apic(void) {
+    pag_mapa(0, 0xFEC00000u, 0xFEC00000u,
+             PAG_PRESENTE | PAG_ESCRITURA | PAG_NOCACHE);
+    pag_mapa(0, 0xFEE00000u, 0xFEE00000u,
+             PAG_PRESENTE | PAG_ESCRITURA | PAG_NOCACHE);
+}
+
 void pag_inicia(void) {
     for (uint32_t i = 0; i < PAG_MAX_PD; i++)
         for (int k = 0; k < 1024; k++) pd_pool[i][k] = 0;
@@ -433,6 +445,7 @@ void pag_inicia(void) {
     mapea_rango(0, 0x800000, 0xD00000, sup);
     mapea_rango(0, 0xE00000, 0xF00000, sup);
     mapea_lfb();
+    mapea_apic();
 
     ventana_alta();
     pag_usa(0);

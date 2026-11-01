@@ -91,6 +91,7 @@ typedef struct {
     } buzon[IPC_NMSG];
     int buz_ini, buz_fin, buz_n;
     int espera_msg;             /* bloqueado esperando mensaje */
+    int espera_raton;           /* bloqueado esperando raton (etapa 4) */
 } proc_t;
 
 extern proc_t proc_tareas[1 + MAXPROC];
@@ -119,6 +120,7 @@ void proc_cede(void);                 /* voluntaria; si no hay nadie, sigue */
 void proc_bloquea_tecla(void);
 void proc_bloquea_ticks(uint32_t hasta);
 void proc_bloquea_msg(void);
+void proc_bloquea_raton(void);
 int  proc_espera_hijo(int pid);
 void proc_muere(int rc);              /* no retorna */
 void proc_guarda_usuario(proc_t *p, const void *marco);
