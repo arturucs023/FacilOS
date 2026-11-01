@@ -8,7 +8,7 @@ void __main(void) {
 
 int main(void) {
     const char *a = u_args();
-    int srv = 0, id = -1, x = 0, y = 0;
+    int srv = 0, id = -1, x = 0, y = 0, tecla = -1;
     char b[64];
     int de = 0;
     while (*a == ' ') a++;
@@ -37,12 +37,29 @@ int main(void) {
             u_rectangulo(x, y + 20, 400, 180, C_VERDE);
             u_texto(x + 16, y + 60, "ventana demo", C_BLANCO);
             u_texto(x + 16, y + 90, "id dibujado", C_BLANCO);
+            if (tecla >= 0) {
+                char t[16];
+                int ti = 0;
+                t[ti++] = 't';
+                t[ti++] = 'e';
+                t[ti++] = 'c';
+                t[ti++] = 'l';
+                t[ti++] = 'a';
+                t[ti++] = ':';
+                t[ti++] = (tecla >= 32 && tecla < 127) ? (char)tecla : '?';
+                t[ti] = 0;
+                u_texto(x + 16, y + 120, t, C_BLANCO);
+            }
             u_presentar(x, y, 400, 200);
             u_ipc_enviar(srv, "ACK", 4);
         } else if (r >= 4 && b[0] == 'Q' && b[1] == 'U' && b[2] == 'I' &&
                    b[3] == 'T') {
             u_ipc_enviar(srv, "BYE", 4);
             return 0;
+        } else if (r >= 4 && b[0] == 'K' && b[1] == 'E' && b[2] == 'Y') {
+            int k = 4;
+            while (k < r && (b[k] < '0' || b[k] > '9')) k++;
+            tecla = u_atoi(b + k);
         }
         (void)id;
         (void)x;
