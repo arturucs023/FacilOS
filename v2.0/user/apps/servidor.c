@@ -34,6 +34,10 @@ static ventana_t vents[NVENT];
 static int nz = 0;
 static int foco_id = -1;
 static int mx = 400, my = 300, mb = 0, mb_antes = 0;
+/* Antiparadeo en movimiento (etapa 6, Fase P): como mucho un reframe por
+   movimiento cada 150 ms; entre medias el MOU llega igual (estado) y el
+   cursor va por via rapida. Clics/teclas/drags no limitan. */
+static int ult_mou = 0;
 static int arr_id = -1, arr_dx = 0, arr_dy = 0, arr_modo = 0;
 static int menu_abierto = 0, menu_sel = -1, ultimo_min = -1;
 
@@ -461,7 +465,9 @@ static void espera_ack(int idx) {
                No se marca pendiente: el bucle reenvia cada frame. */
             return;
         }
-        if (++t > 200) {    /* 2 s: dibujo lento, se reanuda solo */
+        if (++t > 10) {    /* ~100 ms: si no confirmo rapido se sigue
+                             sin el (carrera de planificacion); el ACK
+                             tardio reanuda + repinta (ver bucle ppal) */
             if (vents[idx].usado && vents[idx].pid == pid)
                 vents[idx].ack_pend = 1;
             return;
@@ -804,11 +810,14 @@ int main(void) {
                 envia_inf(de);
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
-                /* ACK tardio: reanuda ventanas pendientes de ese pid. */
+                /* ACK tardio: reanuda + repinta (el contenido llego tarde
+                   y nadie lo redibuja si no). */
                 int k;
                 for (k = 0; k < NVENT; k++) {
-                    if (vents[k].usado && vents[k].pid == de)
+                    if (vents[k].usado && vents[k].pid == de) {
                         vents[k].ack_pend = 0;
+                        marca_sucia(k);
+                    }
                 }
             }
             /* ACK y otros se consumen sin mas */
@@ -918,7 +927,8 @@ int main(void) {
                 if (pulsado) {
                     clic_izquierdo();
                 } else {
-                    /* movimiento sobre contenido: reenvia MOU */
+                    /* movimiento sobre contenido: reenvia MOU siempre;
+                       reframe limitado (ver ult_mou) */
                     int id = ventana_en(mx, my);
                     if (id >= 0) {
                         char m[32], nx[12], ny[12], nb[12];
@@ -939,8 +949,14 @@ int main(void) {
                         while (nb[q] && t < 29) m[t++] = nb[q++];
                         m[t] = 0;
                         u_ipc_enviar(vents[id].pid, m, t + 1);
-                        marca_sucia(id);
-                        frame();
+                        if (u_ticks() - ult_mou >= 15) {
+                            ult_mou = u_ticks();
+                            marca_sucia(id);
+                            frame();
+                        } else {
+                            cursor_borra();
+                            cursor_show();
+                        }
                     } else {
                         /* escritorio: via rapida sin recomponer */
                         cursor_borra();

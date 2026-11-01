@@ -24,6 +24,10 @@ E6 tardío 3 (restos de cursor): cada frame BORRA primero el cursor viejo
 y lo redibuja al final con captura fresca; el movimiento puro hace
 borra+show. Sin esto, un frame selectivo capturaba el cursor viejo como
 fondo y lo regaba por la pantalla.
+E6 tardío 4 (parpadeo en movimiento): espera de ACK acotada a ~100 ms
+(antes 2 s: las carreras de planificación dejaban la pantalla a medias);
+ACK tardío reanuda + repinta; movimiento limitado a 1 reframe/150 ms
+(el MOU llega siempre; el cursor va por vía rápida entre medias).
 
 ## Rendimiento medido (Fase P, sin FPS inventados)
 - Frame vacío (fondo+barra+cursor): ms (imperceptible en capturas).
