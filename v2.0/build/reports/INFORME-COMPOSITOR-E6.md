@@ -20,6 +20,10 @@ E6 tardío 2 (antiparpadeo): repintado por daño: el fondo solo se repinta
 si algo lo destapó (mover/cerrar/minimizar/menu/SYNC); DRAW solo a
 ventanas sucias (evento/geometría/foco); cromo+barra+menú+cursor siempre
 (baratos). El cromo va dentro de la puerta de suciedad.
+E6 tardío 3 (restos de cursor): cada frame BORRA primero el cursor viejo
+y lo redibuja al final con captura fresca; el movimiento puro hace
+borra+show. Sin esto, un frame selectivo capturaba el cursor viejo como
+fondo y lo regaba por la pantalla.
 
 ## Rendimiento medido (Fase P, sin FPS inventados)
 - Frame vacío (fondo+barra+cursor): ms (imperceptible en capturas).

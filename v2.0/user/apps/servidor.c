@@ -162,11 +162,11 @@ static int menu_en(int x, int y) {
     return i;
 }
 
-/* Cursor con via rapida (etapa 6, Fase P): en movimiento puro sobre el
-   escritorio se restaura el fondo guardado y se redibuja sin recomponer
-   (un frame completo por paquete parpadea y tarda con ventanas).
-   Todo lo pintado sale de la paleta C_* (16 colores exactos), asi que la
-   inversion es exacta. `fresco=1` tras recomponer (sin restaurar). */
+/* Cursor (etapa 6, Fase P; corregido tras restos vistos en QA): el fondo
+   guardado solo vale si nada pinto encima desde la captura. Regla: cada
+   frame BORRA primero el cursor viejo (restaura) y lo redibuja al final
+   (captura fresca); el movimiento puro hace borra+show sin recomponer.
+   Los repintes selectivos nunca tocan el cursor viejo sin borrarlo. */
 static unsigned int cur_px[144];
 static int cur_sx = -1, cur_sy = -1;
 
@@ -190,17 +190,22 @@ static unsigned int pal_rev(unsigned int p) {
     return mejor;
 }
 
-static void cursor_show(int fresco) {
+static void cursor_borra(void) {
     int dx, dy;
+    if (cur_sx < 0) return;
     asegura_propiedad();
-    if (!fresco && cur_sx >= 0) {
-        for (dy = 0; dy < 12; dy++) {
-            for (dx = 0; dx < 12; dx++) {
-                u_pixel(cur_sx + dx, cur_sy + dy,
-                        (int)pal_rev(cur_px[dy * 12 + dx]));
-            }
+    for (dy = 0; dy < 12; dy++) {
+        for (dx = 0; dx < 12; dx++) {
+            u_pixel(cur_sx + dx, cur_sy + dy,
+                    (int)pal_rev(cur_px[dy * 12 + dx]));
         }
     }
+    cur_sx = -1;
+}
+
+static void cursor_show(void) {
+    int dx, dy;
+    asegura_propiedad();
     for (dy = 0; dy < 12; dy++) {
         for (dx = 0; dx < 12; dx++) {
             cur_px[dy * 12 + dx] = u_punto(mx + dx, my + dy);
@@ -499,6 +504,7 @@ static void frame(void) {
         }
     }
     asegura_propiedad();
+    cursor_borra();
     if (bg_dirty) {
         fondo();
         bg_dirty = 0;
@@ -590,7 +596,7 @@ static void frame(void) {
     asegura_propiedad();
     barra();
     dibuja_menu();
-    cursor_show(1);
+    cursor_show();
     if (nuevo_marco) {
         nuevo_marco = 0;
         frame();
@@ -699,7 +705,8 @@ static void clic_izquierdo(void) {
     /* 4. ventana bajo el cursor */
     id = ventana_en(mx, my);
     if (id < 0) {
-        cursor_show(0);
+        cursor_borra();
+        cursor_show();
         return;
     }
     trae_frente(id);
@@ -935,7 +942,9 @@ int main(void) {
                         marca_sucia(id);
                         frame();
                     } else {
-                        cursor_show(0);   /* escritorio: sin recomponer */
+                        /* escritorio: via rapida sin recomponer */
+                        cursor_borra();
+                        cursor_show();
                     }
                 }
             }
