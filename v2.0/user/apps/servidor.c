@@ -156,7 +156,52 @@ static int menu_en(int x, int y) {
     return i;
 }
 
-static void dibuja_cursor(void) {
+/* Cursor con via rapida (etapa 6, Fase P): en movimiento puro sobre el
+   escritorio se restaura el fondo guardado y se redibuja sin recomponer
+   (un frame completo por paquete parpadea y tarda con ventanas).
+   Todo lo pintado sale de la paleta C_* (16 colores exactos), asi que la
+   inversion es exacta. `fresco=1` tras recomponer (sin restaurar). */
+static unsigned int cur_px[144];
+static int cur_sx = -1, cur_sy = -1;
+
+static unsigned int pal_rev(unsigned int p) {
+    static const unsigned int tab[16] = {
+        0x000000u, 0x0000AAu, 0x00AA00u, 0x00AAAAu,
+        0xAA0000u, 0xAA00AAu, 0xAAAA00u, 0xAAAAAAu,
+        0x000000u, 0x0000FFu, 0x00FF00u, 0x00FFFFu,
+        0xFF0000u, 0xFF00FFu, 0xFFFF00u, 0xFFFFFFu
+    };
+    unsigned int q = p & 0xFFFFFFu, mejor = 0, bd = 0xFFFFFFu;
+    int i;
+    for (i = 0; i < 16; i++) {
+        unsigned int t = tab[i], d = q > t ? q - t : t - q;
+        if (d < bd) {
+            bd = d;
+            mejor = (unsigned int)i;
+            if (!d) break;
+        }
+    }
+    return mejor;
+}
+
+static void cursor_show(int fresco) {
+    int dx, dy;
+    asegura_propiedad();
+    if (!fresco && cur_sx >= 0) {
+        for (dy = 0; dy < 12; dy++) {
+            for (dx = 0; dx < 12; dx++) {
+                u_pixel(cur_sx + dx, cur_sy + dy,
+                        (int)pal_rev(cur_px[dy * 12 + dx]));
+            }
+        }
+    }
+    for (dy = 0; dy < 12; dy++) {
+        for (dx = 0; dx < 12; dx++) {
+            cur_px[dy * 12 + dx] = u_punto(mx + dx, my + dy);
+        }
+    }
+    cur_sx = mx;
+    cur_sy = my;
     u_rectangulo(mx, my, 12, 12, C_NEGRO);
     u_rectangulo(mx + 1, my + 1, 10, 10, C_BLANCO);
 }
@@ -516,7 +561,7 @@ static void frame(void) {
     asegura_propiedad();
     barra();
     dibuja_menu();
-    dibuja_cursor();
+    cursor_show(1);
     if (nuevo_marco) {
         nuevo_marco = 0;
         frame();
@@ -617,7 +662,10 @@ static void clic_izquierdo(void) {
     }
     /* 4. ventana bajo el cursor */
     id = ventana_en(mx, my);
-    if (id < 0) return;
+    if (id < 0) {
+        cursor_show(0);
+        return;
+    }
     trae_frente(id);
     fija_foco(id);
     {
@@ -758,10 +806,19 @@ int main(void) {
             }
         } else if (u_hay_raton()) {
             unsigned int e[3];
-            if (u_raton(e)) continue;
-            mx = (int)e[0];
-            my = (int)e[1];
-            mb = (int)e[2];
+            int pulsado = 0;
+            /* Drena la rafaga: una sola composicion por lote de paquetes
+               (si no, cada paquete reharía toda la pantalla). Solo importan
+               la ultima posicion y si hubo pulsacion. */
+            while (u_hay_raton()) {
+                int nb;
+                if (u_raton(e)) break;
+                nb = (int)e[2];
+                if (!(mb & 1) && (nb & 1)) pulsado = 1;
+                mx = (int)e[0];
+                my = (int)e[1];
+                mb = nb;
+            }
             if (mx > PANT_W - 12) mx = PANT_W - 12;
             if (my > PANT_H - 12) my = PANT_H - 12;
             if (mx < 0) mx = 0;
@@ -803,8 +860,8 @@ int main(void) {
                         continue;
                     }
                 }
-                /* flanco de clic izquierdo */
-                if (!(mb_antes & 1) && (mb & 1)) {
+                /* flanco de clic izquierdo (del lote) */
+                if (pulsado) {
                     clic_izquierdo();
                 } else {
                     /* movimiento sobre contenido: reenvia MOU */
@@ -828,8 +885,10 @@ int main(void) {
                         while (nb[q] && t < 29) m[t++] = nb[q++];
                         m[t] = 0;
                         u_ipc_enviar(vents[id].pid, m, t + 1);
+                        frame();
+                    } else {
+                        cursor_show(0);   /* escritorio: sin recomponer */
                     }
-                    frame();
                 }
             }
             mb_antes = mb;

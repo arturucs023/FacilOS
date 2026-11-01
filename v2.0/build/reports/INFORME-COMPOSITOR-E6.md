@@ -18,9 +18,13 @@ queda acotado al frame (repaint total corrige).
 ## Rendimiento medido (Fase P, sin FPS inventados)
 - Frame vacío (fondo+barra+cursor): ms (imperceptible en capturas).
 - Frame con 2 demos E4: ~1-2 s (redibujado completo 800x600 por software).
+- Ratón (E6 tardío): ráfagas drenadas (1 composición por lote) + cursor
+  por vía rápida (restaura fondo guardado, sin recomponer) sobre el
+  escritorio; sobre ventanas sigue MOU+frame (interactividad).
+  Inversión exacta de paleta (todo lo pintado sale de C_*).
 - Reloj: reframe 1/min (sin bucles activos; idle `dormir(20)`).
 - Sin copias: dibujo directo en lease; mensajes ≤64 B; sin asignaciones
-  por frame en el servidor (tablas estáticas).
+  por frame en el servidor (tablas estáticas + buffer cursor 144).
 - Límite conocido: QEMU `mouse_move` manda deltas grandes (hasta 127 por
   paquete); el cursor salta, no hay suavizado (QA, no defecto).
 
