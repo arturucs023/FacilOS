@@ -1,5 +1,6 @@
 #include "fs.h"
 #include "ata.h"
+#include "blk.h"
 #include "libc.h"
 
 #define LBA_CAB 0
@@ -80,7 +81,8 @@ static int sec_lee(uint16_t ds, uint8_t *b) {
         libc_memcpy(b, POOL_DIR + k * 512, 512);
         return 0;
     }
-    return ata_leer(LBA_DAT + ds, b, 1);
+    /* Etapa3: por la capa de bloques (valida rangos con IDENTIFY). */
+    return blk_leer(LBA_DAT + ds, b, 1);
 }
 static int sec_pon(uint16_t ds, const uint8_t *b) {
     if (ds < FS_N) {
@@ -93,7 +95,7 @@ static int sec_pon(uint16_t ds, const uint8_t *b) {
         libc_memcpy(POOL_DIR + k * 512, b, 512);
         return 0;
     }
-    return ata_escribir(LBA_DAT + ds, b, 1);
+    return blk_escribir(LBA_DAT + ds, b, 1);
 }
 /* sector k-esimo del fichero -> ds. 0 ok. */
 static int sec_de(int idx, uint32_t k, uint16_t *ds) {
@@ -168,18 +170,17 @@ void fs_init(void) {
     fs_disco_ok = 0;
     fs_migrar = 0;
     dir_actual = 0;
-    if (ata_leer(LBA_CAB, cab, 1)) return;
-    if (libc_memcmp(cab, "FACILOS2", 8) != 0) {
+    if (blk_leer(LBA_CAB, cab, 1)) return;    if (libc_memcmp(cab, "FACILOS2", 8) != 0) {
         if (libc_memcmp(cab, "FACILOS1", 8) == 0) {
             /* v1.1: convertir a RAM, sin tocar disco */
-            if (ata_leer(1, tabsec, 5)) return;
+            if (blk_leer(1, tabsec, 5)) return;
             uint8_t *tab11 = tabsec;
             uint16_t lo = cab[8] | (cab[9] << 8);
             uint16_t hi = cab[10] | (cab[11] << 8);
             uint32_t s = 0;
             for (uint32_t i = 0; i < 64 * 36; i++) s += tab11[i];
             for (int i = 0; i < 64; i++) {
-                if (ata_leer(6 + i, datos[i], 1)) return;
+                if (blk_leer(6 + i, datos[i], 1)) return;
                 for (int j = 0; j < 512; j++) s += datos[i][j];
             }
             if ((s & 0xFFFF) != lo || (s >> 16) != hi) return;
@@ -199,14 +200,14 @@ void fs_init(void) {
         return;
     }
     /* v1.2 */
-    if (ata_leer(LBA_TAB, tabsec, 6)) { fs_limpia(); return; }
+    if (blk_leer(LBA_TAB, tabsec, 6)) { fs_limpia(); return; }
     libc_memcpy(tabla, tabsec, sizeof(tabla));
     uint16_t lo = cab[8] | (cab[9] << 8);
     uint16_t hi = cab[10] | (cab[11] << 8);
     if (cab[12] != 2) { fs_limpia(); return; }
     uint32_t s = checksum_tabla();
     for (int i = 0; i < 64; i++) {
-        if (ata_leer(LBA_DAT + i, datos[i], 1)) { fs_limpia(); return; }
+        if (blk_leer(LBA_DAT + i, datos[i], 1)) { fs_limpia(); return; }
         for (int j = 0; j < 512; j++) s += datos[i][j];
     }
     if ((s & 0xFFFF) != lo || (s >> 16) != hi) { fs_limpia(); return; }
@@ -250,11 +251,11 @@ int fs_guardar(void) {
     uint32_t s = checksum_tabla();
     for (int i = 0; i < 64; i++) {
         for (int j = 0; j < 512; j++) s += datos[i][j];
-        if (ata_escribir(LBA_DAT + i, datos[i], 1)) return -1;
+        if (blk_escribir(LBA_DAT + i, datos[i], 1)) return -1;
     }
     libc_memcpy(tabsec, tabla, sizeof(tabla));
     libc_memset(tabsec + sizeof(tabla), 0, sizeof(tabsec) - sizeof(tabla));
-    if (ata_escribir(LBA_TAB, tabsec, 6)) return -1;
+    if (blk_escribir(LBA_TAB, tabsec, 6)) return -1;
     uint8_t cab2[512];
     libc_memset(cab2, 0, 512);
     libc_memcpy(cab2, "FACILOS2", 8);
@@ -264,7 +265,11 @@ int fs_guardar(void) {
     cab2[11] = (uint8_t)(s >> 24);
     cab2[12] = 2;
     cab2[14] = (uint8_t)(teclado_es ? 1 : 0);
-    if (ata_escribir(LBA_CAB, cab2, 1)) return -1;
+    if (blk_escribir(LBA_CAB, cab2, 1)) return -1;
+    /* Etapa3: vacia la cache del dispositivo; sin esto, un corte antes de
+       que QEMU escriba deja el volumen a medio sincronizar. El error se
+       propaga (no se oculta): los datos pueden seguir solo en cache. */
+    if (blk_flush()) return -1;
     fs_disco_ok = 1;
     fs_migrar = 0;
     return 0;

@@ -60,13 +60,14 @@ void kmain(void)
         int kta = kt_autoprueba();
         kprintf("ktimer: autoprueba=%d\r\n", kta);
     }
+    /* v2.0-etapa3: deteccion de disco ANTES de montar (ramfs la necesita). */
+    blk_init();
     /* v2.0: drivers con contrato (pantalla, teclado, pit, ramfs). */
     drv_registra("pantalla", pantalla_init);
     drv_registra("teclado", teclado_init);
     drv_registra("pit", pit_drv_init);
     drv_registra("ramfs", ramfs_init);
     drv_init_todos();
-    blk_init();          /* etapa3 E2: solo detecta e informa (sin uso aun) */
     cons_init();
     cdcat_inicia();
     {
