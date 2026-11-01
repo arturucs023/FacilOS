@@ -232,6 +232,7 @@ _apps3 = [
     ("estres_mem", ["estres_mem.c"], True),
     ("estres_ipc", ["estres_ipc.c"], True),
     ("estres_mix", ["estres_mix.c"], True),
+    ("disco32", ["disco32.c"], True),
     ("planificador32", ["planificador32.c"], True),
     ("contador32", ["contador32.c"], True),
     ("dormir32", ["dormir32.c"], True),
