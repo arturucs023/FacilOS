@@ -18,8 +18,10 @@ E6 tardío: el REG del bucle principal ya no marca pasada extra (el frame
 que sigue lo incluye): una sola recomposición por apertura.
 E6 tardío 2 (antiparpadeo): repintado por daño: el fondo solo se repinta
 si algo lo destapó (mover/cerrar/minimizar/menu/SYNC); DRAW solo a
-ventanas sucias (evento/geometría/foco); cromo+barra+menú+cursor siempre
-(baratos). El cromo va dentro de la puerta de suciedad.
+ventanas sucias (evento/geometría/foco); barra+menú+cursor siempre
+(baratos); el cromo va dentro de su propia puerta (solo cambia con
+foco/geometría/alta: repintarlo gris en cada tecla era el parpadeo al
+escribir).
 E6 tardío 3 (restos de cursor): cada frame BORRA primero el cursor viejo
 y lo redibuja al final con captura fresca; el movimiento puro hace
 borra+show. Sin esto, un frame selectivo capturaba el cursor viejo como

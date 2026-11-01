@@ -50,6 +50,7 @@ static void marca_sucia(int id);
 /* Repintado por dano (etapa 6, Fase P): ver definicion junto a frame(). */
 static int bg_dirty = 1;
 static int win_dirty[NVENT];
+static int win_cromo[NVENT];
 
 static void fondo(void) {
     u_destino(0);
@@ -268,6 +269,7 @@ static int registra(int pid, int w, int h, const char *tit) {
     vents[i].foco = 0;
     vents[i].ack_pend = 0;
     win_dirty[i] = 1;
+    win_cromo[i] = 1;
     if (!tit || !tit[0]) tit = "ventana";
     while (tit[q] && q < 23) {
         vents[i].titulo[q] = tit[q];
@@ -482,6 +484,15 @@ static void espera_ack(int idx) {
    su ventana esta sucia (evento, geometria, foco); el cromo/barra/menu/
    cursor (baratos, del servidor) van siempre. (Variables arriba.) */
 static void marca_sucia(int id) {
+    if (id >= 0 && id < NVENT && vents[id].usado) {
+        win_dirty[id] = 1;
+        win_cromo[id] = 1;
+    }
+}
+
+/* Solo contenido (tecla/raton/ACK tardio): el cromo intacto no se toca
+   (repintarlo gris en cada tecla era el parpadeo al escribir). */
+static void marca_contenido(int id) {
     if (id >= 0 && id < NVENT && vents[id].usado) win_dirty[id] = 1;
 }
 
@@ -522,10 +533,14 @@ static void frame(void) {
         int j, neg, val;
         if (!v->usado || !v->visible || v->minimizada) continue;
         if (v->ack_pend) continue;   /* congelada: nada (cromo intacto) */
-        if (!win_dirty[ids[q]]) continue;   /* limpia: nada que pintar */
-        win_dirty[ids[q]] = 0;
+        if (!win_dirty[ids[q]] && !win_cromo[ids[q]]) continue;
         asegura_propiedad();
-        cromo(v);
+        if (win_cromo[ids[q]]) {
+            cromo(v);
+            win_cromo[ids[q]] = 0;
+        }
+        if (!win_dirty[ids[q]]) continue;
+        win_dirty[ids[q]] = 0;
         m[t++] = 'D';
         m[t++] = 'R';
         m[t++] = 'A';
@@ -650,7 +665,7 @@ static void tecla_a_foco(int code) {
     while (nb[j] && t < 15) m[t++] = nb[j++];
     m[t] = 0;
     u_ipc_enviar(vents[foco_id].pid, m, u_strlen(m) + 1);
-    marca_sucia(foco_id);
+    marca_contenido(foco_id);
     frame();
 }
 
@@ -771,7 +786,7 @@ static void clic_izquierdo(void) {
             while (nb[q] && t < 29) m[t++] = nb[q++];
             m[t] = 0;
             u_ipc_enviar(vents[id].pid, m, t + 1);
-            marca_sucia(id);
+            marca_contenido(id);
         }
         frame();
     }
@@ -816,7 +831,7 @@ int main(void) {
                 for (k = 0; k < NVENT; k++) {
                     if (vents[k].usado && vents[k].pid == de) {
                         vents[k].ack_pend = 0;
-                        marca_sucia(k);
+                        marca_contenido(k);
                     }
                 }
             }
@@ -951,7 +966,7 @@ int main(void) {
                         u_ipc_enviar(vents[id].pid, m, t + 1);
                         if (u_ticks() - ult_mou >= 15) {
                             ult_mou = u_ticks();
-                            marca_sucia(id);
+                            marca_contenido(id);
                             frame();
                         } else {
                             cursor_borra();
