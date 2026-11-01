@@ -240,6 +240,19 @@ int main(void) {
     ent[0] = 0;
     if (ug_abre(&v, srv, 480, 320, "terminal")) return 98;
     pon("terminal FacilOS32 (escribe ayuda)");
+    {
+        char sb[24];
+        int t = 0, q = 0;
+        char nb[12];
+        sb[t++] = 's';
+        sb[t++] = 'r';
+        sb[t++] = 'v';
+        sb[t++] = '=';
+        u_itoa(srv, nb);
+        while (nb[q] && t < 22) sb[t++] = nb[q++];
+        sb[t] = 0;
+        pon(sb);
+    }
     for (;;) {
         int t = ug_evento(&v, &ev, 1);
         int i;

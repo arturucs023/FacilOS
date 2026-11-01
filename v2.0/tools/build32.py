@@ -245,6 +245,7 @@ _apps3 = [
     ("sysinfo", ["sysinfo.c"], True, True),
     ("editor", ["editor.c"], True, True),
     ("configura", ["configura.c"], True, True),
+    ("gbye", ["gbye.c"], True),
     ("planificador32", ["planificador32.c"], True),
     ("contador32", ["contador32.c"], True),
     ("dormir32", ["dormir32.c"], True),

@@ -26,6 +26,7 @@ typedef struct {
     int visible;
     int minimizada;
     int foco;
+    int ack_pend;       /* DRAW sin confirmar (cliente lento/bloqueado) */
     char titulo[24];
 } ventana_t;
 
@@ -205,6 +206,7 @@ static int registra(int pid, int w, int h, const char *tit) {
     vents[i].visible = 1;
     vents[i].minimizada = 0;
     vents[i].foco = 0;
+    vents[i].ack_pend = 0;
     if (!tit || !tit[0]) tit = "ventana";
     while (tit[q] && q < 23) {
         vents[i].titulo[q] = tit[q];
@@ -333,25 +335,41 @@ static void envia_inf(int de) {
     u_ipc_enviar(de, m, t + 1);
 }
 
-static void espera_ack(int pid) {
+/* Espera el ACK de la ventana ids[idx] (lease). Nunca bloquea indefinido:
+   - cliente muerto -> libera y vuelve;
+   - cliente BLOQUEADO -> vuelve al instante (el DRAW ya se envio: si lo
+     esperaba despierta con el; si no, lo vera al desatascarse; el bucle
+     reenvia cada frame y SYNC repara);
+   - cliente vivo pero lento -> espera hasta 2 s y marca ack_pend (se
+     salta su DRAW hasta el ACK tardio).
+   Sin esto, un cliente bloqueado congela todo el escritorio. */
+static void espera_ack(int idx) {
     char b[64];
-    int de = 0;
+    int de = 0, t = 0, pid;
+    unsigned int st[5];
+    if (idx < 0 || idx >= NVENT || !vents[idx].usado) return;
+    pid = vents[idx].pid;
     for (;;) {
         if (u_ipc_hay() > 0) {
             int r = u_ipc_recibir(b, 64, &de);
             if (r < 0) continue;
             if (de == pid && r >= 3 && b[0] == 'A' && b[1] == 'C' &&
-                b[2] == 'K')
+                b[2] == 'K') {
+                if (vents[idx].usado && vents[idx].pid == pid)
+                    vents[idx].ack_pend = 0;
                 return;
+            }
             if (r >= 3 && b[0] == 'B' && b[1] == 'Y' && b[2] == 'E') {
                 int k;
                 for (k = 0; k < NVENT; k++) {
                     if (vents[k].usado && vents[k].pid == de) libera(k);
                 }
+                if (!vents[idx].usado || vents[idx].pid != pid) return;
                 continue;
             }
             if (r >= 3 && b[0] == 'R' && b[1] == 'E' && b[2] == 'G') {
                 atiende_reg(de, b, r);
+                if (!vents[idx].usado || vents[idx].pid != pid) return;
                 continue;
             }
             if (r >= 4 && b[0] == 'S' && b[1] == 'Y' && b[2] == 'N' &&
@@ -365,15 +383,23 @@ static void espera_ack(int pid) {
             }
             continue;
         }
-        {
-            unsigned int st[5];
-            if (u_proc_stat(pid, st) != 0 || st[0] == 4) {
-                int k;
-                for (k = 0; k < NVENT; k++) {
-                    if (vents[k].usado && vents[k].pid == pid) libera(k);
-                }
-                return;
+        if (u_proc_stat(pid, st) != 0 || st[0] == 4) {
+            int k;
+            for (k = 0; k < NVENT; k++) {
+                if (vents[k].usado && vents[k].pid == pid) libera(k);
             }
+            return;
+        }
+        if (st[0] == 3) {
+            /* BLOQ: no esperar (el DRAW ya se envio; si esperaba este
+               DRAW despierta con el, si no lo vera al desatascarse).
+               No se marca pendiente: el bucle reenvia cada frame. */
+            return;
+        }
+        if (++t > 200) {    /* 2 s: dibujo lento, se reanuda solo */
+            if (vents[idx].usado && vents[idx].pid == pid)
+                vents[idx].ack_pend = 1;
+            return;
         }
         u_dormir(10);
     }
@@ -413,6 +439,7 @@ static void frame(void) {
         if (!v->usado || !v->visible || v->minimizada) continue;
         asegura_propiedad();
         cromo(v);
+        if (v->ack_pend) continue;   /* congelada: cromo si, DRAW no */
         m[t++] = 'D';
         m[t++] = 'R';
         m[t++] = 'A';
@@ -484,7 +511,7 @@ static void frame(void) {
         }
         m[t] = 0;
         u_ipc_enviar(v->pid, m, u_strlen(m) + 1);
-        espera_ack(v->pid);
+        espera_ack(ids[q]);
     }
     asegura_propiedad();
     barra();
@@ -496,11 +523,12 @@ static void frame(void) {
     }
 }
 
-/* Cierra la ventana id (QUIT + espera + libera). */
+/* Cierra la ventana id: QUIT + libera SIN esperar (fire-and-forget).
+   Esperar aqui colgaria al servidor si el cliente esta bloqueado en
+   otra syscall; el cliente sale al desatascarse (atiende su QUIT). */
 static void cierra_ventana(int id) {
     if (id < 0 || id >= NVENT || !vents[id].usado) return;
     u_ipc_enviar(vents[id].pid, "QUIT", 5);
-    u_esperar(vents[id].pid);
     libera(id);
     if (foco_id < 0) fija_foco(siguiente_foco());
     frame();
@@ -677,6 +705,14 @@ int main(void) {
             } else if (r >= 3 && b[0] == 'I' && b[1] == 'N' &&
                        b[2] == 'F') {
                 envia_inf(de);
+            } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
+                       b[2] == 'K') {
+                /* ACK tardio: reanuda ventanas pendientes de ese pid. */
+                int k;
+                for (k = 0; k < NVENT; k++) {
+                    if (vents[k].usado && vents[k].pid == de)
+                        vents[k].ack_pend = 0;
+                }
             }
             /* ACK y otros se consumen sin mas */
         } else if (u_hay_tecla()) {
@@ -691,11 +727,7 @@ int main(void) {
                         if (!vents[i].usado) continue;
                         u_ipc_enviar(vents[i].pid, "QUIT", 5);
                     }
-                    for (i = 0; i < NVENT; i++) {
-                        if (!vents[i].usado) continue;
-                        u_esperar(vents[i].pid);
-                        vents[i].usado = 0;
-                    }
+                    for (i = 0; i < NVENT; i++) vents[i].usado = 0;
                     u_print("servidor terminado\n");
                     return 0;
                 }
