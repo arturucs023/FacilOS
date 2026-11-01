@@ -64,6 +64,8 @@ void teclado_irq(void) {
         else if (c == 0x50) tk_mete(TEC_ABAJO);
         else if (c == 0x4B) tk_mete(TEC_IZQ);
         else if (c == 0x4D) tk_mete(TEC_DER);
+        /* v2.0-etapa5: teclas Windows/menu (E0 5B/5D) para el escritorio. */
+        else if (c == 0x5B || c == 0x5D) tk_mete(TEC_MENU);
         return;
     }
     if (c == 0x2A) { sh_izq = !suelto; return; }
@@ -73,6 +75,9 @@ void teclado_irq(void) {
     if (c == 0x1C) { tk_mete(13); return; }
     if (c == 0x0E) { tk_mete(8); return; }
     if (c == 0x01) { tk_mete(27); return; }
+    /* v2.0-etapa5: F1 abre el menu (en QEMU es la via testeable; en HW
+       real tambien vale la tecla Menu E0 5B/5D). */
+    if (c == 0x3B) { tk_mete(TEC_MENU); return; }
     if (!teclado_es) {
         /* Americano: ASCII directo del BIOS no disponible; tabla base latina */
         for (const tecla_t *t = tabla; t->scan; t++) {

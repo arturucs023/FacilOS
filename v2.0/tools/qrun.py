@@ -90,6 +90,13 @@ for c in CMDS:
     crudo = c.endswith("~")
     if crudo:
         c = c[:-1]
+    # v2.0-etapa5: tecla especial aislada ({DOWN}, {K:f1}...): se envia
+    # SIN Enter final. Antes caia al send() con "\n" y cada tecla metia
+    # un Enter fantasma (explica falsos lanzamientos del menu y ecos
+    # vacios en la terminal). Las cadenas mixtas conservan su Enter.
+    if c.startswith("{") and c.endswith("}") and c.count("{") == 1:
+        send(c)
+        continue
     send(c + ("" if crudo else "\n"))
 time.sleep(1)
 txt = ser.read_bytes().decode(errors="ignore")

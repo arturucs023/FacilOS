@@ -160,13 +160,15 @@ run([NASM, "-f", "win32", str(LIB / "start.asm"),
      "-o", str(BLD / "start.o")])
 run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
      str(LIB / "ulib.c"), "-o", str(BLD / "ulib.o")])
+run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
+     str(LIB / "ugfx.c"), "-o", str(BLD / "ugfx.o")])
 import struct as _st
 
 _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
 
 
 def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
-                 al_disco=True):
+                 al_disco=True, con_ugfx=False):
     if nom == "editor32":
         run([NASM, "-f", "win32", str(APPS / "editor32.asm"),
              "-o", str(BLD / "editor32.o")])
@@ -182,8 +184,10 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
             run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
                  str(APPS / fs_), "-o", obj])
             objs.append(obj)
-        if con_ulib:
+        if con_ulib or con_ugfx:
             objs.append(str(BLD / "ulib.o"))
+        if con_ugfx:
+            objs.append(str(BLD / "ugfx.o"))
         run([GCC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
              "-Wl,-e,_start", "-Wl,--gc-sections",
              "-T", str(LD / "prog.ld"),
@@ -235,6 +239,12 @@ _apps3 = [
     ("disco32", ["disco32.c"], True),
     ("servidor", ["servidor.c"], True),
     ("wdemo", ["wdemo.c"], True),
+    ("ugfx32", ["ugfx32.c"], True, True),
+    ("terminal", ["terminal.c"], True, True),
+    ("explorador", ["explorador.c"], True, True),
+    ("sysinfo", ["sysinfo.c"], True, True),
+    ("editor", ["editor.c"], True, True),
+    ("configura", ["configura.c"], True, True),
     ("planificador32", ["planificador32.c"], True),
     ("contador32", ["contador32.c"], True),
     ("dormir32", ["dormir32.c"], True),
@@ -250,8 +260,9 @@ _apps3 = [
     ("reloj", ["reloj.c"], True),
     ("adivina", ["adivina.c"], True),
 ]
-for _nom, _fs, _u in _apps3:
-    haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK)
+for _nom, _fs, _u, *_g in _apps3:
+    haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK,
+                 con_ugfx=bool(_g and _g[0]))
 
 # ---- escribir la ISO con el catalogo (todo dentro del CD) ----
 _todos = _programas + [a[0] for a in _apps3]

@@ -7,6 +7,8 @@
 #define TEC_ABAJO  0x102
 #define TEC_IZQ    0x103
 #define TEC_DER    0x104
+/* v2.0-etapa5: tecla menu (E0 5B/5D). */
+#define TEC_MENU   0x105
 
 /* Lee una tecla (bloquea). Requiere IRQ1 con teclado_es() registrado. */
 int kbd_tecla(void);

@@ -219,12 +219,12 @@ static inline int sys_hay_raton(void) {
 }
 
 /* v2.0-etapa5: directorios y reloj para Ring3 (explorador, escritorio).
-   41 dir_hijo(dir,n,buf44) -> tipo (1 carp, 2 arch, 3 CD) o -1.
-   buf44: u32 tipo, char nombre[33], u32 tam (ver udir_t).
+   41 dir_hijo(dir,n,buf48) -> tipo (1 carp, 2 arch, 3 CD) o -1.
+   buf48: u32 tipo, char nombre[33], u32 tam, i32 idx (ver udir_t).
    42 dir_crear(ruta) -> 0 ok, -1 mal/existe. 43 renombrar(ruta,nuevo).
    44 reloj(buf24) -> 6 x u32 [Y,M,D,h,m,s]. */
-static inline int sys_dir_hijo(int dir, int n, void *buf44) {
-    return sys_llama(41, dir, n, (int)buf44);
+static inline int sys_dir_hijo(int dir, int n, void *buf48) {
+    return sys_llama(41, dir, n, (int)buf48);
 }
 
 static inline int sys_dir_crear(const char *ruta) {

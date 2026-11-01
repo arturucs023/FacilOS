@@ -562,7 +562,7 @@ int u_hay_raton(void) {
     return sys_hay_raton();
 }
 int u_dir_hijo(int dir, int n, udir_t *dst) {
-    unsigned char crudo[44];
+    unsigned char crudo[48];
     int t, j;
     if (!dst) return -1;
     t = sys_dir_hijo(dir, n, crudo);
@@ -573,6 +573,8 @@ int u_dir_hijo(int dir, int n, udir_t *dst) {
     dst->nombre[32] = 0;
     dst->tam = (unsigned)crudo[40] | ((unsigned)crudo[41] << 8) |
                ((unsigned)crudo[42] << 16) | ((unsigned)crudo[43] << 24);
+    dst->idx = (int)((unsigned)crudo[44] | ((unsigned)crudo[45] << 8) |
+                     ((unsigned)crudo[46] << 16) | ((unsigned)crudo[47] << 24));
     return dst->tipo;
 }
 int u_dir_crear(const char *ruta) {

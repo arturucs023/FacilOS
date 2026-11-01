@@ -927,17 +927,18 @@ __attribute__((optimize("O0"))) static void sc_37(regs_t *r, int di)
 
 
 __attribute__((optimize("O0"))) static void sc_41(regs_t *r, int di)
- {   /* dir_hijo(dir, n, buf44) -> tipo (1 carp, 2 arch, 3 CD) o -1.
-       dir<0 = actual. buf: u32 tipo, char nombre[33], u32 tam.
-       Itera como la shell (k=1..63); en raiz sigue el catalogo ISO. */
+ {   /* dir_hijo(dir, n, buf48) -> tipo (1 carp, 2 arch, 3 CD) o -1.
+       dir<0 = actual. buf: u32 tipo, char nombre[33], u32 tam, i32 idx
+       (idx fs o -1 si es CD). Itera como la shell (k=1..63); en raiz
+       sigue el catalogo ISO. */
         extern int cdcat_cuantos(void);
         extern const char *cdcat_nombre(int i);
         extern int cdcat_tam(int i);
         int dir = (int)r->ebx, n = (int)r->ecx;
-        uint8_t d[44];
+        uint8_t d[48];
         int cont = 0;
         r->eax = (uint32_t)-1;
-        if (di >= 0 && !ptr_ok(di, r->edx, 44, 1)) return;
+        if (di >= 0 && !ptr_ok(di, r->edx, 48, 1)) return;
         if (dir < 0) dir = fs_actual();
         if (dir < 0 || dir >= FS_N) return;
         if (vfs_actual->tipo(dir) != 1 && dir != 0) return;
@@ -956,10 +957,12 @@ __attribute__((optimize("O0"))) static void sc_41(regs_t *r, int di)
             d[37] = d[38] = d[39] = 0;
             d[40] = (uint8_t)tm; d[41] = (uint8_t)(tm >> 8);
             d[42] = (uint8_t)(tm >> 16); d[43] = (uint8_t)(tm >> 24);
+            d[44] = (uint8_t)k; d[45] = (uint8_t)(k >> 8);
+            d[46] = (uint8_t)(k >> 16); d[47] = (uint8_t)(k >> 24);
             if (di >= 0) {
-                if (pag_escribe_usr((unsigned)di, r->edx, d, 44)) return;
+                if (pag_escribe_usr((unsigned)di, r->edx, d, 48)) return;
             } else {
-                for (int j = 0; j < 44; j++)
+                for (int j = 0; j < 48; j++)
                     ((uint8_t *)r->edx)[j] = d[j];
             }
             r->eax = t;
@@ -980,11 +983,12 @@ __attribute__((optimize("O0"))) static void sc_41(regs_t *r, int di)
                 d[37] = d[38] = d[39] = 0;
                 d[40] = (uint8_t)tm; d[41] = (uint8_t)(tm >> 8);
                 d[42] = (uint8_t)(tm >> 16); d[43] = (uint8_t)(tm >> 24);
+                d[44] = d[45] = d[46] = 0xFF; d[47] = 0xFF;
                 if (di >= 0) {
-                    if (pag_escribe_usr((unsigned)di, r->edx, d, 44))
+                    if (pag_escribe_usr((unsigned)di, r->edx, d, 48))
                         return;
                 } else {
-                    for (int j = 0; j < 44; j++)
+                    for (int j = 0; j < 48; j++)
                         ((uint8_t *)r->edx)[j] = d[j];
                 }
                 r->eax = 3;

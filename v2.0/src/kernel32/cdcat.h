@@ -15,10 +15,11 @@
 
 #define CD_CAT_LBA 40
 #define CD_CAT_DAT 41
-/* v2.0-etapa2: 32 entradas (2048 B: 12 + 32x32). El constructor reserva
-   4 sectores; cd_sector apunta a copia RAM contigua, la lectura de 2048 B
-   es segura. Con 24 se quedaban fuera menu/calculadora/reloj/adivina. */
-#define CD_CAT_MAX 32
+/* v2.0-etapa5: 48 entradas (2048 B: 12 + 48x32 = 1548). El constructor
+   reserva 4 sectores; con 32 se quedaban fuera menu/calculadora/reloj
+   al crecer la lista a 37 programas. CD_CAT_ENT es el tamano de
+   entrada (32 B, formato fijo); CD_CAT_MAX el conteo. */
+#define CD_CAT_MAX 48
 #define CD_CAT_ENT 32
 #define CD_CAT_NOM 15
 

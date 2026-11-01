@@ -63,6 +63,7 @@ void u_lee_linea(char *d, int max);
 #define TEC_ABAJO_U  0x102
 #define TEC_IZQ_U    0x103
 #define TEC_DER_U    0x104
+#define TEC_MENU_U   0x105
 
 /* ---- graficos ---- */
 #define C_NEGRO 0x00
@@ -142,7 +143,8 @@ typedef struct {
     int tipo;             /* 1 carpeta, 2 archivo, 3 programa del CD */
     char nombre[33];
     unsigned int tam;
-} udir_t;                 /* 44 B en cable (tipo, nombre, tam, 3 de relleno) */
+    int idx;              /* indice fs o -1 si es CD */
+} udir_t;                 /* 48 B en cable (tipo, nombre, 3 relleno, tam, idx) */
 
 int u_dir_hijo(int dir, int n, udir_t *dst);  /* tipo o -1; dir<0 = actual */
 int u_dir_crear(const char *ruta);            /* 0 ok, -1 mal/existe */
