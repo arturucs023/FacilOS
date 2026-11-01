@@ -552,6 +552,9 @@ int u_ipc_enviar(int dst, const void *ptr, int len) {
 int u_ipc_recibir(void *buf, int max, int *emisor) {
     return sys_ipc_recibir(buf, max, emisor);
 }
+int u_ipc_hay(void) {
+    return sys_ipc_hay();
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {

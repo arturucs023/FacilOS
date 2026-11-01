@@ -56,6 +56,15 @@ int main(void) {
     ok(sys_llama(99, 0, 0, 0) == -1, "sys-desconocida");
     ok(sys_llama(34, 0, 0, 0) == -1, "sys-reservada-34");
     ok(sys_llama(35, 0, 0, 0) == -1, "sys-reservada-35");
+    ok(sys_ipc_hay() == 0, "hay-vacio");
+    ok(sys_ipc_enviar(sys_mi_pid(), "h", 2) == 0, "hay-autoenvio");
+    ok(sys_ipc_hay() == 1, "hay-uno");
+    {
+        char hb[8];
+        int de = 0;
+        ok(sys_ipc_recibir(hb, 8, &de) == 2, "hay-recoge");
+    }
+    ok(sys_ipc_hay() == 0, "hay-vacio2");
     ok(sys_dormir(50) == 0, "dormir-ok");
     /* el nucleo sigue integro */
     ok(sys_info_memoria2(v) == 0 && v[4] == 0 && v[5] == 0, "nucleo-integro");

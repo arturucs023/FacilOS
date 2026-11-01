@@ -204,6 +204,11 @@ static inline int sys_ipc_recibir(void *buf, int max, int *emisor) {
     return sys_llama(35, (int)buf, max, (int)emisor);
 }
 
+/* v2.0-etapa4: mensajes pendientes sin bloquear (precedente: hay_tecla). */
+static inline int sys_ipc_hay(void) {
+    return sys_llama(40, 0, 0, 0);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2

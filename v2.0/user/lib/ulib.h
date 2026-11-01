@@ -132,6 +132,7 @@ int u_info_memoria2(unsigned int *v8);   /* v2.0: 8 palabras (ver sys.h) */
 int u_proc_stat(int pid, unsigned int *v5); /* v2.0: estado,ticks,cedes,pico,nmarcos */
 int u_ipc_enviar(int dst, const void *ptr, int len);
 int u_ipc_recibir(void *buf, int max, int *emisor);
+int u_ipc_hay(void);   /* mensajes pendientes (no bloquea) */
 const char *u_estado_nombre(int e);
 
 #endif

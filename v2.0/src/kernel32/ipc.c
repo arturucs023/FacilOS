@@ -77,6 +77,12 @@ __attribute__((optimize("O0"))) void sc_ipc_enviar(regs_t *r, int di) {
     }
 }
 
+__attribute__((optimize("O0"))) void sc_ipc_hay(regs_t *r, int di) {
+    (void)di;
+    if (!proc_actual) { r->eax = 0; return; }
+    r->eax = (uint32_t)proc_actual->buz_n;
+}
+
 __attribute__((optimize("O0"))) void sc_ipc_recibir(regs_t *r, int di) {
     uint32_t max = r->ecx;
     r->eax = (uint32_t)-1;

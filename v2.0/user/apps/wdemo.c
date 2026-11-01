@@ -1,0 +1,51 @@
+#include "ulib.h"
+
+void __main(void) {
+}
+
+/* wdemo (etapa 4, E2): cliente demo del servidor. Arg = pid del servidor.
+ * Registra (w=400,h=200), dibuja contenido al DRAW y sale con QUIT. */
+
+int main(void) {
+    const char *a = u_args();
+    int srv = 0, id = -1, x = 0, y = 0;
+    char b[64];
+    int de = 0;
+    while (*a == ' ') a++;
+    srv = u_atoi(a);
+    if (srv <= 0) return 99;
+    if (u_ipc_enviar(srv, "REG 400 200", 12)) return 98;
+    for (;;) {
+        int r = u_ipc_recibir(b, 64, &de);
+        if (r < 0) return 97;
+        if (r >= 2 && b[0] == 'I' && b[1] == 'D') {
+            int k = 3;
+            while (k < r && (b[k] < '0' || b[k] > '9')) k++;
+            id = u_atoi(b + k);
+        } else if (r >= 4 && b[0] == 'D' && b[1] == 'R' && b[2] == 'A' &&
+                   b[3] == 'W') {
+            int k = 5, xx, yy;
+            while (k < r && (b[k] < '0' || b[k] > '9') && b[k] != '-') k++;
+            xx = u_atoi(b + k);
+            while (k < r && ((b[k] >= '0' && b[k] <= '9') || b[k] == '-')) k++;
+            while (k < r && (b[k] < '0' || b[k] > '9') && b[k] != '-') k++;
+            yy = u_atoi(b + k);
+            x = xx;
+            y = yy;
+            /* toma propiedad y dibuja contenido (lease) */
+            u_texto(0, 0, "", C_NEGRO);
+            u_rectangulo(x, y + 20, 400, 180, C_VERDE);
+            u_texto(x + 16, y + 60, "ventana demo", C_BLANCO);
+            u_texto(x + 16, y + 90, "id dibujado", C_BLANCO);
+            u_presentar(x, y, 400, 200);
+            u_ipc_enviar(srv, "ACK", 4);
+        } else if (r >= 4 && b[0] == 'Q' && b[1] == 'U' && b[2] == 'I' &&
+                   b[3] == 'T') {
+            u_ipc_enviar(srv, "BYE", 4);
+            return 0;
+        }
+        (void)id;
+        (void)x;
+        (void)y;
+    }
+}

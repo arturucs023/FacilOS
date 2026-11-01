@@ -926,7 +926,7 @@ __attribute__((optimize("O0"))) static void sc_37(regs_t *r, int di)
 
 
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 40
+#define SC_N 41
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -967,6 +967,7 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [37] = sc_37,
     [38] = 0,
     [39] = 0,
+    [40] = sc_ipc_hay,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1009,6 +1010,7 @@ static const char *const sc_nombre[SC_N] = {
     [37] = "proc_stat",
     [38] = "reservada",
     [39] = "reservada",
+    [40] = "ipc_hay",
 };
 static uint32_t sc_count[SC_N];
 
