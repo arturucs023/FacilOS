@@ -44,7 +44,22 @@ R8. Teclado: espera con cola no vacía (ventana sti/hlt/bloquea).
 R9. G/T: drenaje por tiempo (no verificado) en ráfagas.
 R10. t1_lib: 1 aborto aislado sin mecanismo (vigilancia abierta).
 
-## 5. Plan de baterías de estrés (Fases 1–13)
+## 6. Contratos C/Assembly verificados (Fase 6, por desensamblado + GDB)
+
+| Ruta | Contrato | Estado |
+|---|---|---|
+| `_syscall_comun` | pusha+segs, `push esp`, IF=0 en handler | verificado |
+| `syscall_c` + handlers O0 | locales en pila sobreviven a cesión | verificado |
+| `GUARDA_GPR` | ESP=ebp+4, EBX/ESI/EDI, EBP llamante (`*ebp`) | verificado |
+| `retoma_kernel` | restaura EBX/SI/DI/BP/ESP + `ret` | verificado |
+| `entra_usuario`/`salta_usuario` | marco iret en cima + TSS.esp0 + 7 GPR | verificado (GDB dis) |
+| `_irq_comun`/`_isr_comun` | pusha+segs, EOI antes de fusión/preempt | verificado |
+| TSS.esp0 | == cima del proceso en curso en toda entrada Ring3→0 | verificado |
+| IF | puertas limpian; handlers preservan; secciones con IF-anidable | verificado |
+
+## 7. Veredicto de subsistemas tras el estrés
+Memoria física/virtual/heap/sbrk/planificador/IPC/syscalls/timers/drivers/
+## 5. Plan de baterías (ejecutado en esta etapa)
 
 - `estres_mem`: ciclos sbrk de tamaños variados + info2 exacto + presión
   hasta -105/-1 + recuperación; doble-free forzado interno (contable).
