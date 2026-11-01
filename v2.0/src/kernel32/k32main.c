@@ -13,6 +13,7 @@
 #include "bootinfo.h"
 #include "ktimer.h"
 #include "drv.h"
+#include "blk.h"
 #include "teclado.h"
 #include "gfx.h"
 #include "fs.h"
@@ -65,6 +66,7 @@ void kmain(void)
     drv_registra("pit", pit_drv_init);
     drv_registra("ramfs", ramfs_init);
     drv_init_todos();
+    blk_init();          /* etapa3 E2: solo detecta e informa (sin uso aun) */
     cons_init();
     cdcat_inicia();
     {
