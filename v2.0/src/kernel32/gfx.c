@@ -156,6 +156,10 @@ void g_dorso_limpia(void) {
 
 void g_presentar(int x, int y, int w, int h) {
     if (!lfb || !dorso || w <= 0 || h <= 0) return;
+    if (!gdest) return;   /* v2.0-etapa6: presentar solo vuelca el dorso;
+                             en frente es no-op (antes tapaba en negro la
+                             ventana recien dibujada cuando el dorso existe
+                             por otro cliente). */
     int x0 = x < 0 ? 0 : x;
     int y0 = y < 0 ? 0 : y;
     int x1 = x + w > GW ? GW : x + w;

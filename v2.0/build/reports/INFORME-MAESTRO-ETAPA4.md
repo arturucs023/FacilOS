@@ -30,6 +30,17 @@ RAM); visor 2 KB; E0-Menu sin probar en QEMU (F1 sí); sin HW físico;
 flakes `crear` bajo carga (2 vistos, pasan al repetir); `t2_gfx` 11/12
 (preexistente, intacto).
 
+## E6 tardío (post-ISO, misma rama)
+Cursor borra+show (sin restos), 1 recomposición por apertura, repintado
+por daño + cromo separado (antiparpadeo), ACK 100 ms + throttle 150 ms,
+texto transparente (botones legibles), modo modal para hijos con
+pantalla (terminal/explorador `ejecutar`), menú toma propiedad antes de
+`destino` (su `destino(1)` se denegaba y se autoborraba), `presentar`
+solo vuelca desde back buffer.
+Quirk de QA: el display/screendump de este QEMU no muestra parte de los
+dibujos tempranos aunque están en VRAM (probado por `xp`: barra azul
+presente en RAM pero negra en captura). Evidencia local, no del SO.
+
 ## Artefactos
 `build/iso/FacilOS-v2.0-etapa4.iso` (38 programas; etapa1-3 intactas).
 Evidencia local: `build/logs/v50_*.log`, `build/images/v50*.ppm`

@@ -45,6 +45,14 @@ static int menu_abierto = 0, menu_sel = -1, ultimo_min = -1;
    siguiente pasada de frame. */
 static int nuevo_marco = 0;
 
+/* Modo modal (etapa 6, Fase J/K): un cliente ejecuta un programa de
+   consola/pantalla completa (terminal/explorador + `ejecutar`). Mientras
+   dura, el servidor NO toca teclado/raton (son del hijo: misma cola) NI
+   pinta (el hijo posee el framebuffer); solo bombea IPC. Sin esto, cada
+   evento repintaba el escritorio encima del hijo. Termina con MODAL 0
+   del dueño o solo si el dueño muere. Como la shell en texto. */
+static int modal_pid = 0;
+
 static void marca_sucia(int id);
 
 /* Repintado por dano (etapa 6, Fase P): ver definicion junto a frame(). */
@@ -513,6 +521,21 @@ static void frame(void) {
     int ids[NVENT], nn = 0, o, k, q;
     char m[32];
     if (barre_muertos()) bg_dirty = 1;
+    if (modal_pid) {
+        /* Modal: no pintar (pantalla+teclas del hijo). Si el dueno murio
+           sin avisar, se reanuda con repintado total. */
+        unsigned int st[5];
+        if (u_proc_stat(modal_pid, st) != 0 || st[0] == 4) {
+            modal_pid = 0;
+            bg_dirty = 1;
+            for (k = 0; k < NVENT; k++) {
+                win_dirty[k] = 1;
+                win_cromo[k] = 1;
+            }
+        } else {
+            return;
+        }
+    }
     for (o = 0; o < nz + 4; o++) {
         for (k = 0; k < NVENT; k++) {
             if (vents[k].usado && vents[k].visible &&
@@ -823,6 +846,25 @@ int main(void) {
             } else if (r >= 3 && b[0] == 'I' && b[1] == 'N' &&
                        b[2] == 'F') {
                 envia_inf(de);
+            } else if (r >= 5 && b[0] == 'M' && b[1] == 'O' &&
+                       b[2] == 'D') {
+                /* MODAL 1 (suspender, dueno=emisor) / MODAL 0 (reanudar).
+                   Solo el dueno reanuda; un segundo modal se ignora. */
+                int on = (r >= 7 && b[6] == '1') ? 1 : 0;
+                if (on) {
+                    if (!modal_pid) modal_pid = de;
+                } else if (de == modal_pid) {
+                    modal_pid = 0;
+                    bg_dirty = 1;
+                    {
+                        int k;
+                        for (k = 0; k < NVENT; k++) {
+                            win_dirty[k] = 1;
+                            win_cromo[k] = 1;
+                        }
+                    }
+                    frame();
+                }
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
                 /* ACK tardio: reanuda + repinta (el contenido llego tarde
@@ -836,7 +878,7 @@ int main(void) {
                 }
             }
             /* ACK y otros se consumen sin mas */
-        } else if (u_hay_tecla()) {
+        } else if (!modal_pid && u_hay_tecla()) {
             int k = u_tecla();
             if (k == 27) {
                 if (menu_abierto) {
@@ -880,7 +922,7 @@ int main(void) {
             } else {
                 tecla_a_foco(k);
             }
-        } else if (u_hay_raton()) {
+        } else if (!modal_pid && u_hay_raton()) {
             unsigned int e[3];
             int pulsado = 0;
             /* Drena la rafaga: una sola composicion por lote de paquetes

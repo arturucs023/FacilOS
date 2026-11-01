@@ -107,18 +107,21 @@ static void abre_sel(ug_win_t *v) {
         vscroll = 0;
         msg[0] = 0;
     } else {
-        int rc = u_ejecutar(nombres[sel], "");
-        char b[32];
-        int t = 0, q = 0;
-        char nb[12];
-        b[t++] = 'r';
-        b[t++] = 'c';
-        b[t++] = '=';
-        u_itoa(rc, nb);
-        while (nb[q] && t < 30) b[t++] = nb[q++];
-        b[t] = 0;
-        u_strcpy(msg, b);
-        ug_sync(v);
+        ug_modal(v, 1);
+        {
+            int rc = u_ejecutar(nombres[sel], "");
+            char b[32];
+            int t = 0, q = 0;
+            char nb[12];
+            b[t++] = 'r';
+            b[t++] = 'c';
+            b[t++] = '=';
+            u_itoa(rc, nb);
+            while (nb[q] && t < 30) b[t++] = nb[q++];
+            b[t] = 0;
+            u_strcpy(msg, b);
+        }
+        ug_modal(v, 0);
     }
     (void)v;
 }

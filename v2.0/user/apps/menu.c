@@ -64,6 +64,7 @@ static int lee_gfx(char *d, int max, int x, int y, int wchars) {
 
 static void dibuja(void) {
     int i;
+    u_texto(0, 0, "", C_NEGRO);   /* toma propiedad (si no, destino falla) */
     u_destino(1);
     u_limpiar(C_NEGRO);
     u_rectangulo(0, 0, 800, 56, C_AZUL);

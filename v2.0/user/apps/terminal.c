@@ -210,7 +210,9 @@ static void ejecuta_linea(ug_win_t *v, const char *ln) {
             pon("ejecutar: falta programa");
             return;
         }
+        ug_modal(v, 1);
         rc = u_ejecutar(prog, args);
+        ug_modal(v, 0);
         rb[0] = 'r';
         rb[1] = 'c';
         rb[2] = '=';
@@ -223,7 +225,6 @@ static void ejecuta_linea(ug_win_t *v, const char *ln) {
             rb[t] = 0;
         }
         pon(rb);
-        ug_sync(v);
     } else {
         pon("no entiendo (prueba ayuda)");
     }

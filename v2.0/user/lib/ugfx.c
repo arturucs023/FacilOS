@@ -180,6 +180,11 @@ void ug_sync(ug_win_t *v) {
     u_ipc_enviar(v->srv, "SYNC", 5);
 }
 
+void ug_modal(ug_win_t *v, int on) {
+    if (!v || !v->vivo) return;
+    u_ipc_enviar(v->srv, on ? "MODAL 1" : "MODAL 0", 8);
+}
+
 void ug_comienza(ug_win_t *v) {
     /* Toma el lease (precedente: asegura_propiedad del servidor). */
     u_texto(0, 0, "", C_NEGRO);
