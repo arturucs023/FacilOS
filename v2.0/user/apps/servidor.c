@@ -41,6 +41,12 @@ static int menu_abierto = 0, menu_sel = -1, ultimo_min = -1;
    siguiente pasada de frame. */
 static int nuevo_marco = 0;
 
+static void marca_sucia(int id);
+
+/* Repintado por dano (etapa 6, Fase P): ver definicion junto a frame(). */
+static int bg_dirty = 1;
+static int win_dirty[NVENT];
+
 static void fondo(void) {
     u_destino(0);
     u_limpiar(C_AZUL);
@@ -252,6 +258,7 @@ static int registra(int pid, int w, int h, const char *tit) {
     vents[i].minimizada = 0;
     vents[i].foco = 0;
     vents[i].ack_pend = 0;
+    win_dirty[i] = 1;
     if (!tit || !tit[0]) tit = "ventana";
     while (tit[q] && q < 23) {
         vents[i].titulo[q] = tit[q];
@@ -271,14 +278,18 @@ static void libera(int i) {
 }
 
 /* Libera ventanas de duenos muertos (clientes caidos sin BYE). */
-static void barre_muertos(void) {
-    int k;
+/* Devuelve cuantas libero (para repintar fondo si destapo algo). */
+static int barre_muertos(void) {
+    int k, n = 0;
     for (k = 0; k < NVENT; k++) {
         unsigned int st[5];
         if (!vents[k].usado) continue;
-        if (u_proc_stat(vents[k].pid, st) != 0 || st[0] == 4)
+        if (u_proc_stat(vents[k].pid, st) != 0 || st[0] == 4) {
             libera(k);
+            n++;
+        }
     }
+    return n;
 }
 
 /* Avisa FOCO 1/0 a las ventanas afectadas (asincrono, sin ACK). */
@@ -295,12 +306,14 @@ static void avisa_foco(int id) {
 
 static void fija_foco(int id) {
     int i;
+    marca_sucia(foco_id);
     for (i = 0; i < NVENT; i++) vents[i].foco = 0;
     foco_id = -1;
     if (id >= 0 && id < NVENT && vents[id].usado && !vents[id].minimizada) {
         vents[id].foco = 1;
         foco_id = id;
     }
+    marca_sucia(foco_id);
     avisa_foco(foco_id);
 }
 
@@ -452,6 +465,15 @@ static void espera_ack(int idx) {
     }
 }
 
+/* Repintado por dano (etapa 6, Fase P): el fondo azul completo es el
+   parpadeo visible; solo se repinta si algo lo destapo (mover, cerrar,
+   minimizar, menu, SYNC tras consola). Los clientes solo reciben DRAW si
+   su ventana esta sucia (evento, geometria, foco); el cromo/barra/menu/
+   cursor (baratos, del servidor) van siempre. (Variables arriba.) */
+static void marca_sucia(int id) {
+    if (id >= 0 && id < NVENT && vents[id].usado) win_dirty[id] = 1;
+}
+
 /* Lanza una app del menu con arg = pid del servidor. */
 static void lanza(const char *app) {
     char arg[16];
@@ -468,7 +490,7 @@ static void lanza(const char *app) {
 static void frame(void) {
     int ids[NVENT], nn = 0, o, k, q;
     char m[32];
-    barre_muertos();
+    if (barre_muertos()) bg_dirty = 1;
     for (o = 0; o < nz + 4; o++) {
         for (k = 0; k < NVENT; k++) {
             if (vents[k].usado && vents[k].visible &&
@@ -477,16 +499,21 @@ static void frame(void) {
         }
     }
     asegura_propiedad();
-    fondo();
+    if (bg_dirty) {
+        fondo();
+        bg_dirty = 0;
+    }
     for (q = 0; q < nn; q++) {
         ventana_t *v = &vents[ids[q]];
         int t = 0;
         char nb[12];
         int j, neg, val;
         if (!v->usado || !v->visible || v->minimizada) continue;
+        if (v->ack_pend) continue;   /* congelada: nada (cromo intacto) */
+        if (!win_dirty[ids[q]]) continue;   /* limpia: nada que pintar */
+        win_dirty[ids[q]] = 0;
         asegura_propiedad();
         cromo(v);
-        if (v->ack_pend) continue;   /* congelada: cromo si, DRAW no */
         m[t++] = 'D';
         m[t++] = 'R';
         m[t++] = 'A';
@@ -577,6 +604,7 @@ static void cierra_ventana(int id) {
     if (id < 0 || id >= NVENT || !vents[id].usado) return;
     u_ipc_enviar(vents[id].pid, "QUIT", 5);
     libera(id);
+    bg_dirty = 1;
     if (foco_id < 0) fija_foco(siguiente_foco());
     frame();
 }
@@ -610,6 +638,7 @@ static void tecla_a_foco(int code) {
     while (nb[j] && t < 15) m[t++] = nb[j++];
     m[t] = 0;
     u_ipc_enviar(vents[foco_id].pid, m, u_strlen(m) + 1);
+    marca_sucia(foco_id);
     frame();
 }
 
@@ -620,12 +649,14 @@ static void clic_izquierdo(void) {
         mi = menu_en(mx, my);
         if (mi >= 0) {
             menu_abierto = 0;
+            bg_dirty = 1;
             lanza(menu_app(mi));
             frame();
             return;
         }
         if (!(mx >= 2 && mx < 82 && my >= AREA_H)) {
             menu_abierto = 0;
+            bg_dirty = 1;
             frame();
             return;
         }
@@ -634,6 +665,7 @@ static void clic_izquierdo(void) {
     if (mx >= 2 && mx < 82 && my >= AREA_H) {
         menu_abierto = 1;
         menu_sel = -1;
+        bg_dirty = 1;
         frame();
         return;
     }
@@ -649,9 +681,11 @@ static void clic_izquierdo(void) {
                 v->visible = 1;
                 trae_frente(id);
                 fija_foco(id);
+                marca_sucia(id);
             } else if (foco_id == id) {
                 v->minimizada = 1;
                 v->visible = 0;
+                bg_dirty = 1;
                 fija_foco(siguiente_foco());
             } else {
                 trae_frente(id);
@@ -683,6 +717,7 @@ static void clic_izquierdo(void) {
             my >= v->y && my < v->y + CROMO_H) {
             v->minimizada = 1;
             v->visible = 0;
+            bg_dirty = 1;
             fija_foco(siguiente_foco());
             frame();
             return;
@@ -723,6 +758,7 @@ static void clic_izquierdo(void) {
             while (nb[q] && t < 29) m[t++] = nb[q++];
             m[t] = 0;
             u_ipc_enviar(vents[id].pid, m, t + 1);
+            marca_sucia(id);
         }
         frame();
     }
@@ -747,10 +783,14 @@ int main(void) {
                 for (k = 0; k < NVENT; k++) {
                     if (vents[k].usado && vents[k].pid == de) libera(k);
                 }
+                bg_dirty = 1;
                 if (foco_id < 0) fija_foco(siguiente_foco());
                 frame();
             } else if (r >= 4 && b[0] == 'S' && b[1] == 'Y' && b[2] == 'N' &&
                        b[3] == 'C') {
+                int k;
+                bg_dirty = 1;
+                for (k = 0; k < NVENT; k++) marca_sucia(k);
                 frame();
             } else if (r >= 3 && b[0] == 'I' && b[1] == 'N' &&
                        b[2] == 'F') {
@@ -770,6 +810,7 @@ int main(void) {
             if (k == 27) {
                 if (menu_abierto) {
                     menu_abierto = 0;
+                    bg_dirty = 1;
                     frame();
                 } else {
                     int i;
@@ -784,6 +825,7 @@ int main(void) {
             } else if (k == TEC_MENU_U) {
                 menu_abierto = !menu_abierto;
                 menu_sel = -1;
+                bg_dirty = 1;
                 frame();
             } else if (menu_abierto &&
                        (k == TEC_ARRIBA_U || k == TEC_ABAJO_U)) {
@@ -797,6 +839,7 @@ int main(void) {
                 if (menu_sel >= 0) {
                     int mi = menu_sel;
                     menu_abierto = 0;
+                    bg_dirty = 1;
                     lanza(menu_app(mi));
                     frame();
                 }
@@ -848,6 +891,8 @@ int main(void) {
                         if (v->y + v->h > AREA_H)
                             v->h = AREA_H - v->y;
                     }
+                    bg_dirty = 1;
+                    marca_sucia(arr_id);
                 }
                 frame();
             } else {
@@ -887,6 +932,7 @@ int main(void) {
                         while (nb[q] && t < 29) m[t++] = nb[q++];
                         m[t] = 0;
                         u_ipc_enviar(vents[id].pid, m, t + 1);
+                        marca_sucia(id);
                         frame();
                     } else {
                         cursor_show(0);   /* escritorio: sin recomponer */

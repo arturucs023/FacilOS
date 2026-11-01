@@ -16,6 +16,10 @@ Un cliente lento solo congela su ventana; uno muerto se barre; el daño
 queda acotado al frame (repaint total corrige).
 E6 tardío: el REG del bucle principal ya no marca pasada extra (el frame
 que sigue lo incluye): una sola recomposición por apertura.
+E6 tardío 2 (antiparpadeo): repintado por daño: el fondo solo se repinta
+si algo lo destapó (mover/cerrar/minimizar/menu/SYNC); DRAW solo a
+ventanas sucias (evento/geometría/foco); cromo+barra+menú+cursor siempre
+(baratos). El cromo va dentro de la puerta de suciedad.
 
 ## Rendimiento medido (Fase P, sin FPS inventados)
 - Frame vacío (fondo+barra+cursor): ms (imperceptible en capturas).
