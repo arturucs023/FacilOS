@@ -1,14 +1,16 @@
-# ROADMAP-KERNEL-v2.0-ACTUALIZADO (Etapa 2)
+# ROADMAP-KERNEL-v2.0-ACTUALIZADO (Etapa 3)
 
-## Hecho en Etapa 2 (auditoría extrema)
-NUEVO→LISTO atómico, despertares sin pérdida teórica, chequeo FUGA en cada
-destrucción, VMA con unión, sbrk anotado, 7 GPR en entrada a usuario, tabla
-IPC cableada, CD_CAT_MAX 32, 3 apps de estrés + 1 mixta, ISO etapa2 propia.
+## Hecho en Etapa 3
+ATA PIO verificado, `blk` (IDENTIFY+rangos+flush), formato v1.2
+especificado, `voldisco.py` (mkfs/verifica/lista), fs.c vía `blk`,
+`disco32` 38/38, persistencia real entre reinicios, kill -9 coherente,
+corruptos rechazados sin tocar disco, ISO etapa3 + imagen de datos.
 
-## Etapa 3 propuesta (gráficos/servicios, fuera de esta etapa)
-Servidor gráfico con superficies por proceso; eventos por IPC; ratón PS/2;
-backends VFS persistentes; drenaje explícito o reclamación en espera;
-telemetría `sc_count`; carga real del heap-k si se usa.
+## Etapa 4 propuesta (gráficos/servicios)
+Servidor gráfico con superficies; eventos por IPC; ratón PS/2; segundo
+backend VFS persistente sobre esta misma capa `blk`; drenaje explícito;
+telemetría `sc_count`.
 
-## Deuda restante (igual que etapa 1 + lo de arriba)
-`t2_gfx` 11/12; doble búfer efectivo; MAXPROC=8; sin SMP/COW/swap/POSIX.
+## Deuda restante
+`t2_gfx` 11/12; doble búfer efectivo; MAXPROC=8; sin SMP/COW/swap/POSIX;
+heap-k sin carga; sesiones >15 min y hardware real sin probar.
