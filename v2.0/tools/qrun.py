@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Arranca FacilOS en QEMU, envia comandos por monitor y vuelca el serial.
+Uso: qrun.py ISO HDD SERLOG PUERTO cmd1 [cmd2 ...]
+  HDD = "-" para arrancar solo con la ISO (v1.8 no necesita disco).
+  {UP} {DOWN} {LEFT} {RIGHT} = flechas ; {RET} = enter ; resto = texto + enter.
+  Sufijo ~ = sin el Enter final. {SHOT:ruta} = volcado de pantalla.
+  {SLEEP:seg} = espera (las apps tardan ~1-2 s en redibujar 800x600).
+  {K:0x1b} = tecla cruda de QEMU (codigo en hexadecimal). Ojo: en la
+  tabla ES de FacilOS '+' es el scancode 0x1B y '*' es shift-0x0D, que en
+  el harness es el mismo shift-equal que produce '+' en un teclado US.
+  Ojo tambien con PowerShell: los argumentos con espacios hay que pasarlos
+  por tools/qwin.ps1 (Start-Process los parte si se llaman tal cual).
+"""
+import os, socket, subprocess, sys, time, pathlib
+ISO = str(pathlib.Path(sys.argv[1]).resolve())
+HDD = sys.argv[2] if sys.argv[2] == "-" else str(pathlib.Path(sys.argv[2]).resolve())
+SER, PORT = sys.argv[3], int(sys.argv[4])
+CMDS = sys.argv[5:]
+ser = pathlib.Path(SER)
+if ser.exists():
+    ser.unlink()
+args = [r"C:\Program Files\qemu\qemu-system-i386.exe", "-cdrom", ISO]
+if HDD != "-":
+    # format=raw explicito: si QEMU sondea el formato, bloquea las
+    # escrituras al sector 0 (justo la cabecera FACILOS2) y deja la imagen
+    # con suma que no cuadra al siguiente arranque.
+    args += ["-drive", f"file={HDD},format=raw,if=ide,index=0,media=disk"]
+args += ["-boot", "order=d", "-m", "32", "-display", "none",
+         "-serial", f"file:{ser}", "-monitor", f"tcp:127.0.0.1:{PORT},server,nowait"]
+if os.environ.get("QRUN_DEBUG"):
+    # Traza de interrupciones y reinicios de QEMU (depuracion del kernel).
+    args += ["-d", "int,cpu_reset,guest_errors", "-D",
+             str(ser.with_suffix(".qemu"))]
+q = subprocess.Popen(args)
+time.sleep(2)
+s = socket.create_connection(("127.0.0.1", PORT), timeout=10)
+f = s.makefile("rwb", buffering=0)
+time.sleep(0.3)
+try:
+    s.recv(5000)
+except Exception:
+    pass
+for _ in range(40):
+    time.sleep(0.5)
+    if ser.exists() and "facil:" in ser.read_bytes().decode(errors="ignore"):
+        break
+MP = {"\n": "ret", " ": "0x39", "_": "shift-minus", "-": "minus",
+      ".": "dot", "/": "slash", ":": "shift-dot",
+      # tabla CP437 del BIOS: 0x0B '0'/shift'=', 0x1B '+'/shift'*',
+      # 0x0D '='/shift'+', 0x0B..0x0C fila de numeros.
+      "=": "shift-0", "*": "shift-equal", "+": "shift-equal",
+      ")": "shift-0", "(": "shift-9", "!": "shift-1", "?": "shift-slash"}
+MP.update({c: f"shift-{c.lower()}" for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZÑ"})
+def key(k):
+    # Hold explicito de 20 ms: sin el, QEMU mantiene la tecla 100 ms y al
+    # enviar la siguiente (gap de 90 ms) las pulsaciones se solapan y el
+    # invitado ve scancodes raros (p. ej. el espacio como Enter).
+    f.write(f"sendkey {k}\n".encode()); f.flush(); time.sleep(0.12)
+def send(t):
+    i = 0
+    while i < len(t):
+        if t[i] == "{":
+            j = t.index("}", i)
+            n = t[i+1:j]
+            if n.startswith("K:"):
+                key(n[2:])          # nombre de tecla crudo de QEMU
+            else:
+                key({"UP": "up", "DOWN": "down", "LEFT": "left",
+                     "RIGHT": "right", "RET": "ret", "ESC": "esc"}[n])
+            i = j + 1
+        else:
+            c = t[i]
+            key(MP.get(c, c))
+            i += 1
+    time.sleep(1.0)
+for c in CMDS:
+    if c.startswith("{SHOT:"):
+        f.write(f"screendump {c[6:-1]}\n".encode()); f.flush(); time.sleep(1.5)
+        continue
+    if c.startswith("{SLEEP:"):
+        time.sleep(float(c[7:-1])); continue
+    crudo = c.endswith("~")
+    if crudo:
+        c = c[:-1]
+    send(c + ("" if crudo else "\n"))
+time.sleep(1)
+txt = ser.read_bytes().decode(errors="ignore")
+print(txt[-3000:].encode("ascii", "replace").decode("ascii"))
+f.write(b"quit\n"); f.flush(); time.sleep(0.5)
+q.terminate()

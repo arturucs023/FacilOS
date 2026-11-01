@@ -60,6 +60,8 @@ Arranque → menú gráfico → `{ESC}` sale a la shell (`facil32:/>`). Comandos
 
 - `main`: v1.9 estable (congelada como referencia; tag `v1.9`).
 - `v2.0-etapa1`: evolución del kernel por entregas (ver `build/reports/`).
+- Directorio `v2.0/`: copia de trabajo v2.0 integrada (etapas 1 y 2) con sus
+  informes en `v2.0/build/reports/`.
 
 ## Licencia
 
