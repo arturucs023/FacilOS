@@ -319,8 +319,11 @@ void g_texto(int x, int y, const char *s, uint8_t color) {
                     volatile uint32_t *p = (volatile uint32_t *)
                         (b + (uint32_t)(cy + r) * GP + (uint32_t)(cx + c0) * 4);
                     uint8_t bits = f[r];
+                    /* v2.0-etapa6: transparente (solo tinta). Opaco aqui
+                       tapaba botones/controles con celdas negras; la
+                       consola usa glifo() (sigue opaco). */
                     for (int c = c0; c < c1; c++)
-                        p[c - c0] = (bits & (0x80 >> c)) ? fg : 0;
+                        if (bits & (0x80 >> c)) p[c - c0] = fg;
                 }
             }
             cx += 8;

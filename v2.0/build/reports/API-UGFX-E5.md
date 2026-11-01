@@ -27,7 +27,8 @@ Prefijo `ug_`. Cabecera `user/lib/ugfx.h`. Todo freestanding.
 ## Dibujo (coords relativas al contenido, con recorte)
 - `ug_comienza` (toma lease) / `ug_fin` (presenta + ACK).
 - `ug_pixel/linea/rect/relleno/texto/limpia`. `ug_texto` multilínea `\n`,
-  filas de 16 px. Colores: paleta `C_*` (0-15).
+  filas de 16 px, tinta transparente sobre el fondo (el núcleo ya no
+  pinta celdas negras: los botones se leen). Colores: paleta `C_*` (0-15).
 
 ## Controles
 - `ug_dentro`, `ug_etiqueta`, `ug_boton(v,x,y,w,h,t,estado)` con estados
