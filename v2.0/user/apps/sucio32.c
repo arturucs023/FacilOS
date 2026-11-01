@@ -67,6 +67,20 @@ int main(void) {
     ok(sys_ipc_hay() == 0, "hay-vacio2");
     /* v2.0-etapa4: raton (solo no-bloqueante; leer bloquearia). */
     ok(sys_hay_raton() == 0, "raton-vacio");
+    /* v2.0-etapa5: directorios y reloj (syscalls 41-44). */
+    {
+        udir_t de;
+        unsigned int tj[6];
+        ok(sys_dir_hijo(999, 0, &de) == -1, "dirhijo-malo");
+        ok(sys_dir_hijo(-1, 999, &de) == -1, "dirhijo-fin");
+        ok(sys_reloj(tj) == 0 && tj[3] < 24 && tj[4] < 60 && tj[5] < 60,
+           "reloj-cuerdo");
+        ok(sys_dir_crear("s_tmp") == 0, "dirmk");
+        ok(sys_dir_crear("s_tmp") == -1, "dirmk-doble");
+        ok(sys_renombrar("s_tmp", "s_tmp2") == 0, "renombra");
+        ok(sys_renombrar("s_tmp2", "s_tmp2") == 0, "renombra-igual");
+        ok(u_remove("s_tmp2") == 0, "dirrm");
+    }
     ok(sys_dormir(50) == 0, "dormir-ok");
     /* el nucleo sigue integro */
     ok(sys_info_memoria2(v) == 0 && v[4] == 0 && v[5] == 0, "nucleo-integro");

@@ -218,6 +218,27 @@ static inline int sys_hay_raton(void) {
     return sys_llama(39, 0, 0, 0);
 }
 
+/* v2.0-etapa5: directorios y reloj para Ring3 (explorador, escritorio).
+   41 dir_hijo(dir,n,buf44) -> tipo (1 carp, 2 arch, 3 CD) o -1.
+   buf44: u32 tipo, char nombre[33], u32 tam (ver udir_t).
+   42 dir_crear(ruta) -> 0 ok, -1 mal/existe. 43 renombrar(ruta,nuevo).
+   44 reloj(buf24) -> 6 x u32 [Y,M,D,h,m,s]. */
+static inline int sys_dir_hijo(int dir, int n, void *buf44) {
+    return sys_llama(41, dir, n, (int)buf44);
+}
+
+static inline int sys_dir_crear(const char *ruta) {
+    return sys_llama(42, (int)ruta, 0, 0);
+}
+
+static inline int sys_renombrar(const char *ruta, const char *nuevo) {
+    return sys_llama(43, (int)ruta, (int)nuevo, 0);
+}
+
+static inline int sys_reloj(unsigned int *v6) {
+    return sys_llama(44, (int)v6, 0, 0);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2

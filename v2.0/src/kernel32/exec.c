@@ -926,8 +926,154 @@ __attribute__((optimize("O0"))) static void sc_37(regs_t *r, int di)
     }
 
 
+__attribute__((optimize("O0"))) static void sc_41(regs_t *r, int di)
+ {   /* dir_hijo(dir, n, buf44) -> tipo (1 carp, 2 arch, 3 CD) o -1.
+       dir<0 = actual. buf: u32 tipo, char nombre[33], u32 tam.
+       Itera como la shell (k=1..63); en raiz sigue el catalogo ISO. */
+        extern int cdcat_cuantos(void);
+        extern const char *cdcat_nombre(int i);
+        extern int cdcat_tam(int i);
+        int dir = (int)r->ebx, n = (int)r->ecx;
+        uint8_t d[44];
+        int cont = 0;
+        r->eax = (uint32_t)-1;
+        if (di >= 0 && !ptr_ok(di, r->edx, 44, 1)) return;
+        if (dir < 0) dir = fs_actual();
+        if (dir < 0 || dir >= FS_N) return;
+        if (vfs_actual->tipo(dir) != 1 && dir != 0) return;
+        for (int k = 1; k < FS_N; k++) {
+            const char *nm;
+            uint32_t t, tm;
+            if (!vfs_actual->tipo(k) || vfs_actual->padre(k) != dir)
+                continue;
+            if (cont != n) { cont++; continue; }
+            nm = vfs_actual->nombre(k);
+            t = (uint32_t)vfs_actual->tipo(k);
+            tm = (uint32_t)vfs_actual->tam(k);
+            d[0] = (uint8_t)t; d[1] = (uint8_t)(t >> 8);
+            d[2] = (uint8_t)(t >> 16); d[3] = (uint8_t)(t >> 24);
+            for (int j = 0; j < 33; j++) d[4 + j] = (uint8_t)nm[j];
+            d[37] = d[38] = d[39] = 0;
+            d[40] = (uint8_t)tm; d[41] = (uint8_t)(tm >> 8);
+            d[42] = (uint8_t)(tm >> 16); d[43] = (uint8_t)(tm >> 24);
+            if (di >= 0) {
+                if (pag_escribe_usr((unsigned)di, r->edx, d, 44)) return;
+            } else {
+                for (int j = 0; j < 44; j++)
+                    ((uint8_t *)r->edx)[j] = d[j];
+            }
+            r->eax = t;
+            return;
+        }
+        if (dir == 0) {
+            int nc = cdcat_cuantos();
+            for (int k = 0; k < nc; k++) {
+                const char *nm;
+                uint32_t tm;
+                if (cont != n) { cont++; continue; }
+                nm = cdcat_nombre(k);
+                tm = (uint32_t)cdcat_tam(k);
+                if (!nm) { cont++; continue; }
+                d[0] = 3; d[1] = d[2] = d[3] = 0;
+                for (int j = 0; j < 33; j++)
+                    d[4 + j] = (j < 16 && nm[j]) ? (uint8_t)nm[j] : 0;
+                d[37] = d[38] = d[39] = 0;
+                d[40] = (uint8_t)tm; d[41] = (uint8_t)(tm >> 8);
+                d[42] = (uint8_t)(tm >> 16); d[43] = (uint8_t)(tm >> 24);
+                if (di >= 0) {
+                    if (pag_escribe_usr((unsigned)di, r->edx, d, 44))
+                        return;
+                } else {
+                    for (int j = 0; j < 44; j++)
+                        ((uint8_t *)r->edx)[j] = d[j];
+                }
+                r->eax = 3;
+                return;
+            }
+        }
+        return;
+    }
+
+
+__attribute__((optimize("O0"))) static void sc_42(regs_t *r, int di)
+ {   /* dir_crear(ruta) -> 0 ok, -1 mal/existe. Crea carpeta + sincroniza. */
+        const char *pa = (const char *)r->ebx;
+        char ruta[128];
+        uint32_t i = 0;
+        int dir;
+        char base[32];
+        r->eax = (uint32_t)-1;
+        if (!ptr_ok(di, r->ebx, 1, 0)) return;
+        while (i < 127 && pa[i]) { ruta[i] = pa[i]; i++; }
+        ruta[i] = 0;
+        if (!parte_sys(ruta, &dir, base)) {
+            if (vfs_actual->hijo(dir, base) >= 0) return;
+            if (vfs_actual->crear(1, dir, base) >= 0 &&
+                !vfs_actual->sincroniza())
+                r->eax = 0;
+        }
+        return;
+    }
+
+
+__attribute__((optimize("O0"))) static void sc_43(regs_t *r, int di)
+ {   /* renombrar(ruta, nuevo) -> 0 ok, -1 mal, -2 choca. Misma carpeta. */
+        const char *pa = (const char *)r->ebx;
+        const char *na = (const char *)r->ecx;
+        char ruta[128], nuevo[33];
+        uint32_t i = 0, k = 0;
+        int dir, idx, rr;
+        char base[32];
+        r->eax = (uint32_t)-1;
+        if (!ptr_ok(di, r->ebx, 1, 0)) return;
+        if (!na || !ptr_ok(di, r->ecx, 1, 0)) return;
+        while (i < 127 && pa[i]) { ruta[i] = pa[i]; i++; }
+        ruta[i] = 0;
+        while (k < 32 && na[k]) { nuevo[k] = na[k]; k++; }
+        nuevo[k] = 0;
+        if (!nuevo[0] || na[k]) return;
+        if (!parte_sys(ruta, &dir, base)) {
+            idx = vfs_actual->hijo(dir, base);
+            if (idx <= 0) return;
+            rr = vfs_actual->renombrar(idx, nuevo);
+            if (!rr && !vfs_actual->sincroniza()) r->eax = 0;
+            else r->eax = (uint32_t)rr;
+        }
+        return;
+    }
+
+
+__attribute__((optimize("O0"))) static void sc_44(regs_t *r, int di)
+ {   /* reloj_cmos(buf) -> 0; buf: 6 x u32 [Y,M,D,h,m,s] (BCD del CMOS). */
+        uint32_t v[6];
+        r->eax = (uint32_t)-1;
+        if (di >= 0 && !ptr_ok(di, r->ebx, 24, 1)) return;
+        for (int i = 0; i < 100000; i++) {
+            outb(0x70, 0x8A);
+            if (!(inb(0x71) & 0x80)) break;
+        }
+        {
+            /* CMOS: 9=Y, 8=M, 7=D, 4=h, 2=m, 0=s (como cmd_fecha). */
+            const uint8_t regs[6] = { 9, 8, 7, 4, 2, 0 };
+            for (int j = 0; j < 6; j++) {
+                uint8_t x;
+                outb(0x70, (uint8_t)(0x80 | regs[j]));
+                x = inb(0x71);
+                v[j] = (uint32_t)(((x >> 4) * 10) + (x & 15));
+            }
+        }
+        if (di >= 0) {
+            if (pag_escribe_usr((unsigned)di, r->ebx, v, 24)) return;
+        } else {
+            for (int i = 0; i < 6; i++) ((uint32_t *)r->ebx)[i] = v[i];
+        }
+        r->eax = 0;
+        return;
+    }
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 41
+#define SC_N 45
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -969,6 +1115,10 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [38] = sc_raton,
     [39] = sc_raton_hay,
     [40] = sc_ipc_hay,
+    [41] = sc_41,
+    [42] = sc_42,
+    [43] = sc_43,
+    [44] = sc_44,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1012,6 +1162,10 @@ static const char *const sc_nombre[SC_N] = {
     [38] = "leer_raton",
     [39] = "hay_raton",
     [40] = "ipc_hay",
+    [41] = "dir_hijo",
+    [42] = "dir_crear",
+    [43] = "renombrar",
+    [44] = "reloj",
 };
 static uint32_t sc_count[SC_N];
 

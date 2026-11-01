@@ -561,6 +561,29 @@ int u_raton(unsigned int *v3) {
 int u_hay_raton(void) {
     return sys_hay_raton();
 }
+int u_dir_hijo(int dir, int n, udir_t *dst) {
+    unsigned char crudo[44];
+    int t, j;
+    if (!dst) return -1;
+    t = sys_dir_hijo(dir, n, crudo);
+    if (t < 0) return -1;
+    dst->tipo = (int)((unsigned)crudo[0] | ((unsigned)crudo[1] << 8) |
+                      ((unsigned)crudo[2] << 16) | ((unsigned)crudo[3] << 24));
+    for (j = 0; j < 32; j++) dst->nombre[j] = (char)crudo[4 + j];
+    dst->nombre[32] = 0;
+    dst->tam = (unsigned)crudo[40] | ((unsigned)crudo[41] << 8) |
+               ((unsigned)crudo[42] << 16) | ((unsigned)crudo[43] << 24);
+    return dst->tipo;
+}
+int u_dir_crear(const char *ruta) {
+    return sys_dir_crear(ruta);
+}
+int u_renombrar(const char *ruta, const char *nuevo) {
+    return sys_renombrar(ruta, nuevo);
+}
+int u_reloj(unsigned int *v6) {
+    return sys_reloj(v6);
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {

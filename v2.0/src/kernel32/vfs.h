@@ -22,6 +22,10 @@ typedef struct {
     int (*truncar)(int idx, uint32_t tam);
     int (*borrar)(int idx);
     int (*sincroniza)(void);                         /* persistencia */
+    /* v2.0-etapa5: directorios para Ring3 (explorador). */
+    const char *(*nombre)(int idx);                   /* estatico, <=32+NUL */
+    int (*padre)(int idx);                            /* dir padre o -1 */
+    int (*renombrar)(int idx, const char *nuevo);     /* 0 ok, -1 mal, -2 choca */
 } vfs_ops_t;
 
 extern const vfs_ops_t *vfs_actual;   /* backend montado (ramfs) */

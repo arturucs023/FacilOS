@@ -137,4 +137,16 @@ int u_raton(unsigned int *v3);   /* [x,y,botones], bloquea hasta paquete */
 int u_hay_raton(void);           /* paquetes pendientes (no bloquea) */
 const char *u_estado_nombre(int e);
 
+/* ---- directorios y reloj v2.0-etapa5 (syscalls 41-44) ---- */
+typedef struct {
+    int tipo;             /* 1 carpeta, 2 archivo, 3 programa del CD */
+    char nombre[33];
+    unsigned int tam;
+} udir_t;                 /* 44 B en cable (tipo, nombre, tam, 3 de relleno) */
+
+int u_dir_hijo(int dir, int n, udir_t *dst);  /* tipo o -1; dir<0 = actual */
+int u_dir_crear(const char *ruta);            /* 0 ok, -1 mal/existe */
+int u_renombrar(const char *ruta, const char *nuevo); /* 0,-1,-2 choca */
+int u_reloj(unsigned int *v6);                /* [Y,M,D,h,m,s], 0 ok */
+
 #endif
