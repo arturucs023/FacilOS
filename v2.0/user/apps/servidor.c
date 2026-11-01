@@ -460,6 +460,24 @@ static void espera_ack(int idx) {
                 envia_inf(de);
                 continue;
             }
+            /* MODAL tambien aqui: si llega en espera (el cliente lo manda
+               justo antes de bloquearse en ejecutar) y se descarta, el
+               modal no se activa nunca. Sin frame: ya estamos en uno. */
+            if (r >= 5 && b[0] == 'M' && b[1] == 'O' && b[2] == 'D') {
+                int on = (r >= 7 && b[6] == '1') ? 1 : 0;
+                int k;
+                if (on) {
+                    if (!modal_pid) modal_pid = de;
+                } else if (de == modal_pid) {
+                    modal_pid = 0;
+                    bg_dirty = 1;
+                    for (k = 0; k < NVENT; k++) {
+                        win_dirty[k] = 1;
+                        win_cromo[k] = 1;
+                    }
+                }
+                continue;
+            }
             continue;
         }
         if (u_proc_stat(pid, st) != 0 || st[0] == 4) {

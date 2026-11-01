@@ -15,8 +15,8 @@ Estado: IMPLEMENTADO + PROBADO.
   marca `ack_pend` (congela su DRAW, cromo sigue). ACK tardío reanuda.
 - FOCUS asíncrono (sin ACK) en cada cambio de foco.
 - SYNC/INF/REG/BYE se atienden también dentro de `espera_ack` (sin esa
-  cláusula, `INF` tras `REG` interbloqueaba con sysinfo: detectado y
-  corregido en E6).
+  cláusula, `INF` tras `REG` interbloqueaba con sysinfo y `MODAL` tras
+  tecla se perdía dejando al servidor pintando encima del hijo).
 - Cierre asíncrono: QUIT + libera sin esperar (esperar colgaría con
   clientes bloqueados). El cliente sale al desatascarse.
 - Cliente que muere sin BYE: barrido por `u_proc_stat==FIN` en cada frame.
