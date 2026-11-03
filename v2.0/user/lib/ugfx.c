@@ -185,6 +185,24 @@ void ug_modal(ug_win_t *v, int on) {
     u_ipc_enviar(v->srv, on ? "MODAL 1" : "MODAL 0", 8);
 }
 
+void ug_tick(ug_win_t *v, int s) {
+    char m[16];
+    int t = 0, q = 0;
+    char nb[12];
+    if (!v || !v->vivo) return;
+    if (s < 0) s = 0;
+    if (s > 60) s = 60;
+    m[t++] = 'T';
+    m[t++] = 'I';
+    m[t++] = 'C';
+    m[t++] = 'K';
+    m[t++] = ' ';
+    u_itoa(s, nb);
+    while (nb[q] && t < 14) m[t++] = nb[q++];
+    m[t] = 0;
+    u_ipc_enviar(v->srv, m, t + 1);
+}
+
 void ug_comienza(ug_win_t *v) {
     /* Toma el lease (precedente: asegura_propiedad del servidor). */
     u_texto(0, 0, "", C_NEGRO);

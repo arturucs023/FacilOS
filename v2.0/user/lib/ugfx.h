@@ -54,6 +54,9 @@ int ug_evento(ug_win_t *v, ug_ev_t *ev, int bloquear);
 int ug_pide_info(ug_win_t *v, int *w, int *h);
 /* Pide reframe al servidor (tras un hijo que escribio a consola). */
 void ug_sync(ug_win_t *v);
+/* Refresco periodico: el servidor manda DRAW cada s segundos (1-60;
+   0 cancela). Para relojes/indicadores en vivo (v2.1-p1). */
+void ug_tick(ug_win_t *v, int s);
 /* Modo modal: 1 suspende entrada y pintado del servidor (hijo con
    pantalla+teclado propios), 0 reanuda con repintado total. */
 void ug_modal(ug_win_t *v, int on);

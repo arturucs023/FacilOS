@@ -32,6 +32,7 @@ int main(void) {
     srv = u_atoi(a);
     if (srv <= 0) return 99;
     if (ug_abre(&v, srv, 400, 300, "sysinfo")) return 98;
+    ug_tick(&v, 1);   /* v2.1-p1: datos en vivo (reloj/memoria) */
     ug_pide_info(&v, &pw, &ph);
     for (;;) {
         int t = ug_evento(&v, &ev, 1), y = 6;

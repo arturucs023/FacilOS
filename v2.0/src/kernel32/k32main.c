@@ -92,15 +92,56 @@ void kmain(void)
     }
     /* v2.0: el FS RAM lo inicia su driver (drv_init_todos); shell()
        tambien lo pide (idempotente). */
+    /* v2.1-p1: autocuracion de video: si caimos a texto con un modo
+       persistente pedido (CMOS 0x40 != 0), se restablece el defecto para
+       el proximo arranque (el modo pedido no existe en este video). */
+    if (!gfx_activo()) {
+        uint8_t cv;
+        outb(0x70, 0x40);
+        cv = inb(0x71);
+        if (cv > 2) {
+            outb(0x70, 0x40);
+            outb(0x71, 0);
+            kprintf("video: modo %u no soportado, restablecido 800x600\r\n",
+                    (unsigned)cv);
+        }
+    }
     /* v2.1-P0: el escritorio renovado arranca directo; la shell queda
        como recuperacion al salir del servidor (o si este falla). */
-    int pid = kern_crea_proceso("servidor", "", 1);
-    if (pid < 0) {
-        kprintf("no se pudo crear el proceso servidor (%d): arranca la shell\r\n",
-                pid);
-    } else {
-        proc_t *m = proc_por_pid(pid);
-        if (m) m->grafico = 1;
+    /* v2.1-p1: el servidor recibe las dimensiones reales (modos VESA). */
+    {
+        char sargs[24];
+        int o = 0, ww = (int)gfx_w(), hh = (int)gfx_h(), t;
+        int vals[2];
+        if (ww < 640 || ww > 2048) ww = 800;
+        if (hh < 400 || hh > 2048) hh = 600;
+        vals[0] = ww;
+        vals[1] = hh;
+        for (t = 0; t < 2; t++) {
+            char rv[12];
+            int ri = 0, v = vals[t], j;
+            if (t) sargs[o++] = ' ';
+            if (!v) sargs[o++] = '0';
+            else {
+                while (v && ri < 11) {
+                    rv[ri++] = (char)('0' + v % 10);
+                    v /= 10;
+                }
+                for (j = ri - 1; j >= 0 && o < 22; j--)
+                    sargs[o++] = rv[j];
+            }
+        }
+        sargs[o] = 0;
+        {
+            int pid = kern_crea_proceso("servidor", sargs, 1);
+            if (pid < 0) {
+                kprintf("no se pudo crear el proceso servidor (%d): arranca la shell\r\n",
+                        pid);
+            } else {
+                proc_t *m = proc_por_pid(pid);
+                if (m) m->grafico = 1;
+            }
+        }
     }
     /* Tarea 0 (esta funcion): espera a que no haya procesos graficos
        vivos y da la consola de texto. Mientras tanto, los procesos de

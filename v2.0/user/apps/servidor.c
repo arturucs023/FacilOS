@@ -13,10 +13,12 @@ void __main(void) {
  */
 
 #define NVENT 16
-#define PANT_W 800
-#define PANT_H 600
-#define BARRA_H T_BARRA_H
-#define AREA_H (PANT_H - BARRA_H)
+/* v2.1-p1: dimensiones reales (las pasa el nucleo en args "W H";
+   defecto 800x600). Sin esto, otros modos VESA descentran todo. */
+static int pan_w = 800, pan_h = 600, area_h = 570;
+#define PANT_W (pan_w)
+#define PANT_H (pan_h)
+#define AREA_H (area_h)
 #define CROMO_H 20
 #define NMENU 5
 
@@ -27,6 +29,8 @@ typedef struct {
     int visible;
     int minimizada;
     int foco;
+    int max;                  /* v2.1-p1: maximizada (geometria previa en p*) */
+    int px, py, pw, ph;
     int ack_pend;       /* DRAW sin confirmar (cliente lento/bloqueado) */
     char titulo[24];
 } ventana_t;
@@ -35,10 +39,7 @@ static ventana_t vents[NVENT];
 static int nz = 0;
 static int foco_id = -1;
 static int mx = 400, my = 300, mb = 0, mb_antes = 0;
-/* Antiparadeo en movimiento (etapa 6, Fase P): como mucho un reframe por
-   movimiento cada 150 ms; entre medias el MOU llega igual (estado) y el
-   cursor va por via rapida. Clics/teclas/drags no limitan. */
-static int ult_mou = 0;
+static int mou_id = -1, mou_bot = 0;
 static int arr_id = -1, arr_dx = 0, arr_dy = 0, arr_modo = 0;
 static int menu_abierto = 0, menu_sel = -1, ultimo_min = -1;
 
@@ -54,42 +55,65 @@ static int nuevo_marco = 0;
    del dueño o solo si el dueño muere. Como la shell en texto. */
 static int modal_pid = 0;
 
+/* TICK (v2.1-p1): refresco periodico por ventana. El cliente pide
+   "TICK s" (1-60 s; 0 cancela) y el servidor le manda DRAW al vencer.
+   Sin esto, relojes/indicadores en vivo se congelaban hasta el proximo
+   clic (el servidor solo repintaba por eventos). Contenido solo. */
+static int tick_sec[NVENT];
+static unsigned tick_due[NVENT];
+
+/* Fondo tematico (v2.1-p1): indice de degradado (ver tabla en fondo()).
+   "FONDO n" lo cambia + repinta; persiste en fondo.cfg. */
+static int fondo_idx = 0;
+#define N_FONDOS 5
+
 static void marca_sucia(int id);
+static void atiende_tick(int de, char *b, int r);
+static void atiende_fondo(int de, char *b, int r);
 
 /* Repintado por dano (etapa 6, Fase P): ver definicion junto a frame(). */
 static int bg_dirty = 1;
 static int win_dirty[NVENT];
 static int win_cromo[NVENT];
 
+/* v2.1-P0: degradado vertical por bandas (16 bandas de 36 px) +
+   formas discretas. Solo se llama con bg_dirty (nunca por cursor).
+   v2.1-p1: paleta segun fondo_idx (0 marino, 1 grafito, 2 bosque,
+   3 burdeos, 4 medianoche). */
+static const unsigned char FONDO_RT[N_FONDOS] = { 27, 45, 24, 74, 10 };
+static const unsigned char FONDO_GT[N_FONDOS] = { 42, 52, 68, 28, 16 };
+static const unsigned char FONDO_BT[N_FONDOS] = { 74, 64, 44, 48, 40 };
+#define nombre_fondo t_fondo_nombre
+
 static void fondo(void) {
-    /* v2.1-P0: degradado vertical por bandas (16 bandas de 36 px) +
-       formas discretas. Solo se llama con bg_dirty (nunca por cursor). */
-    static const unsigned char rt[16] = {
-        27, 26, 25, 24, 23, 22, 21, 20,
-        19, 18, 17, 16, 15, 14, 13, 12
-    };
-    static const unsigned char gt[16] = {
-        42, 41, 40, 39, 37, 36, 35, 34,
-        32, 31, 30, 29, 27, 26, 24, 20
-    };
-    static const unsigned char bt[16] = {
-        74, 72, 70, 68, 66, 64, 62, 60,
-        58, 56, 54, 52, 49, 47, 44, 40
-    };
-    int i;
+    unsigned char r0 = FONDO_RT[fondo_idx], g0 = FONDO_GT[fondo_idx];
+    unsigned char b0 = FONDO_BT[fondo_idx];
+    unsigned char r1 = r0 > 15 ? (unsigned char)(r0 - 15) : 0;
+    unsigned char g1 = g0 > 22 ? (unsigned char)(g0 - 22) : 0;
+    unsigned char b1 = b0 > 34 ? (unsigned char)(b0 - 34) : 0;
+    int i, nb = 16;
+    int bh = AREA_H / nb;
     u_destino(0);
-    for (i = 0; i < 16; i++) {
-        int y = i * (AREA_H / 16);
-        int h = (i == 15) ? (AREA_H - y) : (AREA_H / 16);
-        u_rectangulo(0, y, PANT_W, h, RGB24(rt[i], gt[i], bt[i]));
+    for (i = 0; i < nb; i++) {
+        int y = i * bh;
+        int h = (i == nb - 1) ? (AREA_H - y) : bh;
+        int rr = r0 + (r1 - r0) * i / (nb - 1);
+        int gg = g0 + (g1 - g0) * i / (nb - 1);
+        int bb = b0 + (b1 - b0) * i / (nb - 1);
+        u_rectangulo(0, y, PANT_W, h, RGB24(rr, gg, bb));
     }
-    /* Banda diagonal discreta + linea de acento + medallon. */
-    u_rectangulo(0, 120, PANT_W, 46, T_FONDO_BANDA);
-    u_rectangulo(0, 166, PANT_W, 2, T_FONDO_LINEA);
-    u_rectangulo(560, 300, 140, 90, T_FONDO_BANDA);
-    u_rectangulo(560, 300, 140, 2, T_FONDO_LINEA);
-    u_rectangulo(120, 380, 220, 60, T_FONDO_BANDA);
-    u_rectangulo(120, 438, 220, 2, T_FONDO_LINEA);
+    /* Banda + linea de acento + medallones (tonos del tema). */
+    {
+        int banda = RGB24(r0 + 9 > 255 ? 255 : r0 + 9,
+                          g0 + 12 > 255 ? 255 : g0 + 12,
+                          b0 + 20 > 255 ? 255 : b0 + 20);
+        u_rectangulo(0, 120, PANT_W, 46, banda);
+        u_rectangulo(0, 166, PANT_W, 2, T_FONDO_LINEA);
+        u_rectangulo(560, 300, 140, 90, banda);
+        u_rectangulo(560, 300, 140, 2, T_FONDO_LINEA);
+        u_rectangulo(120, 380, 220, 60, banda);
+        u_rectangulo(120, 438, 220, 2, T_FONDO_LINEA);
+    }
 }
 
 /* Icono 16x16 propio en (x,y); '.' y letras ajenas = transparente. */
@@ -130,7 +154,7 @@ static void trae_frente(int id) {
 }
 
 /* Barra de titulo tematizada + botones con iconos; zonas de
-   interaccion intactas (X: w-20, _: w-40, arrastre: resto). */
+   interaccion intactas (X: w-20, _: w-40, max: w-60, arrastre: resto). */
 static void cromo(ventana_t *v) {
     int maxc;
     char t[24];
@@ -149,6 +173,19 @@ static void cromo(ventana_t *v) {
     u_rectangulo(v->x + v->w - 40, v->y + 1, 19, CROMO_H - 1,
                  T_BTN_MIN);
     dibuja_icono(10, v->x + v->w - 39, v->y + 2);
+    /* [☐] maximizar/restaurar (v2.1-p1): cuadrado tipico; si esta
+       maximizada se dibuja solapado (restaurar). */
+    u_rectangulo(v->x + v->w - 60, v->y + 1, 19, CROMO_H - 1,
+                 T_BTN_MIN);
+    if (v->max) {
+        u_rectangulo(v->x + v->w - 56, v->y + 6, 9, 9, T_TIT_TEXTO);
+        u_rectangulo(v->x + v->w - 55, v->y + 7, 7, 7, T_BTN_MIN);
+        u_rectangulo(v->x + v->w - 52, v->y + 3, 9, 9, T_TIT_TEXTO);
+        u_rectangulo(v->x + v->w - 51, v->y + 4, 7, 7, T_BTN_MIN);
+    } else {
+        u_rectangulo(v->x + v->w - 55, v->y + 5, 10, 10, T_TIT_TEXTO);
+        u_rectangulo(v->x + v->w - 54, v->y + 6, 8, 8, T_BTN_MIN);
+    }
     dibuja_icono(icono_app(v->titulo), v->x + 4, v->y + 2);
     maxc = (v->w - 120) / 8;
     if (maxc > 23) maxc = 23;
@@ -158,6 +195,20 @@ static void cromo(ventana_t *v) {
     }
     t[n] = 0;
     u_texto(v->x + 24, v->y + 3, t, T_TIT_TEXTO);
+}
+
+/* Agarre de esquina (redimensionar): 3 diagonales sobre la esquina
+   inferior derecha. Se dibuja tras el ACK (el DRAW del cliente lo
+   taparia si fuese en el cromo). */
+static void dibuja_agarre(ventana_t *v) {
+    int gx = v->x + v->w - 3, gy = v->y + v->h - 3, d;
+    asegura_propiedad();
+    for (d = 0; d < 9; d += 3) {
+        u_pixel(gx - d, gy, T_PANEL_SEP);
+        u_pixel(gx - d - 1, gy, T_PANEL_SEP);
+        u_pixel(gx, gy - d, T_PANEL_SEP);
+        u_pixel(gx, gy - d - 1, T_PANEL_SEP);
+    }
 }
 
 /* Sombra simulada 3px (derecha+abajo, tonos progresivos). Se dibuja en
@@ -230,7 +281,7 @@ static void barra(void) {
         int i = 0;
         int act;
         if (!v->usado) continue;
-        if (x + 132 > 690) break;
+        if (x + 132 > PANT_W - 110) break;
         act = (v->foco && !v->minimizada) ? 1 : 0;
         u_rectangulo(x, AREA_H + 3, 130, T_BARRA_H - 6,
                      act ? T_SELECCION : T_BTN_CARA);
@@ -245,9 +296,10 @@ static void barra(void) {
         u_texto(x + 24, AREA_H + 9, t, T_PANEL_TEXTO);
         x += 132;
     }
-    u_rectangulo(692, AREA_H + 4, 1, T_BARRA_H - 8, T_PANEL_SEP);
+    u_rectangulo(PANT_W - 108, AREA_H + 4, 1, T_BARRA_H - 8,
+                 T_PANEL_SEP);
     reloj_txt(rh);
-    u_texto(726, AREA_H + 9, rh, T_PANEL_TEXTO);
+    u_texto(PANT_W - 74, AREA_H + 9, rh, T_PANEL_TEXTO);
 }
 
 static void dibuja_menu(void) {
@@ -415,8 +467,10 @@ static int registra(int pid, int w, int h, const char *tit) {
     vents[i].z = z;
     vents[i].visible = 1;
     vents[i].minimizada = 0;
+    vents[i].max = 0;
     vents[i].foco = 0;
     vents[i].ack_pend = 0;
+    tick_sec[i] = 0;
     win_dirty[i] = 1;
     win_cromo[i] = 1;
     if (!tit || !tit[0]) tit = "ventana";
@@ -433,6 +487,8 @@ static void libera(int i) {
     vents[i].usado = 0;
     vents[i].visible = 0;
     vents[i].minimizada = 0;
+    vents[i].max = 0;
+    tick_sec[i] = 0;
     if (foco_id == i) foco_id = -1;
     if (arr_id == i) arr_id = -1;
 }
@@ -601,6 +657,16 @@ static void espera_ack(int idx) {
                 envia_inf(de);
                 continue;
             }
+            if (r >= 4 && b[0] == 'T' && b[1] == 'I' && b[2] == 'C' &&
+                b[3] == 'K') {
+                atiende_tick(de, b, r);
+                continue;
+            }
+            if (r >= 5 && b[0] == 'F' && b[1] == 'O' && b[2] == 'N' &&
+                b[3] == 'D') {
+                atiende_fondo(de, b, r);
+                continue;
+            }
             /* MODAL tambien aqui: si llega en espera (el cliente lo manda
                justo antes de bloquearse en ejecutar) y se descarta, el
                modal no se activa nunca. Sin frame: ya estamos en uno. */
@@ -663,6 +729,61 @@ static void marca_contenido(int id) {
     if (id >= 0 && id < NVENT && vents[id].usado) win_dirty[id] = 1;
 }
 
+/* TICK s del pid de: refresco cada s segundos (0 cancela). */
+static void atiende_tick(int de, char *b, int r) {
+    int k = 5, s = 0, j;
+    while (k < r && (b[k] < '0' || b[k] > '9')) k++;
+    while (k < r && b[k] >= '0' && b[k] <= '9') {
+        s = s * 10 + (b[k] - '0');
+        k++;
+    }
+    if (s < 0) s = 0;
+    if (s > 60) s = 60;
+    for (j = 0; j < NVENT; j++) {
+        if (vents[j].usado && vents[j].pid == de) {
+            tick_sec[j] = s;
+            tick_due[j] = u_ticks() + (unsigned)s * 100u;
+        }
+    }
+}
+
+/* FONDO n: cambia el degradado (0-4), repinta y persiste. */
+static void guarda_fondo(void) {
+    UFILE *f = u_fopen("fondo.cfg", "w");
+    if (f) {
+        char c = (char)('0' + fondo_idx);
+        u_fwrite(&c, 1, f);
+        u_fclose(f);
+    }
+}
+
+static void atiende_fondo(int de, char *b, int r) {
+    int k = 6, n = 0, j;
+    (void)de;
+    while (k < r && (b[k] < '0' || b[k] > '9')) k++;
+    if (k < r) n = b[k] - '0';
+    if (n < 0 || n >= N_FONDOS) return;
+    if (n == fondo_idx) return;
+    fondo_idx = n;
+    bg_dirty = 1;
+    for (j = 0; j < NVENT; j++) {
+        win_dirty[j] = 1;
+        win_cromo[j] = 1;
+    }
+    guarda_fondo();
+}
+
+/* Carga fondo.cfg (si existe): un digito 0-4. */
+static void carga_fondo(void) {
+    UFILE *f = u_fopen("fondo.cfg", "r");
+    if (f) {
+        char c = 0;
+        if (u_fread(&c, 1, f) == 1 && c >= '0' && c < '0' + N_FONDOS)
+            fondo_idx = c - '0';
+        u_fclose(f);
+    }
+}
+
 /* Lanza una app del menu con arg = pid del servidor. */
 static void lanza(const char *app) {
     char arg[16];
@@ -723,7 +844,6 @@ static void frame(void) {
             win_cromo[ids[q]] = 0;
         }
         if (!win_dirty[ids[q]]) continue;
-        win_dirty[ids[q]] = 0;
         m[t++] = 'D';
         m[t++] = 'R';
         m[t++] = 'A';
@@ -794,8 +914,13 @@ static void frame(void) {
             }
         }
         m[t] = 0;
-        u_ipc_enviar(v->pid, m, u_strlen(m) + 1);
+        /* v2.1-p1: si el buzon esta lleno (rafaga de MOU) el DRAW se
+           pierde; no se limpia el flag para reintentarlo (antes quedaba
+           la ventana en blanco para siempre). */
+        if (!u_ipc_enviar(v->pid, m, u_strlen(m) + 1))
+            win_dirty[ids[q]] = 0;
         espera_ack(ids[q]);
+        if (vents[ids[q]].usado) dibuja_agarre(&vents[ids[q]]);
     }
     asegura_propiedad();
     barra();
@@ -805,6 +930,34 @@ static void frame(void) {
         nuevo_marco = 0;
         frame();
     }
+}
+
+/* Maximizar/restaurar (v2.1-p1): guarda geometria, ocupa el area de
+   trabajo (0,0,PANT_W,AREA_H); restaurar devuelve la previa. */
+static void conmuta_max(int id) {
+    ventana_t *v;
+    if (id < 0 || id >= NVENT || !vents[id].usado) return;
+    v = &vents[id];
+    if (!v->max) {
+        v->px = v->x;
+        v->py = v->y;
+        v->pw = v->w;
+        v->ph = v->h;
+        v->x = 0;
+        v->y = 0;
+        v->w = PANT_W;
+        v->h = AREA_H;
+        v->max = 1;
+    } else {
+        v->x = v->px;
+        v->y = v->py;
+        v->w = v->pw;
+        v->h = v->ph;
+        v->max = 0;
+    }
+    bg_dirty = 1;
+    marca_sucia(id);
+    frame();
 }
 
 /* Cierra la ventana id: QUIT + libera SIN esperar (fire-and-forget).
@@ -884,7 +1037,7 @@ static void clic_izquierdo(void) {
     for (id = 0; id < NVENT; id++) {
         ventana_t *v = &vents[id];
         if (!v->usado) continue;
-        if (bx + 132 > 690) break;
+        if (bx + 132 > PANT_W - 110) break;
         if (mx >= bx && mx < bx + 130 && my >= AREA_H) {
             if (v->minimizada) {
                 v->minimizada = 0;
@@ -933,6 +1086,12 @@ static void clic_izquierdo(void) {
             frame();
             return;
         }
+        /* [cuadrado] maximizar/restaurar (v2.1-p1) */
+        if (mx >= v->x + v->w - 60 && mx < v->x + v->w - 40 &&
+            my >= v->y && my < v->y + CROMO_H) {
+            conmuta_max(id);
+            return;
+        }
         /* esquina: redimensionar */
         if (mx >= v->x + v->w - 14 && my >= v->y + v->h - 14) {
             arr_id = id;
@@ -940,9 +1099,18 @@ static void clic_izquierdo(void) {
             frame();
             return;
         }
-        /* titulo: arrastrar */
+        /* titulo: arrastrar (si esta maximizada, primero restaura) */
         if (my < v->y + CROMO_H) {
             arr_id = id;
+            if (v->max) {
+                v->x = v->px;
+                v->y = v->py;
+                v->w = v->pw;
+                v->h = v->ph;
+                v->max = 0;
+                bg_dirty = 1;
+                marca_sucia(id);
+            }
             arr_dx = mx - v->x;
             arr_dy = my - v->y;
             arr_modo = 0;
@@ -979,6 +1147,29 @@ int main(void) {
     char b[64];
     int de = 0;
     u_print("servidor escritorio v1 (etapa 5/6)\n");
+    {
+        /* v2.1-p1: dimensiones reales del nucleo ("W H"). */
+        const char *a = u_args();
+        int w = 0, h = 0;
+        while (*a == ' ') a++;
+        while (*a >= '0' && *a <= '9') {
+            w = w * 10 + (*a - '0');
+            a++;
+        }
+        while (*a == ' ') a++;
+        while (*a >= '0' && *a <= '9') {
+            h = h * 10 + (*a - '0');
+            a++;
+        }
+        if (w >= 640 && w <= 2048 && h >= 400 && h <= 2048) {
+            pan_w = w;
+            pan_h = h;
+            area_h = h - T_BARRA_H;
+            mx = w / 2;
+            my = h / 2;
+        }
+    }
+    carga_fondo();
     asegura_propiedad();
     frame();
     for (;;) {
@@ -1025,6 +1216,13 @@ int main(void) {
                     }
                     frame();
                 }
+            } else if (r >= 4 && b[0] == 'T' && b[1] == 'I' && b[2] == 'C' &&
+                       b[3] == 'K') {
+                atiende_tick(de, b, r);
+            } else if (r >= 5 && b[0] == 'F' && b[1] == 'O' && b[2] == 'N' &&
+                       b[3] == 'D') {
+                atiende_fondo(de, b, r);
+                frame();
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
                 /* ACK tardio: reanuda + repinta (el contenido llego tarde
@@ -1144,8 +1342,11 @@ int main(void) {
                 if (pulsado) {
                     clic_izquierdo();
                 } else {
-                    /* movimiento sobre contenido: reenvia MOU siempre;
-                       reframe limitado (ver ult_mou) */
+                    /* movimiento sobre contenido: MOU siempre (estado
+                       para la app); DRAW solo si cambia algo visible
+                       (ventana, botones o arrastre con boton): el
+                       reframe ~7/s por movimiento era el parpadeo
+                       constante (v2.1-p1). */
                     int id = ventana_en(mx, my);
                     if (id >= 0) {
                         char m[32], nx[12], ny[12], nb[12];
@@ -1166,8 +1367,9 @@ int main(void) {
                         while (nb[q] && t < 29) m[t++] = nb[q++];
                         m[t] = 0;
                         u_ipc_enviar(vents[id].pid, m, t + 1);
-                        if (u_ticks() - ult_mou >= 15) {
-                            ult_mou = u_ticks();
+                        if (id != mou_id || mb != mou_bot || (mb & 1)) {
+                            mou_id = id;
+                            mou_bot = mb;
                             marca_contenido(id);
                             frame();
                         } else {
@@ -1175,6 +1377,7 @@ int main(void) {
                             cursor_show();
                         }
                     } else {
+                        mou_id = -1;
                         /* escritorio: via rapida sin recomponer */
                         cursor_borra();
                         cursor_show();
@@ -1183,13 +1386,39 @@ int main(void) {
             }
             mb_antes = mb;
         } else {
+            /* Reposo: TICKs vencidos + cambio de minuto del panel.
+               Sin esto, relojes en vivo se congelaban hasta el proximo
+               clic (v2.1-p1). */
             unsigned int tj[6];
+            unsigned ahora = (unsigned)u_ticks();
+            int urge = 0, k;
+            for (k = 0; k < NVENT; k++) {
+                if (vents[k].usado && vents[k].visible &&
+                    !vents[k].minimizada && tick_sec[k] > 0 &&
+                    ahora >= tick_due[k]) {
+                    tick_due[k] = ahora + (unsigned)tick_sec[k] * 100u;
+                    win_dirty[k] = 1;
+                    urge = 1;
+                }
+            }
+            /* Reintento: un DRAW perdido (buzon lleno) deja el flag
+               puesto; se reenvia aqui (v2.1-p1). */
+            if (!urge) {
+                for (k = 0; k < NVENT; k++) {
+                    if (vents[k].usado && vents[k].visible &&
+                        !vents[k].minimizada &&
+                        (win_dirty[k] || win_cromo[k])) {
+                        urge = 1;
+                        break;
+                    }
+                }
+            }
             if (!u_reloj(tj) && (int)tj[4] != ultimo_min) {
                 ultimo_min = (int)tj[4];
-                frame();
-            } else {
-                u_dormir(20);
+                urge = 1;
             }
+            if (urge) frame();
+            u_dormir(20);
         }
     }
 }

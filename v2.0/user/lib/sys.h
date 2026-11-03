@@ -239,6 +239,11 @@ static inline int sys_reloj(unsigned int *v6) {
     return sys_llama(44, (int)v6, 0, 0);
 }
 
+/* v2.1-p1: byte de video en CMOS (op 0=leer, 1=escribir 0-2). */
+static inline int sys_video_cmos(int op, int val) {
+    return sys_llama(45, op, val, 0);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2

@@ -51,42 +51,53 @@ inicio:
     jb .e820_bucle
 .e820_fin:
     mov [0x7001], bp
-    ; VESA: intentar 800x600x32 (0x143) con LFB (modo en 0x7800).
-    ; Busqueda completa = futuro; si falla, texto 80x25.
+    ; VESA con modo persistente (v2.1-p1): CMOS 0x40 guarda 0=800x600
+    ; (defecto), 1=640x480, 2=1024x768 (lo escribe configura). Sin NVRAM
+    ; no hay donde guardar la preferencia (ISO de solo lectura, en frio
+    ; aun no hay disco). Si el modo pedido falla, se reintenta 0x143 y
+    ; si no, texto 80x25.
     mov byte [0x7002], 0
+    mov al, 0x40
+    out 0x70, al
+    in al, 0x71
+    and al, 3                ; 0xFF virgen -> 3 -> defecto (ver tabla)
+.modo_ok:
+    mov bx, modo_tab
+    xlat
+    mov cl, al
+    mov ch, 1
+    push cx
     mov ax, 0x7800
     mov es, ax
-    mov di, 0x100
-    mov cx, 0x143
+    xor di, di
     mov ax, 0x4F01
     int 0x10
     cmp ax, 0x004F
     jne .cargar
-    mov ax, 0x7800
-    mov es, ax
-    mov ax, [es:0x100]
+    mov ax, [es:0]
     test ax, 0x0080
     jz .cargar
-    ; v1.9: la resolucion la valida gfx_init al arrancar (si no fuese
-    ; 800x600 se cae a texto); aqui solo hace falta LFB y 32 bpp.
-    cmp byte [es:0x100+25], 32
+    ; v1.9: la resolucion la valida gfx_init al arrancar (>=640x400);
+    ; aqui solo hace falta LFB y 32 bpp.
+    cmp byte [es:0x19], 32
     jne .cargar
+.modo_save:
     ; guardar campos (ES=0x7800 valido; DS=0)
     xor ax, ax
     mov ds, ax
     mov ax, 0x7800
     mov es, ax
-    mov ax, [es:0x100+18]
+    mov ax, [es:0x12]
     mov [0x7004], ax
-    mov ax, [es:0x100+20]
+    mov ax, [es:0x14]
     mov [0x7006], ax
-    mov ax, [es:0x100+16]
+    mov ax, [es:0x10]
     mov [0x7008], ax
-    mov al, [es:0x100+25]
+    mov al, [es:0x19]
     mov [0x7003], al
-    mov ax, [es:0x100+40]
+    mov ax, [es:0x28]
     mov [0x700A], ax
-    mov ax, [es:0x100+42]
+    mov ax, [es:0x2A]
     mov [0x700C], ax
     ; v1.9: la fuente 8x16 no se copia aqui (no cabia el sector): se
     ; guarda su direccion fisica en 0x701A/0x701C y la copia el nucleo.
@@ -95,8 +106,8 @@ inicio:
     int 0x10
     mov [0x701A], es
     mov [0x701C], bp
-    mov bx, 0x143
-    or bx, 0x4000
+    pop bx
+    or bh, 0x40              ; LFB (3 B; equivale a or bx,0x4000)
     mov ax, 0x4F02
     int 0x10
     cmp ax, 0x004F
@@ -210,6 +221,10 @@ gdt:
     dd 0x0000FFFF, 0x00CF9A00
     dd 0x0000FFFF, 0x00CF9300
 gdt_fin:
+; v2.1-p1: modos VESA Bochs (byte bajo; alto siempre 0x01).
+; Indice CMOS 0x40: 0=800x600 (defecto y valor si CMOS virgen 0xFF),
+; 1=640x480, 2=1024x768. Verificados con LFB+32bpp en QEMU.
+modo_tab db 0x43, 0x42, 0x44, 0x43
 ; Parametros de "leer" y LBAs parcheados por el constructor (bytes
 ; 496-501 del sector, justo antes de la firma 0x55AA).
 times 496-($-$$) db 0

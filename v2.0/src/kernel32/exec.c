@@ -1076,8 +1076,34 @@ __attribute__((optimize("O0"))) static void sc_44(regs_t *r, int di)
     }
 
 
+__attribute__((optimize("O0"))) static void sc_45(regs_t *r, int di)
+ {
+        /* video_cmos(op, val): byte de video en CMOS 0x40 (NVRAM).
+           op=0 leer -> devuelve el byte; op=1 escribir val (0-2) -> 0.
+           Sin esto no hay donde guardar el modo de video para el
+           arranque (la ISO es de solo lectura y en frio no hay disco).
+           Justificacion v2.1-p1: imprescindible para resolucion
+           persistente; ABI 0-44 intacta. */
+        uint32_t op = r->ebx;
+        (void)di;
+        if (op == 0) {
+            outb(0x70, 0x40);
+            r->eax = (uint32_t)inb(0x71);
+            return;
+        }
+        if (op == 1 && r->ecx <= 2) {
+            outb(0x70, 0x40);
+            outb(0x71, (uint8_t)r->ecx);
+            r->eax = 0;
+            return;
+        }
+        r->eax = (uint32_t)-1;
+        return;
+    }
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 45
+#define SC_N 46
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -1123,6 +1149,7 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [42] = sc_42,
     [43] = sc_43,
     [44] = sc_44,
+    [45] = sc_45,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1170,6 +1197,7 @@ static const char *const sc_nombre[SC_N] = {
     [42] = "dir_crear",
     [43] = "renombrar",
     [44] = "reloj",
+    [45] = "video_cmos",
 };
 static uint32_t sc_count[SC_N];
 

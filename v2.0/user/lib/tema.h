@@ -78,7 +78,15 @@ static int t_icon_rgb(char c) {
     }
 }
 
-/* Orden: 0 F32, 1 terminal, 2 explorador, 3 editor, 4 sysinfo,
+/* Nombres de fondos (compartido servidor/configura). */
+static const char *t_fondo_nombre(int i) {
+    if (i == 1) return "grafito";
+    if (i == 2) return "bosque";
+    if (i == 3) return "burdeos";
+    if (i == 4) return "medianoche";
+    return "marino";
+}
+/* Orden iconos: 0 F32, 1 terminal, 2 explorador, 3 editor, 4 sysinfo,
  * 5 configura, 6 carpeta, 7 texto, 8 ejecutable, 9 cerrar,
  * 10 minimizar, 11 activa. */
 static const char *const T_ICONOS[12][16] = {
