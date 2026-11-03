@@ -2,6 +2,7 @@
 #define F32_UGFX_H
 
 #include "ulib.h"
+#include "tema.h"   /* v2.1-P0: colores RGB del tema para apps UGFX */
 
 /* UGFX v1 (etapa 5): biblioteca grafica de usuario para FacilOS32.
  * Capa Ring3 sobre el protocolo del servidor (IPC/buzones). No conoce el

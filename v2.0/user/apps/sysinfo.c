@@ -42,7 +42,7 @@ int main(void) {
         if (t == UG_EV_SALIR) return 0;
         if (t != UG_EV_DRAW) continue;
         ug_comienza(&v);
-        ug_limpia(&v, C_NEGRO);
+        ug_limpia(&v, T_VENT_FONDO);
         ug_texto(&v, 8, y, "FacilOS32 version 2.0", C_AMARILLO);
         y += 20;
         ug_texto(&v, 8, y, "x86 32 bits (nucleo propio)", C_GRIS);

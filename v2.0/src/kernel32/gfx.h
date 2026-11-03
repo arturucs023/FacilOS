@@ -12,12 +12,13 @@ void gfx_puts(const char *s);
 uint16_t gfx_w(void);
 uint16_t gfx_h(void);
 
-/* Primitivas v1.5 (requieren gfx activo). Coords con signo, clipping. */
-void g_pixel(int x, int y, uint8_t color);
-void g_rect(int x, int y, int w, int h, uint8_t color);
-void g_linea(int x1, int y1, int x2, int y2, uint8_t color);
-void g_texto(int x, int y, const char *s, uint8_t color);
-void g_limpiar(uint8_t color);
+/* Primitivas v1.5 (requieren gfx activo). Coords con signo, clipping.
+   v2.1-P0: color u32; bit24=1 -> RGB crudo, si no paleta 0-15 (compat). */
+void g_pixel(int x, int y, uint32_t color);
+void g_rect(int x, int y, int w, int h, uint32_t color);
+void g_linea(int x1, int y1, int x2, int y2, uint32_t color);
+void g_texto(int x, int y, const char *s, uint32_t color);
+void g_limpiar(uint32_t color);
 
 /* v1.6: dibujo con destino (0 frente, 1 dorso en 0xA00000) + blit.
    Por defecto frente (compat v1.5). La consola siempre va al frente. */

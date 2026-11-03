@@ -1,4 +1,5 @@
 #include "ulib.h"
+#include "tema.h"
 
 void __main(void) {
 }
@@ -14,7 +15,7 @@ void __main(void) {
 #define NVENT 16
 #define PANT_W 800
 #define PANT_H 600
-#define BARRA_H 24
+#define BARRA_H T_BARRA_H
 #define AREA_H (PANT_H - BARRA_H)
 #define CROMO_H 20
 #define NMENU 5
@@ -61,8 +62,62 @@ static int win_dirty[NVENT];
 static int win_cromo[NVENT];
 
 static void fondo(void) {
+    /* v2.1-P0: degradado vertical por bandas (16 bandas de 36 px) +
+       formas discretas. Solo se llama con bg_dirty (nunca por cursor). */
+    static const unsigned char rt[16] = {
+        27, 26, 25, 24, 23, 22, 21, 20,
+        19, 18, 17, 16, 15, 14, 13, 12
+    };
+    static const unsigned char gt[16] = {
+        42, 41, 40, 39, 37, 36, 35, 34,
+        32, 31, 30, 29, 27, 26, 24, 20
+    };
+    static const unsigned char bt[16] = {
+        74, 72, 70, 68, 66, 64, 62, 60,
+        58, 56, 54, 52, 49, 47, 44, 40
+    };
+    int i;
     u_destino(0);
-    u_limpiar(C_AZUL);
+    for (i = 0; i < 16; i++) {
+        int y = i * (AREA_H / 16);
+        int h = (i == 15) ? (AREA_H - y) : (AREA_H / 16);
+        u_rectangulo(0, y, PANT_W, h, RGB24(rt[i], gt[i], bt[i]));
+    }
+    /* Banda diagonal discreta + linea de acento + medallon. */
+    u_rectangulo(0, 120, PANT_W, 46, T_FONDO_BANDA);
+    u_rectangulo(0, 166, PANT_W, 2, T_FONDO_LINEA);
+    u_rectangulo(560, 300, 140, 90, T_FONDO_BANDA);
+    u_rectangulo(560, 300, 140, 2, T_FONDO_LINEA);
+    u_rectangulo(120, 380, 220, 60, T_FONDO_BANDA);
+    u_rectangulo(120, 438, 220, 2, T_FONDO_LINEA);
+}
+
+/* Icono 16x16 propio en (x,y); '.' y letras ajenas = transparente. */
+static void dibuja_icono(int idx, int x, int y) {
+    int r, c;
+    if (idx < 0 || idx > 11) return;
+    for (r = 0; r < 16; r++) {
+        const char *fila = T_ICONOS[idx][r];
+        for (c = 0; c < 16; c++) {
+            char ch = fila[c];
+            if (ch == '.' || ch == 0) continue;
+            {
+                int col = t_icon_rgb(ch);
+                if (col) u_pixel(x + c, y + r, col);
+            }
+        }
+    }
+}
+
+/* Icono segun titulo de ventana (titulos reales de las 5 apps). */
+static int icono_app(const char *t) {
+    if (!t) return 11;
+    if (t[0] == 't' && t[1] == 'e') return 1;   /* terminal */
+    if (t[0] == 'e' && t[1] == 'x' && t[2] == 'p') return 2;   /* explorador */
+    if (t[0] == 'e' && t[1] == 'd') return 3;   /* editor */
+    if (t[0] == 's') return 4;                  /* sysinfo */
+    if (t[0] == 'c') return 5;                  /* configura */
+    return 11;
 }
 
 static void asegura_propiedad(void) {
@@ -74,25 +129,59 @@ static void trae_frente(int id) {
     vents[id].z = nz++;
 }
 
-/* Barra de titulo con [_] y [X]; titulo recortado. */
+/* Barra de titulo tematizada + botones con iconos; zonas de
+   interaccion intactas (X: w-20, _: w-40, arrastre: resto). */
 static void cromo(ventana_t *v) {
     int maxc;
     char t[24];
     int i = 0, n = 0;
-    u_rectangulo(v->x, v->y, v->w, v->h, C_GRIS);
-    u_rectangulo(v->x, v->y, v->w, CROMO_H, v->foco ? C_ROJO : C_GRIS_OSCURO);
-    u_rectangulo(v->x + v->w - 20, v->y, 20, CROMO_H, C_ROJO);
-    u_texto(v->x + v->w - 15, v->y + 2, "X", C_BLANCO);
-    u_rectangulo(v->x + v->w - 40, v->y, 20, CROMO_H, C_GRIS_OSCURO);
-    u_texto(v->x + v->w - 35, v->y + 2, "_", C_BLANCO);
-    maxc = (v->w - 100) / 8;
+    int act = v->foco ? 1 : 0;
+    u_rectangulo(v->x, v->y, v->w, v->h, T_BORDE);
+    if (v->h > CROMO_H + 2)
+        u_rectangulo(v->x + 1, v->y + CROMO_H, v->w - 2,
+                     v->h - CROMO_H - 1, T_VENT_FONDO);
+    u_rectangulo(v->x + 1, v->y + CROMO_H, v->w - 2, 1, T_BORDE);
+    u_rectangulo(v->x + 1, v->y + 1, v->w - 2, CROMO_H - 1,
+                 act ? T_TIT_ACT : T_TIT_INACT);
+    u_rectangulo(v->x + v->w - 20, v->y + 1, 19, CROMO_H - 1,
+                 T_BTN_CERRAR);
+    dibuja_icono(9, v->x + v->w - 19, v->y + 2);
+    u_rectangulo(v->x + v->w - 40, v->y + 1, 19, CROMO_H - 1,
+                 T_BTN_MIN);
+    dibuja_icono(10, v->x + v->w - 39, v->y + 2);
+    dibuja_icono(icono_app(v->titulo), v->x + 4, v->y + 2);
+    maxc = (v->w - 120) / 8;
     if (maxc > 23) maxc = 23;
     if (maxc < 0) maxc = 0;
     while (v->titulo[i] && n < maxc) {
         t[n++] = v->titulo[i++];
     }
     t[n] = 0;
-    u_texto(v->x + 8, v->y + 2, t, C_AMARILLO);
+    u_texto(v->x + 24, v->y + 3, t, T_TIT_TEXTO);
+}
+
+/* Sombra simulada 3px (derecha+abajo, tonos progresivos). Se dibuja en
+   el pase de cromo; el borrado lo cubre bg_dirty (mover/cerrar/min).
+   Nunca invade el panel: recorte a AREA_H. */
+static void sombra(ventana_t *v) {
+    int s;
+    for (s = 1; s <= T_SOMBRA_PX; s++) {
+        int col = (s == 1) ? T_SOMBRA_1
+                : (s == 2) ? T_SOMBRA_2 : T_SOMBRA_3;
+        int sy = v->y + s, sh = v->h;
+        int sx = v->x + v->w + s - 1, sw = 1;
+        if (sy < 0) { sh += sy; sy = 0; }
+        if (sy + sh > AREA_H) sh = AREA_H - sy;
+        if (sh > 0 && sx >= 0 && sx < PANT_W)
+            u_rectangulo(sx, sy, sw, sh, col);
+        sx = v->x + s;
+        sw = v->w;
+        sy = v->y + v->h + s - 1;
+        if (sx < 0) { sw += sx; sx = 0; }
+        if (sx + sw > PANT_W) sw = PANT_W - sx;
+        if (sw > 0 && sy >= 0 && sy < AREA_H)
+            u_rectangulo(sx, sy, sw, 1, col);
+    }
 }
 
 /* Reloj HH:MM del CMOS (syscall 44). */
@@ -124,53 +213,74 @@ static const char *menu_app(int i) {
 }
 
 static void barra(void) {
-    int x = 86, k;
+    /* v2.1-P0: panel 30px gris azulado, boton F32 con icono, tasklist
+       con iconos + indicador de activa, separadores, reloj. */
+    int x = 100, k;
     char rh[8];
-    u_rectangulo(0, AREA_H, PANT_W, BARRA_H, C_GRIS_OSCURO);
-    u_rectangulo(2, AREA_H + 2, 80, BARRA_H - 4,
-                 menu_abierto ? C_ROJO : C_AZUL);
-    u_texto(10, AREA_H + 4, "F32", C_BLANCO);
+    u_rectangulo(0, AREA_H, PANT_W, T_BARRA_H, T_PANEL);
+    u_rectangulo(0, AREA_H, PANT_W, 1, T_PANEL_BORDE);
+    u_rectangulo(2, AREA_H + 3, 94, T_BARRA_H - 6,
+                 menu_abierto ? T_SELECCION : T_ACENTO);
+    dibuja_icono(0, 6, AREA_H + 6);
+    u_texto(26, AREA_H + 9, "FacilOS", T_PANEL_TEXTO);
+    u_rectangulo(98, AREA_H + 4, 1, T_BARRA_H - 8, T_PANEL_SEP);
     for (k = 0; k < NVENT; k++) {
         ventana_t *v = &vents[k];
         char t[14];
         int i = 0;
+        int act;
         if (!v->usado) continue;
-        if (x + 110 > 700) break;
-        u_rectangulo(x, AREA_H + 2, 108, BARRA_H - 4,
-                     v->foco && !v->minimizada ? C_BLANCO : C_GRIS);
+        if (x + 132 > 690) break;
+        act = (v->foco && !v->minimizada) ? 1 : 0;
+        u_rectangulo(x, AREA_H + 3, 130, T_BARRA_H - 6,
+                     act ? T_SELECCION : T_BTN_CARA);
+        if (act)
+            u_rectangulo(x, AREA_H + T_BARRA_H - 5, 130, 2, T_ACENTO);
+        dibuja_icono(icono_app(v->titulo), x + 4, AREA_H + 6);
         while (v->titulo[i] && i < 12) {
             t[i] = v->titulo[i];
             i++;
         }
         t[i] = 0;
-        u_texto(x + 4, AREA_H + 4, t, C_NEGRO);
-        x += 110;
+        u_texto(x + 24, AREA_H + 9, t, T_PANEL_TEXTO);
+        x += 132;
     }
+    u_rectangulo(692, AREA_H + 4, 1, T_BARRA_H - 8, T_PANEL_SEP);
     reloj_txt(rh);
-    u_texto(742, AREA_H + 4, rh, C_BLANCO);
+    u_texto(726, AREA_H + 9, rh, T_PANEL_TEXTO);
 }
 
 static void dibuja_menu(void) {
-    int y0 = AREA_H - (CROMO_H + NMENU * 22), i;
+    /* v2.1-P0: menu con cabecera, iconos y seleccion tematizada. */
+    int y0 = AREA_H - (CROMO_H + NMENU * 26), i;
     if (!menu_abierto) return;
-    u_rectangulo(2, y0, 190, CROMO_H + NMENU * 22, C_GRIS);
-    u_rectangulo(2, y0, 190, CROMO_H, C_AZUL);
-    u_texto(10, y0 + 2, "FacilOS32", C_BLANCO);
+    u_rectangulo(2, y0, 220, CROMO_H + NMENU * 26, T_MENU_FONDO);
+    u_rectangulo(2, y0, 220, CROMO_H, T_MENU_CAB);
+    dibuja_icono(0, 6, y0 + 2);
+    u_texto(26, y0 + 4, "FacilOS32", T_MENU_TEXTO);
     for (i = 0; i < NMENU; i++) {
-        int yy = y0 + CROMO_H + i * 22;
+        int yy = y0 + CROMO_H + i * 26;
+        /* menu_app: 0 terminal, 1 explorador, 2 sysinfo, 3 editor,
+           4 configura -> iconos 1, 2, 4, 3, 5. */
+        int ic = (i == 2) ? 4 : (i == 3) ? 3 : i + 1;
         if (i == menu_sel)
-            u_rectangulo(2, yy, 190, 22, C_AZUL);
-        u_texto(14, yy + 3, menu_app(i),
-                i == menu_sel ? C_BLANCO : C_NEGRO);
+            u_rectangulo(2, yy, 220, 26, T_MENU_SEL);
+        dibuja_icono(ic, 8, yy + 5);
+        u_texto(30, yy + 6, menu_app(i),
+                i == menu_sel ? T_MENU_TEXTO : T_MENU_TEXTO);
     }
+    u_rectangulo(2, y0, 220, 1, T_BORDE);
+    u_rectangulo(2, y0 + CROMO_H + NMENU * 26 - 1, 220, 1, T_BORDE);
+    u_rectangulo(2, y0, 1, CROMO_H + NMENU * 26, T_BORDE);
+    u_rectangulo(2 + 220 - 1, y0, 1, CROMO_H + NMENU * 26, T_BORDE);
 }
 
 /* Item del menu bajo (x,y) o -1. */
 static int menu_en(int x, int y) {
-    int y0 = AREA_H - (CROMO_H + NMENU * 22), i;
+    int y0 = AREA_H - (CROMO_H + NMENU * 26), i;
     if (!menu_abierto) return -1;
-    if (x < 2 || x >= 192 || y < y0) return -1;
-    i = (y - y0 - CROMO_H) / 22;
+    if (x < 2 || x >= 222 || y < y0) return -1;
+    i = (y - y0 - CROMO_H) / 26;
     if (i < 0 || i >= NMENU) return -1;
     return i;
 }
@@ -180,37 +290,61 @@ static int menu_en(int x, int y) {
    frame BORRA primero el cursor viejo (restaura) y lo redibuja al final
    (captura fresca); el movimiento puro hace borra+show sin recomponer.
    Los repintes selectivos nunca tocan el cursor viejo sin borrarlo. */
-static unsigned int cur_px[144];
+/* Cursor flecha 12x16 (etapa v2.1-P0): mascara propia; contorno oscuro
+   calculado (pixel de forma junto a vacio) + interior claro. Guardado y
+   restauracion en crudo (sin cuantizar a paleta: el fondo es RGB). Misma
+   disciplina etapa6: borra primero, redibuja al final. */
+static unsigned int cur_px[16 * 16];
 static int cur_sx = -1, cur_sy = -1;
+#define CUR_W 12
+#define CUR_H 16
 
-static unsigned int pal_rev(unsigned int p) {
-    static const unsigned int tab[16] = {
-        0x000000u, 0x0000AAu, 0x00AA00u, 0x00AAAAu,
-        0xAA0000u, 0xAA00AAu, 0xAAAA00u, 0xAAAAAAu,
-        0x000000u, 0x0000FFu, 0x00FF00u, 0x00FFFFu,
-        0xFF0000u, 0xFF00FFu, 0xFFFF00u, 0xFFFFFFu
-    };
-    unsigned int q = p & 0xFFFFFFu, mejor = 0, bd = 0xFFFFFFu;
-    int i;
-    for (i = 0; i < 16; i++) {
-        unsigned int t = tab[i], d = q > t ? q - t : t - q;
-        if (d < bd) {
-            bd = d;
-            mejor = (unsigned int)i;
-            if (!d) break;
+static const char *const CUR_FLECHA[16] = {
+    "X...........",
+    "XX..........",
+    "XXX.........",
+    "XXXX........",
+    "XXXXX.......",
+    "XXXXXX......",
+    "XXXXXXX.....",
+    "XXXXXXXX....",
+    "XXXXXXXXX...",
+    "XXXXXXX.....",
+    "XXXX.XX.....",
+    "XXX...XX....",
+    "XX.....XX...",
+    "X.......XX..",
+    "............",
+    "............"
+};
+
+static int cur_forma(int dx, int dy) {
+    if (dx < 0 || dx >= CUR_W || dy < 0 || dy >= CUR_H) return 0;
+    return CUR_FLECHA[dy][dx] == 'X';
+}
+
+/* 1 si el pixel de forma es borde (vecino vacio o limite). */
+static int cur_borde(int dx, int dy) {
+    int ax, ay;
+    for (ay = -1; ay <= 1; ay++) {
+        for (ax = -1; ax <= 1; ax++) {
+            if (!ax && !ay) continue;
+            if (!cur_forma(dx + ax, dy + ay)) return 1;
         }
     }
-    return mejor;
+    return 0;
 }
 
 static void cursor_borra(void) {
     int dx, dy;
     if (cur_sx < 0) return;
     asegura_propiedad();
-    for (dy = 0; dy < 12; dy++) {
-        for (dx = 0; dx < 12; dx++) {
+    for (dy = 0; dy < CUR_H; dy++) {
+        for (dx = 0; dx < CUR_W; dx++) {
+            if (!cur_forma(dx, dy)) continue;
+            /* Restaura crudo con marca RGB (el fondo es RGB). */
             u_pixel(cur_sx + dx, cur_sy + dy,
-                    (int)pal_rev(cur_px[dy * 12 + dx]));
+                    (int)(0x01000000u | cur_px[dy * CUR_W + dx]));
         }
     }
     cur_sx = -1;
@@ -219,15 +353,22 @@ static void cursor_borra(void) {
 static void cursor_show(void) {
     int dx, dy;
     asegura_propiedad();
-    for (dy = 0; dy < 12; dy++) {
-        for (dx = 0; dx < 12; dx++) {
-            cur_px[dy * 12 + dx] = u_punto(mx + dx, my + dy);
+    for (dy = 0; dy < CUR_H; dy++) {
+        for (dx = 0; dx < CUR_W; dx++) {
+            if (!cur_forma(dx, dy)) continue;
+            cur_px[dy * CUR_W + dx] = u_punto(mx + dx, my + dy);
         }
     }
     cur_sx = mx;
     cur_sy = my;
-    u_rectangulo(mx, my, 12, 12, C_NEGRO);
-    u_rectangulo(mx + 1, my + 1, 10, 10, C_BLANCO);
+    for (dy = 0; dy < CUR_H; dy++) {
+        for (dx = 0; dx < CUR_W; dx++) {
+            if (!cur_forma(dx, dy)) continue;
+            u_pixel(mx + dx, my + dy,
+                    cur_borde(dx, dy) ? RGB24(16, 22, 31)
+                                     : RGB24(242, 245, 249));
+        }
+    }
 }
 
 /* Ventana superior bajo (x,y) o -1 (minimizadas no cuentan). */
@@ -577,6 +718,7 @@ static void frame(void) {
         if (!win_dirty[ids[q]] && !win_cromo[ids[q]]) continue;
         asegura_propiedad();
         if (win_cromo[ids[q]]) {
+            sombra(v);
             cromo(v);
             win_cromo[ids[q]] = 0;
         }
@@ -722,15 +864,15 @@ static void clic_izquierdo(void) {
             frame();
             return;
         }
-        if (!(mx >= 2 && mx < 82 && my >= AREA_H)) {
+        if (!(mx >= 2 && mx < 96 && my >= AREA_H)) {
             menu_abierto = 0;
             bg_dirty = 1;
             frame();
             return;
         }
     }
-    /* 2. boton F32 */
-    if (mx >= 2 && mx < 82 && my >= AREA_H) {
+    /* 2. boton FacilOS */
+    if (mx >= 2 && mx < 96 && my >= AREA_H) {
         menu_abierto = 1;
         menu_sel = -1;
         bg_dirty = 1;
@@ -738,12 +880,12 @@ static void clic_izquierdo(void) {
         return;
     }
     /* 3. botones de la barra (ventanas) */
-    bx = 86;
+    bx = 100;
     for (id = 0; id < NVENT; id++) {
         ventana_t *v = &vents[id];
         if (!v->usado) continue;
-        if (bx + 110 > 700) break;
-        if (mx >= bx && mx < bx + 108 && my >= AREA_H) {
+        if (bx + 132 > 690) break;
+        if (mx >= bx && mx < bx + 130 && my >= AREA_H) {
             if (v->minimizada) {
                 v->minimizada = 0;
                 v->visible = 1;
@@ -762,7 +904,7 @@ static void clic_izquierdo(void) {
             frame();
             return;
         }
-        bx += 110;
+        bx += 132;
     }
     /* 4. ventana bajo el cursor */
     id = ventana_en(mx, my);

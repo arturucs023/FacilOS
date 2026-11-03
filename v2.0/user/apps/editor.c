@@ -149,7 +149,7 @@ static void dibuja(ug_win_t *v) {
     char cab[64];
     int t = 0, q = 0;
     ug_comienza(v);
-    ug_limpia(v, C_NEGRO);
+    ug_limpia(v, T_VENT_FONDO);
     if (!modo) {
         ug_texto(v, 8, 8, "archivo a abrir/crear:", C_AMARILLO);
         ug_campo(v, 8, 30, v->w - 16, pbuf, ppos, 1);

@@ -316,7 +316,7 @@ int main(void) {
         } else if (t == UG_EV_DRAW) {
             int vis = (v.h - UG_CHROME - 24) / UG_FH, ini, li;
             ug_comienza(&v);
-            ug_limpia(&v, C_NEGRO);
+            ug_limpia(&v, T_VENT_FONDO);
             if (vis < 1) vis = 1;
             ini = nlin > vis ? nlin - vis : 0;
             for (li = 0; li < vis && ini + li < nlin; li++)

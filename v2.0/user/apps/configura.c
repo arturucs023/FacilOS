@@ -24,7 +24,7 @@ int main(void) {
         if (t == UG_EV_SALIR) return 0;
         if (t != UG_EV_DRAW) continue;
         ug_comienza(&v);
-        ug_limpia(&v, C_NEGRO);
+        ug_limpia(&v, T_VENT_FONDO);
         y = 6;
         ug_texto(&v, 8, y, "pantalla", C_AMARILLO);
         y += 18;

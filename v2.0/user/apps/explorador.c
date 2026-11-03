@@ -161,7 +161,7 @@ static void dibuja(ug_win_t *v) {
     char rt[64];
     int vis = (v->h - UG_CHROME - 60) / UG_FH, ini, i;
     ug_comienza(v);
-    ug_limpia(v, C_NEGRO);
+    ug_limpia(v, T_VENT_FONDO);
     ruta_txt(rt);
     ug_texto(v, 4, 2, rt, C_AMARILLO);
     if (viendo) {

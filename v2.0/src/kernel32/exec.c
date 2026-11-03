@@ -536,7 +536,7 @@ __attribute__((optimize("O0"))) static void sc_09(regs_t *r, int di)
 __attribute__((optimize("O0"))) static void sc_10(regs_t *r, int di)
 {
         if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
-        g_pixel((int)r->ebx, (int)r->ecx, (uint8_t)r->edx);
+        g_pixel((int)r->ebx, (int)r->ecx, r->edx);
         r->eax = 0;
         return;
 }
@@ -545,7 +545,7 @@ __attribute__((optimize("O0"))) static void sc_11(regs_t *r, int di)
 {
         if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
         g_linea((int)r->ebx, (int)r->ecx, (int)r->edx, (int)r->esi,
-                (uint8_t)r->edi);
+                r->edi);
         r->eax = 0;
         return;
 }
@@ -554,7 +554,7 @@ __attribute__((optimize("O0"))) static void sc_12(regs_t *r, int di)
 {
         if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
         g_rect((int)r->ebx, (int)r->ecx, (int)r->edx, (int)r->esi,
-               (uint8_t)r->edi);
+               r->edi);
         r->eax = 0;
         return;
 }
@@ -570,7 +570,7 @@ __attribute__((optimize("O0"))) static void sc_13(regs_t *r, int di)
         uint32_t i = 0;
         while (i < len && p[i]) { tmp[i] = p[i]; i++; }
         tmp[i] = 0;
-        g_texto((int)r->ebx, (int)r->ecx, tmp, (uint8_t)r->edi);
+        g_texto((int)r->ebx, (int)r->ecx, tmp, r->edi);
         r->eax = 0;
         return;
     }
@@ -579,7 +579,7 @@ __attribute__((optimize("O0"))) static void sc_13(regs_t *r, int di)
 __attribute__((optimize("O0"))) static void sc_14(regs_t *r, int di)
 {
         if (!gfx_es_dueno(di)) { r->eax = (uint32_t)-1; return; }
-        g_limpiar((uint8_t)r->ebx);
+        g_limpiar(r->ebx);
         r->eax = 0;
         return;
 }

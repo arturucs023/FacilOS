@@ -8,12 +8,21 @@ static uint16_t GW = 0, GH = 0, GP = 0;
 static uint16_t gcx = 0, gcy = 0;
 static int cur_vis = 0;
 
+/* v2.1-P0: color extendido. Si el bit 24 viene a 1, los 24 bits bajos
+   son RGB crudo (0x01000000|rrggbb); si no, paleta VGA 0-15 (compat). */
+static uint32_t color32(uint32_t c) {
+    static const uint32_t tab[16] = {
+        0x000000u, 0x0000AAu, 0x00AA00u, 0x00AAAAu,
+        0xAA0000u, 0xAA00AAu, 0xAAAA00u, 0xAAAAAAu,
+        0x000000u, 0x0000FFu, 0x00FF00u, 0x00FFFFu,
+        0xFF0000u, 0xFF00FFu, 0xFFFF00u, 0xFFFFFFu
+    };
+    if (c & 0x01000000u) return c & 0x00FFFFFFu;
+    return tab[c & 0x0Fu];
+}
+
 static uint32_t rgb(uint8_t attr) {
-    uint8_t n = (attr & 8) ? 255 : 170;
-    uint32_t r = (attr & 4) ? n : 0;
-    uint32_t g = (attr & 2) ? n : 0;
-    uint32_t b = (attr & 1) ? n : 0;
-    return (r << 16) | (g << 8) | b;
+    return color32((uint32_t)attr);
 }
 
 /* v1.9: el arranque dejo la fuente 8x16 del BIOS en su direccion propia
@@ -259,12 +268,12 @@ static void p_pixel(int x, int y, uint32_t fg) {
     *(volatile uint32_t *)(b + (uint32_t)y * GP + (uint32_t)x * 4) = fg;
 }
 
-void g_pixel(int x, int y, uint8_t color) {
+void g_pixel(int x, int y, uint32_t color) {
     if (!lfb) return;
-    p_pixel(x, y, rgb(color));
+    p_pixel(x, y, color32(color));
 }
 
-void g_rect(int x, int y, int w, int h, uint8_t color) {
+void g_rect(int x, int y, int w, int h, uint32_t color) {
     if (!lfb || w <= 0 || h <= 0) return;
     uint32_t b = base_dib();
     int x0 = x < 0 ? 0 : x;
@@ -272,7 +281,7 @@ void g_rect(int x, int y, int w, int h, uint8_t color) {
     int x1 = x + w > GW ? GW : x + w;
     int y1 = y + h > GH ? GH : y + h;
     if (x0 >= x1 || y0 >= y1) return;
-    uint32_t fg = rgb(color);
+    uint32_t fg = color32(color);
     for (int yy = y0; yy < y1; yy++) {
         volatile uint32_t *p =
             (volatile uint32_t *)(b + (uint32_t)yy * GP + (uint32_t)x0 * 4);
@@ -280,10 +289,10 @@ void g_rect(int x, int y, int w, int h, uint8_t color) {
     }
 }
 
-void g_linea(int x1, int y1, int x2, int y2, uint8_t color) {
+void g_linea(int x1, int y1, int x2, int y2, uint32_t color) {
     if (!lfb) return;
     uint32_t b = base_dib();
-    uint32_t fg = rgb(color);
+    uint32_t fg = color32(color);
     int dx = x2 >= x1 ? x2 - x1 : x1 - x2;
     int dy = y2 >= y1 ? y2 - y1 : y1 - y2;
     int sx = x2 >= x1 ? 1 : -1;
@@ -303,10 +312,10 @@ void g_linea(int x1, int y1, int x2, int y2, uint8_t color) {
     }
 }
 
-void g_texto(int x, int y, const char *s, uint8_t color) {
+void g_texto(int x, int y, const char *s, uint32_t color) {
     if (!lfb || !s) return;
     uint32_t b = base_dib();
-    uint32_t fg = rgb(color);
+    uint32_t fg = color32(color);
     int cx = x, cy = y;
     while (*s) {
         if (*s == '\n') {
@@ -336,10 +345,10 @@ void g_texto(int x, int y, const char *s, uint8_t color) {
     }
 }
 
-void g_limpiar(uint8_t color) {
+void g_limpiar(uint32_t color) {
     if (!lfb) return;
     uint32_t b = base_dib();
-    uint32_t fg = rgb(color);
+    uint32_t fg = color32(color);
     uint32_t n = (uint32_t)GP * GH / 4;
     volatile uint32_t *p = (volatile uint32_t *)b;
     for (uint32_t i = 0; i < n; i++) p[i] = fg;

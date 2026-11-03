@@ -92,10 +92,11 @@ void kmain(void)
     }
     /* v2.0: el FS RAM lo inicia su driver (drv_init_todos); shell()
        tambien lo pide (idempotente). */
-    /* El menu arranca como proceso grafico, igual que en v1.7/v1.8. */
-    int pid = kern_crea_proceso("menu", "", 1);
+    /* v2.1-P0: el escritorio renovado arranca directo; la shell queda
+       como recuperacion al salir del servidor (o si este falla). */
+    int pid = kern_crea_proceso("servidor", "", 1);
     if (pid < 0) {
-        kprintf("no se pudo crear el proceso menu (%d): arranca la shell\r\n",
+        kprintf("no se pudo crear el proceso servidor (%d): arranca la shell\r\n",
                 pid);
     } else {
         proc_t *m = proc_por_pid(pid);
