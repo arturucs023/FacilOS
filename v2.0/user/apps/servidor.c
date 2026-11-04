@@ -575,6 +575,19 @@ static void atiende_reg(int de, const char *b, int r, int diferido) {
     int k = 4, w = 0, h = 0, id;
     char idm[16], tit[24];
     int q = 0;
+    /* Un hijo grafico cancela el modal de su padre (ver modal_pid):
+       pide ventana en vez de pantalla completa, asi que el escritorio
+       sigue vivo. Sin esto, lanzar terminal/editor desde el
+       explorador colgaba todo (DRAW nunca llegaba). */
+    if (modal_pid && de != modal_pid) {
+        int j;
+        modal_pid = 0;
+        bg_dirty = 1;
+        for (j = 0; j < NVENT; j++) {
+            win_dirty[j] = 1;
+            win_cromo[j] = 1;
+        }
+    }
     while (k < r && (b[k] < '0' || b[k] > '9')) k++;
     w = u_atoi(b + k);
     while (k < r && b[k] >= '0' && b[k] <= '9') k++;
@@ -891,6 +904,10 @@ static void frame(void) {
     int ids[NVENT], nn = 0, o, k, q;
     char m[32];
     if (barre_muertos()) bg_dirty = 1;
+    /* La ventana con foco pudo morir (hijo que sale): pasa el foco a
+       la siguiente viva o las teclas no llegan a nadie. */
+    if (foco_id >= 0 && foco_id < NVENT && !vents[foco_id].usado)
+        fija_foco(siguiente_foco());
     if (modal_pid) {
         /* Modal: no pintar (pantalla+teclas del hijo). Si el dueno murio
            sin avisar, se reanuda con repintado total. */
@@ -940,6 +957,18 @@ static void frame(void) {
             win_cromo[ids[q]] = 0;
         }
         if (!win_dirty[ids[q]]) continue;
+        /* La de abajo repinta: las de encima que la toquen tambien,
+           o su present deja basura sobre ellas (parpadeo al solapar).
+           Van despues en este mismo pase (orden Z). */
+        {
+            int r2;
+            for (r2 = q + 1; r2 < nn; r2++) {
+                ventana_t *a = &vents[ids[r2]];
+                if (a->x < v->x + v->w && v->x < a->x + a->w &&
+                    a->y < v->y + v->h && v->y < a->y + a->h)
+                    win_dirty[ids[r2]] = 1;
+            }
+        }
         m[t++] = 'D';
         m[t++] = 'R';
         m[t++] = 'A';

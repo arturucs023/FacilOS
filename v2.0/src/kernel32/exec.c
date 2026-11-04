@@ -627,7 +627,14 @@ __attribute__((optimize("O0"))) static void sc_16(regs_t *r, int di)
         r->eax = (uint32_t)-1;
         if (!parte_sys(ruta, &dir, base)) {
             int idx = vfs_actual->hijo(dir, base);
-            if (idx > 0 && !vfs_actual->borrar(idx) && !vfs_actual->sincroniza()) r->eax = 0;
+            if (idx > 0) {
+                /* Propaga el codigo real (-2 carpeta no vacia): antes
+                   se aplanaba a -1 y ningun programa podia distinguirlo
+                   (mismo patron que renombrar). */
+                int rr = vfs_actual->borrar(idx);
+                if (!rr && !vfs_actual->sincroniza()) r->eax = 0;
+                else r->eax = (uint32_t)rr;
+            }
         }
         return;
     }

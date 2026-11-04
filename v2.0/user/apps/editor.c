@@ -12,7 +12,7 @@ void __main(void) {
 
 #define NBUF 4096
 #define NLIN 200
-#define NNOM 40
+#define NNOM 128
 
 static char buf[NBUF];
 static int len = 0;
@@ -20,7 +20,7 @@ static int li = 0, co = 0, scroll = 0;
 static int sucio = 0;
 static char ruta[NNOM];
 static int modo = 0;            /* 0 pedir archivo, 1 editar */
-static char pbuf[40];
+static char pbuf[128];
 static int ppos = 0;
 static char msg[64];
 static int confirma = 0;
@@ -258,9 +258,21 @@ int main(void) {
     while (*a == ' ') a++;
     srv = u_atoi(a);
     if (srv <= 0) return 99;
+    while (*a >= '0' && *a <= '9') a++;
+    while (*a == ' ') a++;
     ruta[0] = 0;
     pbuf[0] = 0;
     msg[0] = 0;
+    /* Ruta opcional tras el srv ("srv /dir/arch"): abre directo. */
+    if (*a) {
+        int i = 0;
+        while (*a && i < NNOM - 1) ruta[i++] = *a++;
+        ruta[i] = 0;
+        u_strcpy(pbuf, ruta);
+        ppos = u_strlen(pbuf);
+        carga(ruta);
+        if (ruta[0]) modo = 1;
+    }
     if (ug_abre(&v, srv, 500, 340, "editor")) return 98;
     for (;;) {
         int t = ug_evento(&v, &ev, 1);
@@ -278,7 +290,7 @@ int main(void) {
             if (!modo) {
                 if (k == 13) {
                     int i = 0;
-                    while (i < 39 && pbuf[i]) {
+                    while (i < 127 && pbuf[i]) {
                         ruta[i] = pbuf[i];
                         i++;
                     }
@@ -287,7 +299,7 @@ int main(void) {
                     modo = 1;
                     msg[0] = 0;
                 } else {
-                    ug_campo_tecla(pbuf, 40, &ppos, k);
+                    ug_campo_tecla(pbuf, 128, &ppos, k);
                 }
             } else if (k == 0x101) {
                 mide();
