@@ -293,28 +293,47 @@ void ug_relleno(ug_win_t *v, int x, int y, int w, int h, int color) {
 }
 
 void ug_texto(ug_win_t *v, int x, int y, const char *s, int color) {
-    char fila[64];
-    int i = 0, yy = y;
-    /* Multilinea con '\n'; recorte por filas de 16 px. */
+    char fila[260];
+    int yy = y, xx0 = x, i = 0;
+    /* Una llamada dibuja una fila (mas una por cada '\n'); las filas
+       largas siguen en horizontal, nunca en vertical: el troceado
+       a 60 caracteres invadia la fila siguiente y pegaba el texto.
+       Ademas se recorta al ancho visible (en celdas, sin partir
+       multibyte). */
     while (*s) {
         int n = 0;
-        while (s[n] && s[n] != '\n' && n < 60) {
+        while (s[n] && s[n] != '\n' && n < 250) {
             fila[n] = s[n];
             n++;
         }
         fila[n] = 0;
         {
-            int w = n * UG_FW, h = UG_FH, xx = x, fy = yy;
-            if (recorta(v, &xx, &fy, &w, &h) && w > 0)
-                u_texto(xx, fy, fila, color);
+            int w = n * UG_FW, h = UG_FH, xx = xx0, fy = yy;
+            if (n > 0 && recorta(v, &xx, &fy, &w, &h) && w > 0) {
+                int maxc = w / UG_FW, cc = 0, nb = 0;
+                while (fila[nb] && cc < maxc) {
+                    int av = 0;
+                    ut_dec(fila + nb, 4, &av);
+                    if (av <= 0) av = 1;
+                    if (cc + 1 > maxc) break;
+                    nb += av;
+                    cc++;
+                }
+                fila[nb] = 0;
+                if (nb > 0) u_texto(xx, fy, fila, color);
+            }
         }
         if (!s[n]) break;
-        s += s[n] == '\n' ? n + 1 : n;
-        yy += UG_FH;
-        i++;
-        if (i > 64) break;
+        if (s[n] == '\n') {
+            s += n + 1;
+            yy += UG_FH;
+            xx0 = x;
+        } else {
+            s += n;
+            xx0 += n * UG_FW;
+        }
+        if (++i > 512) break;
     }
-    (void)i;
 }
 
 void ug_limpia(ug_win_t *v, int color) {
