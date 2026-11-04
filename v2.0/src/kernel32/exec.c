@@ -43,26 +43,35 @@ static int parte_sys(const char *ruta, int *dir, char *base) {
     tmp[i] = 0;
     if (!tmp[0]) return -1;
     if (tmp[0] == '/') {
-        uint32_t k = 0, j = 0;
-        while (tmp[k] == '/') k++;
-        while (tmp[k] && tmp[k] != '/' && j < 31) {
-            base[j++] = tmp[k++];
-        }
-        base[j] = 0;
-        if (!base[0] || tmp[k]) return -1;
-        char nd[128];
-        uint32_t m = 0;
+        /* v2.2: rutas absolutas multinivel (\"/T/f.txt\"). Antes solo se
+           admitia un componente (\"/T\"); el resto se rechazaba y ningun
+           programa Ring3 podia abrir/crear dentro de subcarpetas.
+           Extension compatible: lo antes valido resuelve igual; lo antes
+           rechazado ahora funciona via fs_resuelve (.., . incluidos). */
+        uint32_t m = 0, f, l;
         while (tmp[m]) m++;
-        uint32_t f = m;
+        while (m > 1 && tmp[m - 1] == '/') m--;
+        tmp[m] = 0;
+        if (m <= 1) return -1;
+        f = m;
         while (f > 0 && tmp[f - 1] != '/') f--;
-        if (f <= 1) { nd[0] = '/'; nd[1] = 0; }
-        else {
-            uint32_t l = 0;
-            for (l = 0; l < f - 1 && l < 127; l++) nd[l] = tmp[l];
-            nd[l] = 0;
+        l = m - f;
+        if (!l || l > 31) return -1;
+        for (uint32_t j = 0; j < l; j++) base[j] = tmp[f + j];
+        base[l] = 0;
+        if (f <= 1) {
+            *dir = 0;
+            return 0;
         }
-        *dir = fs_resuelve(nd);
-        return *dir < 0 ? -1 : 0;
+        {
+            char nd[128];
+            uint32_t n = f - 1;
+            if (n > 127) return -1;
+            for (uint32_t j = 0; j < n; j++) nd[j] = tmp[j];
+            nd[n] = 0;
+            *dir = fs_resuelve(nd);
+            return *dir < 0 ? -1 : 0;
+        }
     }
     uint32_t j = 0;
     while (tmp[j] && tmp[j] != '/' && j < 31) {
@@ -1102,8 +1111,35 @@ __attribute__((optimize("O0"))) static void sc_45(regs_t *r, int di)
     }
 
 
+__attribute__((optimize("O0"))) static void sc_46(regs_t *r, int di)
+ {
+        /* teclado_distribucion(op, id): 0=US, 1=ES, 2=CA.
+           op=0 leer -> id actual; op=1 establecer (0-2) + persistir en
+           cabecera (mismo camino que `teclado` de la shell).
+           Justificacion v2.2: la distribucion vive en el driver (Ring0)
+           y persiste en disco; Ring3 no puede hacerlo. ABI 0-45 intacta. */
+        uint32_t op = r->ebx;
+        (void)di;
+        if (op == 0) {
+            extern int distribucion_actual(void);
+            r->eax = (uint32_t)distribucion_actual();
+            return;
+        }
+        if (op == 1 && r->ecx <= 2) {
+            extern void distribucion_pon(int d);
+            extern int fs_guardar(void);
+            distribucion_pon((int)r->ecx);
+            fs_guardar();
+            r->eax = 0;
+            return;
+        }
+        r->eax = (uint32_t)-1;
+        return;
+    }
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 46
+#define SC_N 47
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -1150,6 +1186,7 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [43] = sc_43,
     [44] = sc_44,
     [45] = sc_45,
+    [46] = sc_46,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1198,6 +1235,7 @@ static const char *const sc_nombre[SC_N] = {
     [43] = "renombrar",
     [44] = "reloj",
     [45] = "video_cmos",
+    [46] = "teclado_distribucion",
 };
 static uint32_t sc_count[SC_N];
 

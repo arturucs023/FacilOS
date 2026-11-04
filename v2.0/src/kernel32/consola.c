@@ -15,18 +15,62 @@ void cons_init(void) {
 int cons_gfx(void) { return usa_gfx; }
 
 void cons_putc(char c) {
-    if (usa_gfx) gfx_putc(c, 0x07);
-    else {
-        char s[2] = { c, 0 };
-        vga_puts(s);
+    /* v2.2: UTF-8. En pantalla se decodifica (grafico: glifo Unicode;
+       texto VGA: byte CP437 o '?'); por serie van los bytes crudos. */
+    unsigned char u = (unsigned char)c;
+    if (u < 0x80) {
+        if (usa_gfx) gfx_putc(c, 0x07);
+        else {
+            char s[2] = { c, 0 };
+            vga_puts(s);
+        }
+    } else {
+        static unsigned acc = 0;
+        static int rest = 0;
+        if ((u & 0xC0) == 0x80) {
+            if (rest > 0) {
+                acc = (acc << 6) | (u & 0x3F);
+                rest--;
+                if (!rest) {
+                    unsigned cp = acc;
+                    acc = 0;
+                    if (cp > 0x10FFFF ||
+                        (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFDu;
+                    if (usa_gfx) gfx_putcp(cp, 0x07);
+                    else {
+                        char s[2] = { (char)cp_a_cp437(cp), 0 };
+                        vga_puts(s);
+                    }
+                }
+            } else {
+                /* Continuacion suelta: CP437 directo (compat). */
+                if (usa_gfx) gfx_putc(c, 0x07);
+                else {
+                    char s[2] = { c, 0 };
+                    vga_puts(s);
+                }
+            }
+        } else {
+            int n = 0;
+            if (u >= 0xC2 && u < 0xE0) n = 1;
+            else if (u >= 0xE0 && u < 0xF0) n = 2;
+            else if (u >= 0xF0 && u < 0xF5) n = 3;
+            if (!n) {
+                if (usa_gfx) gfx_putc(c, 0x07);
+                else {
+                    char s[2] = { c, 0 };
+                    vga_puts(s);
+                }
+            } else {
+                static const unsigned char msk[4] = { 0, 0x1F, 0x0F, 0x07 };
+                acc = u & msk[n];
+                rest = n;
+            }
+        }
     }
-    /* v1.8: espejo en serie. La UART de QEMU siempre esta lista; en una
-       maquina real el bit LSR de "puede enviar" tarda ~87 us por byte a
-       115200 baudios, asumible para una consola de texto. Asi el log de
-       serie sirve para verificar tambien los programas de texto.
-       Los caracteres de control sin-interest (retroceso) no se reflejan:
-       los emite a mano quien los necesita. */
-    if (c == '\n' || c == '\r' || c >= 32) uart_putc(c);
+    /* v2.2: el espejo compara sin signo (los bytes UTF-8 son >= 0x80
+       y en char con signo parecian < 32 y se perdian en serie). */
+    if (c == '\n' || c == '\r' || (unsigned char)c >= 32) uart_putc(c);
 }
 
 void cons_puts(const char *s) {

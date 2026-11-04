@@ -8,6 +8,8 @@ int gfx_activo(void);
 int pantalla_init(void);
 void gfx_clear(void);
 void gfx_putc(char c, uint8_t attr);
+void gfx_putcp(unsigned cp, uint8_t attr);   /* v2.2: codepoint UTF-8 */
+uint8_t cp_a_cp437(unsigned cp);             /* v2.2: slot o '?' */
 void gfx_puts(const char *s);
 uint16_t gfx_w(void);
 uint16_t gfx_h(void);

@@ -158,8 +158,12 @@ static uint32_t checksum_tabla(void) {
 static int nombre_ok(const char *n) {
     uint32_t l = libc_strlen(n);
     if (!l || l > 31) return 0;
+    if (n[0] == '.' && (l == 1 || (l == 2 && n[1] == '.'))) return 0;
     for (uint32_t i = 0; i < l; i++) {
-        if (n[i] == ' ' || n[i] == '/') return 0;
+        /* v2.2: se admiten espacios y UTF-8 (bytes opacos, NUL y '/'
+           siguen prohibidos). Longitud en BYTES (menos caracteres si
+           hay multibyte). Compatible: todo nombre v1.x sigue valiendo. */
+        if (n[i] == '/' || n[i] == 0) return 0;
     }
     return 1;
 }
@@ -233,6 +237,11 @@ void fs_init(void) {
         if (suma_fich(i, t) != e_suma(i)) { fs_limpia(); return; }
     }
     if (cab[14] <= 1) teclado_es = cab[14];
+    {
+        extern void distribucion_pon(int d);
+        if (cab[15] >= 1 && cab[15] <= 2) distribucion_pon((int)cab[15]);
+        else distribucion_pon(teclado_es ? 1 : 0);
+    }
 }
 
 /* Entrada para el registro de drivers (v2.0): el FS RAM siempre inicia. */
@@ -265,6 +274,10 @@ int fs_guardar(void) {
     cab2[11] = (uint8_t)(s >> 24);
     cab2[12] = 2;
     cab2[14] = (uint8_t)(teclado_es ? 1 : 0);
+    {
+        extern int distribucion_actual(void);
+        cab2[15] = (uint8_t)distribucion_actual();
+    }
     if (blk_escribir(LBA_CAB, cab2, 1)) return -1;
     /* Etapa3: vacia la cache del dispositivo; sin esto, un corte antes de
        que QEMU escriba deja el volumen a medio sincronizar. El error se

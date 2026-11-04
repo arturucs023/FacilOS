@@ -66,6 +66,123 @@ void gfx_clear(void) {
     cur_vis = 0;
 }
 
+/* v2.2: texto Unicode. La fuente BIOS es CP437 (verificada glifo a
+   glifo contra el video real: build/font_*.png). Solo se mapean los
+   codepoints verificados; el resto -> '?' (documentado en
+   DISENO-UNICODE-v2.2.md). U+20AC (€) es dibujo propio en glifo_euro
+   (la fuente no lo trae). Bytes sueltos 0x80-0xFF (UTF-8 invalido) se
+   interpretan CP437 por compatibilidad con volumenes v1.x. */
+static uint8_t glifo_euro[16] = {
+    0x3C, 0x60, 0x40, 0x7C, 0x40, 0x40, 0x7C, 0x40,
+    0x40, 0x7C, 0x40, 0x40, 0x60, 0x3C, 0x00, 0x00
+};
+
+/* Latin-1 -> slot CP437 (0 = sin glifo). Solo entradas verificadas
+   contra la fuente real (build/font_*.png). */
+static uint8_t l1_glifo(unsigned cp) {
+    static const uint8_t t_c0[16] = {
+        0xB7, 0xB5, 0xB6, 0xC6, 0x8E, 0x8F, 0x92, 0x80,
+        0xD4, 0x90, 0xD2, 0xD3, 0xDE, 0xD6, 0xD7, 0xD8
+    };
+    static const uint8_t t_d0[16] = {
+        0xD0, 0xA5, 0, 0, 0, 0, 0x99, 0,
+        0, 0, 0x9A, 0, 0, 0, 0, 0xE1
+    };
+    static const uint8_t t_e0[16] = {
+        0x85, 0xA0, 0x83, 0xC6, 0x84, 0x86, 0x91, 0x87,
+        0x8A, 0x82, 0x88, 0x89, 0x8D, 0xA1, 0x8C, 0x8B
+    };
+    static const uint8_t t_f0[16] = {
+        0xD0, 0xA4, 0x95, 0xA2, 0x93, 0x94, 0, 0,
+        0x97, 0xA3, 0x96, 0x81, 0, 0, 0, 0x98
+    };
+    if (cp >= 0xC0 && cp <= 0xCF) return t_c0[cp - 0xC0];
+    if (cp >= 0xD0 && cp <= 0xDF) return t_d0[cp - 0xD0];
+    if (cp >= 0xE0 && cp <= 0xEF) return t_e0[cp - 0xE0];
+    if (cp >= 0xF0 && cp <= 0xFF) return t_f0[cp - 0xF0];
+    switch (cp) {
+    case 0xA0: return 0xFF;
+    case 0xA1: return 0xAD;
+    case 0xA2: return 0x9B;
+    case 0xA3: return 0x9C;
+    case 0xA5: return 0x9D;
+    case 0xA9: return 0xB8;
+    case 0xAA: return 0xA6;
+    case 0xAB: return 0xAE;
+    case 0xB7: return 0xFA;
+    case 0xBB: return 0xAF;
+    case 0xBF: return 0xA8;
+    default: break;
+    }
+    return 0;
+}
+
+/* Resuelve codepoint a bytes de glifo (16 B). */
+static const uint8_t *glifo_cp(unsigned cp) {
+    static const uint8_t glifo_q[16] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x3C, 0x42, 0x42, 0x00, 0x3C, 0x00
+    };
+    if (cp < 0x80) return FONT_BIN + cp * 16;
+    if (cp == 0x20AC) return glifo_euro;
+    if (cp >= 0x80 && cp < 0x100) {
+        uint8_t s = l1_glifo(cp);
+        if (s) return FONT_BIN + (unsigned)s * 16;
+        return glifo_q;
+    }
+    return glifo_q;
+}
+
+/* Decodificador UTF-8 del nucleo (misma semantica que utext Ring3).
+   Secuencias invalidas: byte suelto 0x80-0xFF -> marca CP437 directo
+   (0x100|byte, compat volumenes v1.x); resto -> U+FFFD ('?'). */
+static unsigned utf8_dec(const char *s, int max, int *av) {
+    unsigned char c0;
+    unsigned cp;
+    int n = 0, i;
+    static const unsigned char msk[5] = { 0, 0, 0x1F, 0x0F, 0x07 };
+    if (max <= 0) {
+        if (av) *av = 0;
+        return 0xFFFDu;
+    }
+    c0 = (unsigned char)s[0];
+    if (c0 < 0x80) {
+        if (av) *av = 1;
+        return c0;
+    }
+    if (c0 < 0xC2) n = 0;
+    else if (c0 < 0xE0) n = 2;
+    else if (c0 < 0xF0) n = 3;
+    else if (c0 < 0xF5) n = 4;
+    if (!n || n > max) {
+        if (av) *av = 1;
+        return 0x100u | c0;
+    }
+    cp = c0 & msk[n];
+    for (i = 1; i < n; i++) {
+        unsigned char cc = (unsigned char)s[i];
+        if ((cc & 0xC0) != 0x80) {
+            if (av) *av = 1;
+            return 0x100u | c0;
+        }
+        cp = (cp << 6) | (cc & 0x3F);
+    }
+    if ((n == 2 && cp < 0x80) || (n == 3 && cp < 0x800) ||
+        (n == 4 && cp < 0x10000) || (cp >= 0xD800 && cp <= 0xDFFF) ||
+        cp > 0x10FFFF) {
+        if (av) *av = 1;
+        return 0x100u | c0;
+    }
+    if (av) *av = n;
+    return cp;
+}
+
+/* Glifo desde codepoint o marca CP437 (0x100|byte). */
+static const uint8_t *glifo_de(unsigned v) {
+    if (v & 0x100u) return FONT_BIN + (v & 0xFFu) * 16;
+    return glifo_cp(v);
+}
+
 static void glifo(int x, int y, char c, uint8_t attr) {
     uint32_t fg = rgb(attr);
     uint8_t *f = FONT_BIN + (uint8_t)c * 16;
@@ -132,6 +249,43 @@ void gfx_putc(char c, uint8_t attr) {
 
 void gfx_puts(const char *s) {
     while (*s) gfx_putc(*s++, 0x07);
+}
+
+/* v2.2: dibuja un codepoint ya decodificado (ver cons_putc). */
+void gfx_putcp(unsigned cp, uint8_t attr) {
+    const uint8_t *f;
+    int r, col;
+    uint16_t cols, filas;
+    if (!lfb) return;
+    cols = GW / 8;
+    filas = GH / 16;
+    cursor_borra();
+    f = glifo_de(cp);
+    for (r = 0; r < 16; r++) {
+        volatile uint32_t *p = (volatile uint32_t *)
+            (lfb + (gcy * 16 + r) * GP + gcx * 8 * 4);
+        uint8_t bits = f[r];
+        for (col = 0; col < 8; col++)
+            p[col] = (bits & (0x80 >> col)) ? rgb(attr) : 0;
+    }
+    gcx++;
+    if (gcx >= cols) {
+        gcx = 0; gcy++;
+        if (gcy >= filas) { gfx_scroll(); gcy = filas - 1; }
+    }
+    cursor_dibuja();
+}
+
+/* v2.2: codepoint a byte CP437 para consola de texto (o '?' ). */
+uint8_t cp_a_cp437(unsigned cp) {
+    uint8_t s;
+    if (cp < 0x80) return (uint8_t)cp;
+    if (cp == 0x20AC) return (uint8_t)'?';   /* sin celda en texto */
+    if (cp < 0x100) {
+        s = l1_glifo(cp);
+        return s ? s : (uint8_t)'?';
+    }
+    return (uint8_t)'?';
 }
 
 /* ---- primitivas v1.5: solo 32bpp XRGB, clipping con signo ---- */
@@ -321,13 +475,21 @@ void g_texto(int x, int y, const char *s, uint32_t color) {
         if (*s == '\n') {
             cx = x;
             cy += 16;
+            s++;
         } else {
+            int av = 0;
+            unsigned v = utf8_dec(s, 4, &av);
+            const uint8_t *f;
+            if (av <= 0) {
+                av = 1;
+                v = 0x100u | (unsigned char)s[0];
+            }
+            f = glifo_de(v);
             if (cx + 8 > 0 && cy + 16 > 0 && cx < GW && cy < GH) {
                 int c0 = cx < 0 ? -cx : 0;
                 int r0 = cy < 0 ? -cy : 0;
                 int c1 = cx + 8 > GW ? GW - cx : 8;
                 int r1 = cy + 16 > GH ? GH - cy : 16;
-                uint8_t *f = FONT_BIN + (uint8_t)*s * 16;
                 for (int r = r0; r < r1; r++) {
                     volatile uint32_t *p = (volatile uint32_t *)
                         (b + (uint32_t)(cy + r) * GP + (uint32_t)(cx + c0) * 4);
@@ -340,8 +502,8 @@ void g_texto(int x, int y, const char *s, uint32_t color) {
                 }
             }
             cx += 8;
+            s += av;
         }
-        s++;
     }
 }
 

@@ -62,7 +62,11 @@ static int lee_linea(char *buf) {
             return len;
         } else if (t == 8) {
             if (len > 0) {
-                len--;
+                /* v2.2: borra un caracter UTF-8 completo (no un byte) */
+                int a = len - 1;
+                while (a > 0 && ((unsigned char)buf[a] & 0xC0) == 0x80)
+                    a--;
+                len = a;
                 if (cons_gfx()) cons_putc('\b');
                 else vga_puts("\b \b");
                 uart_puts("\b \b");
@@ -85,10 +89,26 @@ static int lee_linea(char *buf) {
                     h++;
                 }
             }
-        } else if (t >= 32 && t < 127) {
+        } else if ((t >= 32 && t < 0x101) || t > 0x10A) {
+            if (t >= 0xE000 && t <= 0xE004) continue;
             if (len < LIN_MAX - 1) {
-                buf[len++] = (char)t;
-                cons_putc((char)t);
+                /* v2.2: los codepoints se guardan UTF-8 */
+                if (t < 0x80) {
+                    buf[len++] = (char)t;
+                    cons_putc((char)t);
+                } else if (t < 0x800 && len + 1 < LIN_MAX - 1) {
+                    buf[len++] = (char)(0xC0 | (t >> 6));
+                    buf[len++] = (char)(0x80 | (t & 0x3F));
+                    cons_putc(buf[len - 2]);
+                    cons_putc(buf[len - 1]);
+                } else if (t < 0x10000 && len + 2 < LIN_MAX - 1) {
+                    buf[len++] = (char)(0xE0 | (t >> 12));
+                    buf[len++] = (char)(0x80 | ((t >> 6) & 0x3F));
+                    buf[len++] = (char)(0x80 | (t & 0x3F));
+                    cons_putc(buf[len - 3]);
+                    cons_putc(buf[len - 2]);
+                    cons_putc(buf[len - 1]);
+                }
             }
         }
     }
@@ -378,17 +398,24 @@ void shell(void) {
             }
         } else if (!libc_strcmp(cmd, "teclado")) {
             if (!args[0]) {
-                cons_puts(teclado_es ? "Teclado actual: espanol.\n" : "Teclado actual: americano.\n");
+                int dd = distribucion_actual();
+                cons_puts(dd == 2 ? "Teclado actual: catalan.\n" :
+                          dd == 1 ? "Teclado actual: espanol.\n" :
+                          "Teclado actual: americano.\n");
             } else if (!libc_strcmp(args, "es")) {
                 teclado_pon(1);
                 autoguardar();
                 cons_puts("Teclado espanol (ES) activado.\n");
+            } else if (!libc_strcmp(args, "ca")) {
+                distribucion_pon(2);
+                autoguardar();
+                cons_puts("Teclado catalan (CA) activado.\n");
             } else if (!libc_strcmp(args, "us")) {
                 teclado_pon(0);
                 autoguardar();
                 cons_puts("Teclado americano (US) activado.\n");
             } else {
-                cons_puts("Usa: teclado es|us\n");
+                cons_puts("Usa: teclado es|ca|us\n");
             }
         } else if (!libc_strcmp(cmd, "ver_archivos")) {
             cmd_ver(args);

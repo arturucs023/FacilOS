@@ -64,6 +64,12 @@ void u_lee_linea(char *d, int max);
 #define TEC_IZQ_U    0x103
 #define TEC_DER_U    0x104
 #define TEC_MENU_U   0x105
+/* v2.2: suprimir/inicio/fin/repag/avpag + TAB 0x0F del driver. */
+#define TEC_SUPR_U   0x106
+#define TEC_INICIO_U 0x107
+#define TEC_FIN_U    0x108
+#define TEC_REPAG_U  0x109
+#define TEC_AVPA_U   0x10A
 
 /* ---- graficos ---- */
 #define C_NEGRO 0x00

@@ -244,6 +244,11 @@ static inline int sys_video_cmos(int op, int val) {
     return sys_llama(45, op, val, 0);
 }
 
+/* v2.2: distribucion de teclado (op 0=leer, 1=establecer 0-2). */
+static inline int sys_teclado_dist(int op, int val) {
+    return sys_llama(46, op, val, 0);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2
