@@ -302,16 +302,17 @@ static int ptr_ok(int di, uint32_t p, uint32_t n, int esc) {
 }
 
 /* Pide al proceso que se haga grafico y comprueba que es el dueno del
-   dorso: si otro proceso esta dibujando, se le cede (politica de v1.9). */
+   dorso: si otro proceso esta dibujando, se le cede (politica de v1.9).
+   v2.2-post: el cambio de dueno YA NO limpia el dorso. Servidor y
+   clientes comparten un unico dorso de composicion (todos repintan lo
+   suyo: fondo/cromo/contenido) y las apps modales limpian explicito;
+   limpiar aqui borraba el cromo del servidor en cada DRAW del cliente
+   (ventanas sin marco). */
 static int gfx_toma(int di) {
     if (di < 0) return 1;
     int pid = proc_actual->pid;
     if (proc_actual->grafico == 0) proc_actual->grafico = 1;
     if (gfx_pid != pid) {
-        if (gfx_pid >= 0) {
-            extern void g_dorso_limpia(void);
-            g_dorso_limpia();
-        }
         gfx_pid = pid;
     }
     return 1;

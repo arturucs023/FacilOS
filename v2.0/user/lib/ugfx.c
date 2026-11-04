@@ -212,6 +212,8 @@ void ug_edit(ug_win_t *v, int on) {
 void ug_comienza(ug_win_t *v) {
     /* Toma el lease (precedente: asegura_propiedad del servidor). */
     u_texto(0, 0, "", C_NEGRO);
+    u_destino(1);   /* v2.2-post: los clientes tambien componen en el
+                       dorso (el present de ug_fin ya lo vuelca) */
     v->ox = v->x;
     v->oy = v->y + UG_CHROME;
 }

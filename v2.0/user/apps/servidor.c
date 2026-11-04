@@ -94,7 +94,8 @@ static void fondo(void) {
     unsigned char b1 = b0 > 34 ? (unsigned char)(b0 - 34) : 0;
     int i, nb = 16;
     int bh = AREA_H / nb;
-    u_destino(0);
+    u_destino(1);   /* v2.2-post: todo el escritorio compone en el dorso
+                       (antes frente: cada repintado parpadeaba) */
     for (i = 0; i < nb; i++) {
         int y = i * bh;
         int h = (i == nb - 1) ? (AREA_H - y) : bh;
@@ -147,6 +148,8 @@ static int icono_app(const char *t) {
 
 static void asegura_propiedad(void) {
     u_texto(0, 0, "", C_NEGRO);
+    u_destino(1);   /* v2.2-post: reafirma dorso (las apps modales lo
+                       dejan en 0 al salir) */
 }
 
 static void trae_frente(int id) {
@@ -386,6 +389,19 @@ static int cur_borde(int dx, int dy) {
         }
     }
     return 0;
+}
+
+/* Vuelca el cursor (posicion vieja ox,oy + nueva mx,my): con doble
+   bufer hay que presentar AMBAS; solo la nueva dejaba estelas. */
+static void cursor_volcar(int ox, int oy) {
+    int x0 = mx, y0 = my, x1 = mx + CUR_W, y1 = my + CUR_H;
+    if (ox >= 0 && oy >= 0) {
+        if (ox < x0) x0 = ox;
+        if (oy < y0) y0 = oy;
+        if (ox + CUR_W > x1) x1 = ox + CUR_W;
+        if (oy + CUR_H > y1) y1 = oy + CUR_H;
+    }
+    u_presentar(x0, y0, x1 - x0, y1 - y0);
 }
 
 static void cursor_borra(void) {
@@ -838,6 +854,12 @@ static void frame(void) {
     asegura_propiedad();
     cursor_borra();
     if (bg_dirty) {
+        int w;
+        /* v2.2-post: el fondo pinta sobre las ventanas: todas deben
+           repintarse (antes quedaban borradas hasta el proximo clic;
+           al lanzar se salvaban por el cambio de foco, pero F1+ESC
+           las hacia desaparecer). */
+        for (w = 0; w < NVENT; w++) marca_sucia(w);
         fondo();
         bg_dirty = 0;
     }
@@ -937,7 +959,11 @@ static void frame(void) {
     asegura_propiedad();
     barra();
     dibuja_menu();
+    /* v2.2-post: vuelco atomico del dorso (sin esto cada primitiva se
+       veia pintar: parpadeo al escribir/arrastrar/redimensionar). */
+    u_presentar(0, 0, PANT_W, PANT_H);
     cursor_show();
+    cursor_volcar(-1, -1);   /* el fullscreen ya cubre; solo la nueva */
     if (nuevo_marco) {
         nuevo_marco = 0;
         frame();
@@ -1076,8 +1102,10 @@ static void clic_izquierdo(void) {
     /* 4. ventana bajo el cursor */
     id = ventana_en(mx, my);
     if (id < 0) {
+        int ox = cur_sx, oy = cur_sy;
         cursor_borra();
         cursor_show();
+        cursor_volcar(ox, oy);   /* v2.2-post: ver camino puro */
         return;
     }
     trae_frente(id);
@@ -1409,14 +1437,21 @@ int main(void) {
                             marca_contenido(id);
                             frame();
                         } else {
+                            int ox = cur_sx, oy = cur_sy;
                             cursor_borra();
                             cursor_show();
+                            /* v2.2-post: con doble bufer el cursor solo
+                               existe en el dorso hasta volcarlo */
+                            cursor_volcar(ox, oy);
                         }
                     } else {
+                        int ox = cur_sx, oy = cur_sy;
                         mou_id = -1;
                         /* escritorio: via rapida sin recomponer */
                         cursor_borra();
                         cursor_show();
+                        /* v2.2-post: igual que el camino con ventana */
+                        cursor_volcar(ox, oy);
                     }
                 }
             }
