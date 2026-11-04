@@ -31,6 +31,7 @@ typedef struct {
     int foco;
     int max;                  /* v2.1-p1: maximizada (geometria previa en p*) */
     int px, py, pw, ph;
+    int edit;                 /* v2.2: modo edicion (TAB y ESC llegan) */
     int ack_pend;       /* DRAW sin confirmar (cliente lento/bloqueado) */
     char titulo[24];
 } ventana_t;
@@ -468,6 +469,7 @@ static int registra(int pid, int w, int h, const char *tit) {
     vents[i].visible = 1;
     vents[i].minimizada = 0;
     vents[i].max = 0;
+    vents[i].edit = 0;
     vents[i].foco = 0;
     vents[i].ack_pend = 0;
     tick_sec[i] = 0;
@@ -660,6 +662,16 @@ static void espera_ack(int idx) {
             if (r >= 4 && b[0] == 'T' && b[1] == 'I' && b[2] == 'C' &&
                 b[3] == 'K') {
                 atiende_tick(de, b, r);
+                continue;
+            }
+            if (r >= 4 && b[0] == 'E' && b[1] == 'D' && b[2] == 'I' &&
+                b[3] == 'T') {
+                int on = (r >= 6 && b[5] == '1') ? 1 : 0;
+                int k;
+                for (k = 0; k < NVENT; k++) {
+                    if (vents[k].usado && vents[k].pid == de)
+                        vents[k].edit = on;
+                }
                 continue;
             }
             if (r >= 5 && b[0] == 'F' && b[1] == 'O' && b[2] == 'N' &&
@@ -977,7 +989,9 @@ static void tecla_a_foco(int code) {
     char m[16];
     int t = 4, v = code, j = 0;
     char nb[12];
-    if (foco_id < 0) return;
+    if (foco_id < 0) {
+        return;
+    }
     m[0] = 'K';
     m[1] = 'E';
     m[2] = 'Y';
@@ -1219,6 +1233,14 @@ int main(void) {
             } else if (r >= 4 && b[0] == 'T' && b[1] == 'I' && b[2] == 'C' &&
                        b[3] == 'K') {
                 atiende_tick(de, b, r);
+            } else if (r >= 4 && b[0] == 'E' && b[1] == 'D' && b[2] == 'I' &&
+                       b[3] == 'T') {
+                int on = (r >= 6 && b[5] == '1') ? 1 : 0;
+                int k;
+                for (k = 0; k < NVENT; k++) {
+                    if (vents[k].usado && vents[k].pid == de)
+                        vents[k].edit = on;
+                }
             } else if (r >= 5 && b[0] == 'F' && b[1] == 'O' && b[2] == 'N' &&
                        b[3] == 'D') {
                 atiende_fondo(de, b, r);
@@ -1243,6 +1265,12 @@ int main(void) {
                     menu_abierto = 0;
                     bg_dirty = 1;
                     frame();
+                } else if (foco_id >= 0 && vents[foco_id].usado &&
+                           vents[foco_id].edit) {
+                    /* v2.2: modo edicion (terminal): ESC llega a la app
+                       (cierra su selector / limpia linea). Salir del
+                       escritorio sigue con la X o sin ventanas en edicion. */
+                    tecla_a_foco(k);
                 } else {
                     int i;
                     for (i = 0; i < NVENT; i++) {
@@ -1275,8 +1303,16 @@ int main(void) {
                     frame();
                 }
             } else if (k == 9) {
-                fija_foco(siguiente_foco());
-                frame();
+                if (foco_id >= 0 && vents[foco_id].usado &&
+                    vents[foco_id].edit) {
+                    /* v2.2: modo edicion: TAB llega a la app
+                       (autocompletado). Sin edicion sigue ciclando foco
+                       (el driver ya emite TAB: antes era codigo muerto). */
+                    tecla_a_foco(k);
+                } else {
+                    fija_foco(siguiente_foco());
+                    frame();
+                }
             } else {
                 tecla_a_foco(k);
             }

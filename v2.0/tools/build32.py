@@ -115,7 +115,7 @@ wsec(20, rd)
 # disquete (v1.8: probados sin-emulacion, imagen corta y sector-count 0;
 # todos fallan en este BIOS; ver INFORME-v1.8-32.txt). Contenido util
 # ~130 KB; el resto es relleno que el BIOS exige.
-KERN_SECS = 128          # sectores de 512 que lee el cargador
+KERN_SECS = 160          # sectores de 512 que lee el cargador (v2.2)
 IMG_SECS = 2880
 img = bytearray(IMG_SECS * 512)
 CAT_LBA = KERN_SECS + 1  # LBA del catalogo (0 = arranque, 1.. = nucleo)
@@ -123,10 +123,10 @@ CAT_LBA = KERN_SECS + 1  # LBA del catalogo (0 = arranque, 1.. = nucleo)
 # (12 B de cabecera + 32 entradas de 32 B); con 512 B solo cabian 15.
 CAT_SECS = 4
 DATOS_LBA = CAT_LBA + CAT_SECS
-# El cargador lee LBAs 1..128 (el nucleo) y despues copia el catalogo de
+# El cargador lee LBAs 1..160 (el nucleo) y despues copia el catalogo de
 # programas + sus datos a 0x20000 en RAM (ver boot32.asm).
 img[512:512 + kb] = (BLD / "kernel32.bin").read_bytes()
-assert kb <= 128 * 512, "nucleo > 128 sectores de 512"
+assert kb <= 160 * 512, "nucleo > 160 sectores de 512"
 # El arranque: pay_secs en 496, cat_lba en 498, dat_lba en 500.
 _bs = bytearray((BLD / "boot32.bin").read_bytes())
 struct.pack_into("<HHH", _bs, 496, 0, CAT_LBA, DATOS_LBA)  # pay luego
@@ -162,6 +162,10 @@ run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
      str(LIB / "ulib.c"), "-o", str(BLD / "ulib.o")])
 run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
      str(LIB / "ugfx.c"), "-o", str(BLD / "ugfx.o")])
+run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
+     str(LIB / "utext.c"), "-o", str(BLD / "utext.o")])
+run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
+     str(LIB / "ulog.c"), "-o", str(BLD / "ulog.o")])
 import struct as _st
 
 _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
@@ -186,6 +190,8 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
             objs.append(obj)
         if con_ulib or con_ugfx:
             objs.append(str(BLD / "ulib.o"))
+            objs.append(str(BLD / "utext.o"))
+            objs.append(str(BLD / "ulog.o"))
         if con_ugfx:
             objs.append(str(BLD / "ugfx.o"))
         run([GCC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
@@ -252,6 +258,7 @@ _apps3 = [
     ("aislamiento32", ["aislamiento32.c"], True),
     ("aisla32", ["aisla32.c"], True),
     ("t1_lib", ["t1_lib.c"], True),
+    ("tutf8", ["tutf8.c"], True),
     ("t2_gfx", ["t2_gfx.c"], True),
     ("editor16", ["editor16.c"], True),
     ("demo16", ["d_main.c", "d_graficos.c", "d_ficheros.c", "d_memoria.c",
@@ -281,7 +288,7 @@ _fin = IMG_LBA + (_nimg * 512 + 2047) // 2048
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.1-p0.iso"   # v2.1-P0 (etapa4 intacta)
+out_iso = ISO_DIR / "FacilOS-v2.2-terminal.iso"   # v2.2 (v2.1 intacta)
 _iso = bytes(iso[:_fin * 2048])
 out_iso.write_bytes(_iso)
 print(f"OK {out_iso} {len(_iso)} bytes ({_fin} sectores, "

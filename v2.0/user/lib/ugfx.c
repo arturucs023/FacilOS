@@ -1,4 +1,5 @@
 #include "ugfx.h"
+#include "utext.h"
 
 /* UGFX v1: implementacion. Solo syscalls + IPC; sin estado global salvo
    el lease en curso (un hilo por proceso en FacilOS32). */
@@ -203,6 +204,11 @@ void ug_tick(ug_win_t *v, int s) {
     u_ipc_enviar(v->srv, m, t + 1);
 }
 
+void ug_edit(ug_win_t *v, int on) {
+    if (!v || !v->vivo) return;
+    u_ipc_enviar(v->srv, on ? "EDIT 1" : "EDIT 0", 7);
+}
+
 void ug_comienza(ug_win_t *v) {
     /* Toma el lease (precedente: asegura_propiedad del servidor). */
     u_texto(0, 0, "", C_NEGRO);
@@ -363,12 +369,21 @@ void ug_campo(ug_win_t *v, int x, int y, int w, const char *buf, int pos,
         if (maxc > 60) maxc = 60;
         if (maxc < 1) maxc = 1;
         if (pos > ini + maxc - 1) ini = pos - maxc + 1;
+        while (ini > 0 && ((unsigned char)buf[ini] & 0xC0) == 0x80) ini--;
         for (i = 0; i < maxc && buf[ini + i]; i++) vis[i] = buf[ini + i];
         vis[i] = 0;
         ug_texto(v, x + 2, y + 2, vis, C_BLANCO);
         if (foco) {
-            int cx = x + 2 + (pos - ini) * UG_FW;
-            ug_relleno(v, cx, y + 2, 2, UG_FH, C_BLANCO);
+            /* columna en caracteres (no bytes): multibyte no desplaza */
+            int col = 0, p = ini;
+            while (p < pos && buf[p]) {
+                p = ut_siguiente(buf, p);
+                col++;
+            }
+            {
+                int cx = x + 2 + col * UG_FW;
+                ug_relleno(v, cx, y + 2, 2, UG_FH, C_BLANCO);
+            }
         }
     }
     (void)n;
@@ -378,26 +393,36 @@ int ug_campo_tecla(char *buf, int max, int *pos, int tecla) {
     int n = u_strlen(buf);
     if (tecla == 8) {
         if (*pos > 0 && *pos <= n) {
-            int i;
-            for (i = *pos - 1; i < n; i++) buf[i] = buf[i + 1];
-            (*pos)--;
+            int a = ut_anterior(buf, *pos), i;
+            for (i = a; i < n; i++) buf[i] = buf[i + (*pos - a)];
+            *pos = a;
             return 1;
         }
         return 0;
     }
     if (tecla == 0x103) {
-        if (*pos > 0) { (*pos)--; return 1; }
+        if (*pos > 0) {
+            *pos = ut_anterior(buf, *pos);
+            return 1;
+        }
         return 0;
     }
     if (tecla == 0x104) {
-        if (*pos < n) { (*pos)++; return 1; }
+        if (*pos < n) {
+            *pos = ut_siguiente(buf, *pos);
+            if (*pos > n) *pos = n;
+            return 1;
+        }
         return 0;
     }
-    if (tecla >= 32 && tecla < 127 && n + 1 < max) {
-        int i;
-        for (i = n; i >= *pos; i--) buf[i + 1] = buf[i];
-        buf[*pos] = (char)tecla;
-        (*pos)++;
+    if (tecla >= 32 && !(tecla >= 0x101 && tecla <= 0x10A) &&
+        !(tecla >= 0xE000 && tecla <= 0xE004) && n + 1 < max) {
+        char tmp[5];
+        int w = ut_enc(tmp, 5, (unsigned)tecla), i;
+        if (!w || n + w >= max) return 0;
+        for (i = n; i >= *pos; i--) buf[i + w] = buf[i];
+        for (i = 0; i < w; i++) buf[*pos + i] = tmp[i];
+        *pos += w;
         return 1;
     }
     return 0;

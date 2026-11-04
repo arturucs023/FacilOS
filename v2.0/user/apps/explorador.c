@@ -176,7 +176,20 @@ static void dibuja(ug_win_t *v) {
         for (li = 0; li < vis && p < vlen; li++) {
             char ln[60];
             int k = 0;
-            while (p < vlen && vbuf[p] != '\n' && k < 56) ln[k++] = vbuf[p++];
+            while (p < vlen && vbuf[p] != '\n' && k < 56) {
+                unsigned char b = (unsigned char)vbuf[p];
+                int w = 1, q;
+                if (b >= 0x80) {
+                    if ((b & 0xE0) == 0xC0) w = 2;
+                    else if ((b & 0xF0) == 0xE0) w = 3;
+                    else if ((b & 0xF8) == 0xF0) w = 4;
+                    if (k + w > 56) break;
+                }
+                for (q = 0; q < w && p + q < vlen; q++)
+                    ln[k + q] = vbuf[p + q];
+                k += w;
+                p += w;
+            }
             ln[k] = 0;
             if (p < vlen && vbuf[p] == '\n') p++;
             ug_texto(v, 4, 56 + li * UG_FH, ln, C_GRIS);

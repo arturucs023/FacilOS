@@ -57,6 +57,9 @@ void ug_sync(ug_win_t *v);
 /* Refresco periodico: el servidor manda DRAW cada s segundos (1-60;
    0 cancela). Para relojes/indicadores en vivo (v2.1-p1). */
 void ug_tick(ug_win_t *v, int s);
+/* Modo edicion (v2.2): TAB y ESC llegan a la ventana (autocompletado).
+   0 lo cancela. */
+void ug_edit(ug_win_t *v, int on);
 /* Modo modal: 1 suspende entrada y pintado del servidor (hijo con
    pantalla+teclado propios), 0 reanuda con repintado total. */
 void ug_modal(ug_win_t *v, int on);

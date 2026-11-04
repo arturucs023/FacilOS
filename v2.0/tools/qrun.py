@@ -45,17 +45,25 @@ for _ in range(40):
     if ser.exists() and "facil:" in ser.read_bytes().decode(errors="ignore"):
         break
 MP = {"\n": "ret", " ": "0x39", "_": "shift-minus", "-": "minus",
-      ".": "dot", "/": "slash", ":": "shift-dot",
+      ".": "dot", "/": "slash", ":": "shift-dot", '"': "shift-2",
       # tabla CP437 del BIOS: 0x0B '0'/shift'=', 0x1B '+'/shift'*',
       # 0x0D '='/shift'+', 0x0B..0x0C fila de numeros.
       "=": "shift-0", "*": "shift-equal", "+": "shift-equal",
       ")": "shift-0", "(": "shift-9", "!": "shift-1", "?": "shift-slash"}
 MP.update({c: f"shift-{c.lower()}" for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZÑ"})
+_ultima = [""]
 def key(k):
     # Hold explicito de 20 ms: sin el, QEMU mantiene la tecla 100 ms y al
     # enviar la siguiente (gap de 90 ms) las pulsaciones se solapan y el
     # invitado ve scancodes raros (p. ej. el espacio como Enter).
-    f.write(f"sendkey {k}\n".encode()); f.flush(); time.sleep(0.12)
+    # v2.2: en hosts cargados QEMU fusiona pulsaciones rapidas (el 8042
+    # virtual pierde bytes); gaps amplios para inyeccion fiable.
+    f.write(f"sendkey {k}\n".encode()); f.flush()
+    if k == _ultima[0]:
+        time.sleep(0.6)
+    else:
+        time.sleep(0.35)
+    _ultima[0] = k
 def send(t):
     i = 0
     while i < len(t):

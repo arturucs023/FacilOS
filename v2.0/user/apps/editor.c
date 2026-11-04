@@ -1,4 +1,5 @@
 #include "ugfx.h"
+#include "utext.h"
 
 void __main(void) {
 }
@@ -111,30 +112,52 @@ static void guarda(ug_win_t *v) {
 
 static void inserta(int c) {
     int p, i;
+    char tmp[5];
+    int w;
     mide();
-    if (len + 1 >= NBUF) return;
+    if (c == '\n') {
+        w = 1;
+        tmp[0] = '\n';
+    } else {
+        w = ut_enc(tmp, 5, (unsigned)c);
+        if (!w) return;
+    }
+    if (len + w >= NBUF) return;
     p = ini[li] + co;
-    for (i = len; i > p; i--) buf[i] = buf[i - 1];
-    buf[p] = (char)c;
-    len++;
+    for (i = len; i > p; i--) buf[i + w - 1] = buf[i - 1];
+    for (i = 0; i < w; i++) buf[p + i] = tmp[i];
+    len += w;
     if (c == '\n') {
         li++;
         co = 0;
     } else {
-        co++;
+        co += w;
     }
     sucio = 1;
 }
 
+static int retrocede_col(int base, int col) {
+    /* retrocede una caracter (no un byte) desde base+col */
+    int p = base + col;
+    if (col <= 0) return 0;
+    p--;
+    while (p > base && ((unsigned char)buf[p] & 0xC0) == 0x80) p--;
+    return p - base;
+}
+
 static void borra(void) {
-    int p, i;
+    int p, i, nc;
     mide();
     if (!len) return;
     p = ini[li] + co;
     if (co > 0) {
-        for (i = p - 1; i < len; i++) buf[i] = buf[i + 1];
-        len--;
-        co--;
+        nc = retrocede_col(ini[li], co);
+        {
+            int nb = co - nc;
+            for (i = p - nb; i < len; i++) buf[i] = buf[i + nb];
+            len -= nb;
+            co = nc;
+        }
     } else if (li > 0) {
         co = lon[li - 1];
         for (i = p - 1; i < len; i++) buf[i] = buf[i + 1];
@@ -176,15 +199,38 @@ static void dibuja(ug_win_t *v) {
     for (i = 0; i < vis && scroll + i < nlin; i++) {
         char ln[62];
         int k = 0, p = ini[scroll + i];
-        while (k < 58 && k < lon[scroll + i]) {
-            ln[k] = buf[p + k];
-            k++;
+        /* copia por caracteres: nunca parte multibyte (max 58 B) */
+        while (k < lon[scroll + i]) {
+            unsigned char b = (unsigned char)buf[p + k];
+            int w = 1, q;
+            if (b >= 0x80) {
+                if ((b & 0xE0) == 0xC0) w = 2;
+                else if ((b & 0xF0) == 0xE0) w = 3;
+                else if ((b & 0xF8) == 0xF0) w = 4;
+                if (k + w > 58) break;
+            } else if (k + 1 > 58) {
+                break;
+            }
+            for (q = 0; q < w; q++) ln[k + q] = buf[p + k + q];
+            k += w;
         }
         ln[k] = 0;
         ug_texto(v, 8, 22 + i * UG_FH, ln, C_GRIS);
     }
     if (v->foco) {
-        int cx = 8 + co * UG_FW, cy = 22 + (li - scroll) * UG_FH;
+        int cells = 0, p = ini[li], lim = ini[li] + co, cx, cy;
+        while (p < lim) {
+            if (buf[p] & 0x80) {
+                int r = p + 1;
+                while (r < lim && (buf[r] & 0xC0) == 0x80) r++;
+                p = r;
+            } else {
+                p++;
+            }
+            cells++;
+        }
+        cx = 8 + cells * UG_FW;
+        cy = 22 + (li - scroll) * UG_FH;
         if (li >= scroll && li < scroll + vis)
             ug_relleno(v, cx, cy, 2, UG_FH, C_BLANCO);
     }
@@ -256,13 +302,27 @@ int main(void) {
                     if (co > lon[li]) co = lon[li];
                 }
             } else if (k == 0x103) {
-                if (co > 0) co--;
+                if (co > 0) co = retrocede_col(ini[li], co);
             } else if (k == 0x104) {
                 mide();
-                if (co < lon[li]) co++;
+                if (co < lon[li]) {
+                    int p = ini[li] + co;
+                    if (buf[p] & 0x80) {
+                        /* avanza un caracter completo */
+                        int r = p + 1;
+                        while (r < len && (buf[r] & 0xC0) == 0x80 &&
+                               r - p < 4)
+                            r++;
+                        co += r - p;
+                    } else {
+                        co++;
+                    }
+                }
             } else if (k == 8) {
                 borra();
-            } else if (k == 13 || (k >= 32 && k < 127)) {
+            } else if (k == 13 ||
+                       (k >= 32 && !(k >= 0x101 && k <= 0x10A) &&
+                        !(k >= 0xE000 && k <= 0xE004))) {
                 inserta(k == 13 ? '\n' : k);
             }
         } else if (t == UG_EV_RATON) {
