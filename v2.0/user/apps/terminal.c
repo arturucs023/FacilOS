@@ -20,6 +20,8 @@ void __main(void) {
 
 static char pant[NLIN][NCOL];
 static int nlin = 0;
+/* Lineas que el usuario subio desde el fondo (RePag/AvPag). */
+static int desplaza = 0;
 static char ent[NENTB];
 static int nent = 0, pos = 0;
 static char hist[NHIST][NENTB];
@@ -41,6 +43,7 @@ static char list_dirpath[128];
 /* ---- salida ---- */
 
 static void pon(const char *s) {
+    desplaza = 0;   /* lo nuevo trae la vista al fondo */
     while (*s && nlin < NLIN) {
         int k = 0;
         while (s[0] && s[0] != '\n') {
@@ -586,6 +589,8 @@ static void cmd_ayuda(const char *arg) {
         }
     }
     pon("Para saber mas: manual nombre_del_comando");
+    pon("Teclas: flechas editan, arriba/abajo historial,");
+    pon("  repag/avpag y rueda desplazan la pantalla.");
 }
 
 static void cmd_manual(const char *arg) {
@@ -1808,12 +1813,35 @@ static void borra_en(void) {
     }
 }
 
+/* Caracteres en s[0..pos): columna del cursor de edicion. */
+static int cuenta_hasta(const char *s, int pos) {
+    int n = 0, p = 0;
+    if (pos < 0) pos = 0;
+    while (p < pos && s[p]) {
+        p = ut_siguiente(s, p);
+        n++;
+    }
+    return n;
+}
+
+/* Lineas de historial que caben en la ventana. */
+static int vis_lineas(ug_win_t *v) {
+    int vis = (v->h - UG_CHROME - 24) / UG_FH;
+    return vis < 1 ? 1 : vis;
+}
+
 static void dibuja_term(ug_win_t *v) {
-    int vis = (v->h - UG_CHROME - 24) / UG_FH, ini, li, i;
+    int vis = vis_lineas(v), ini, li, i;
     ug_comienza(v);
     ug_limpia(v, T_VENT_FONDO);
     if (vis < 1) vis = 1;
-    ini = nlin > vis ? nlin - vis : 0;
+    {
+        /* Ventana de historial: del fondo hacia arriba segun desplaza. */
+        int maxdes = nlin > vis ? nlin - vis : 0;
+        if (desplaza > maxdes) desplaza = maxdes;
+        if (desplaza < 0) desplaza = 0;
+        ini = nlin > vis ? nlin - vis - desplaza : 0;
+    }
     for (li = 0; li < vis && ini + li < nlin; li++)
         ug_texto(v, 4, 4 + li * UG_FH, pant[ini + li], C_GRIS);
     {
@@ -1828,8 +1856,11 @@ static void dibuja_term(ug_win_t *v) {
         if (maxc > NENTB) maxc = NENTB;
         if (maxc < 1) maxc = 1;
         {
-            int ancho = ut_ancho(ent);
-            if (ancho > maxc - 1) st = ancho - maxc + 1;
+            /* La ventana sigue al cursor de edicion (antes se quedaba
+               fija al final y las flechas parecian no hacer nada). */
+            int col_cur = cuenta_hasta(ent, pos);
+            if (col_cur < st) st = col_cur;
+            else if (col_cur >= st + maxc) st = col_cur - maxc + 1;
         }
         /* dibuja con desplazamiento por caracteres */
         {
@@ -1857,8 +1888,9 @@ static void dibuja_term(ug_win_t *v) {
             }
         }
         if (v->foco && !pop_abierto) {
-            int col = ut_ancho(ent) - st;
+            int col = cuenta_hasta(ent, pos) - st;
             if (col < 0) col = 0;
+            if (col >= maxc) col = maxc - 1;
             ug_relleno(v, 4 + 11 * UG_FW + col * UG_FW, yb, 2, UG_FH,
                        C_BLANCO);
         }
@@ -2003,6 +2035,13 @@ int main(void) {
                         hist_recupera();
                     }
                 }
+            } else if (k == TEC_REPAG_U) {
+                /* Sube una pagina del historial de salida. */
+                desplaza += vis_lineas(&v);
+            } else if (k == TEC_AVPA_U) {
+                /* Baja hacia lo mas reciente. */
+                desplaza -= vis_lineas(&v);
+                if (desplaza < 0) desplaza = 0;
             } else if (k == 9) {
                 pop_abre();
             } else if (k == 27) {
@@ -2012,6 +2051,13 @@ int main(void) {
             } else if (k >= 32 && !(k >= 0x101 && k <= 0x10A) &&
                        !(k >= 0xE000 && k <= 0xE004)) {
                 inserta_cp((unsigned)k);
+            }
+        } else if (t == UG_EV_RATON) {
+            /* Rueda: desplaza el historial (3 lineas por paso). */
+            if (ev.rueda > 0) desplaza += ev.rueda * 3;
+            else if (ev.rueda < 0) {
+                desplaza += ev.rueda * 3;
+                if (desplaza < 0) desplaza = 0;
             }
         } else if (t == UG_EV_DRAW) {
             dibuja_term(&v);

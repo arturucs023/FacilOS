@@ -99,7 +99,7 @@ void kmain(void)
         uint8_t cv;
         outb(0x70, 0x40);
         cv = inb(0x71);
-        if (cv > 2) {
+        if (cv > 3) {
             outb(0x70, 0x40);
             outb(0x71, 0);
             kprintf("video: modo %u no soportado, restablecido 800x600\r\n",

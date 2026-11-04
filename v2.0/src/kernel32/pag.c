@@ -134,6 +134,33 @@ static void reserva_fijas(void) {
     reserva(0xE00000, 0xF00000);   /* pilas de anillo 0 de los procesos */
 }
 
+/* Dorso grande (pantalla completa a 1920x1080x32): bloque contiguo alto
+   detectado por E820. Reserva fija desde el arranque para que la
+   contabilidad de marcos no baile. 0 si no cabe (poca RAM: el modo
+   grande queda sin soporte pero el resto sigue igual). */
+static uint32_t dorso_grande = 0;
+
+uint32_t pag_dorso_grande(void) { return dorso_grande; }
+
+static void reserva_dorso_grande(void) {
+    uint32_t total = PAG_RAM_MAX / PAG_MARCO;
+    uint32_t ini = total - DORSO_GRANDE_MARCOS;
+    uint32_t f;
+    dorso_grande = 0;
+    for (;;) {
+        for (f = 0; f < DORSO_GRANDE_MARCOS; f++)
+            if (bit_marco(ini + f)) break;
+        if (f == DORSO_GRANDE_MARCOS) break;
+        if (ini <= 256) return;   /* por debajo de 1 MB: no hay sitio */
+        ini--;
+    }
+    for (f = 0; f < DORSO_GRANDE_MARCOS; f++) {
+        pon_bit(ini + f, 1);
+        marco_dueno[ini + f] = DUENO_RESERVA;
+    }
+    dorso_grande = ini * PAG_MARCO;
+}
+
 int32_t pag_toma_marco(void) {
     for (uint32_t f = 1; f < marcos_top; f++) {
         if (!bit_marco(f)) {
@@ -387,8 +414,10 @@ static void mapea_rango(unsigned di, uint32_t virt, uint32_t fin, uint32_t flags
 
 static void mapea_lfb(void) {
     uint32_t lfb = (uint32_t)BI->lfb_lo | ((uint32_t)BI->lfb_hi << 16);
+    uint32_t k;
     if (!lfb) return;
-    for (uint32_t k = 0; k < 1024; k++) {
+    /* Ventana de 12 MB: cabe 1920x1080x32 (8,3 MB) con margen. */
+    for (k = 0; k < 3072; k++) {
         if (pag_mapa(0, lfb + k * PAG_MARCO, lfb + k * PAG_MARCO,
                      PAG_PRESENTE | PAG_ESCRITURA))
             return;
@@ -428,6 +457,7 @@ void pag_inicia(void) {
         ram_total = PAG_RAM_MAX - 0x100000;
     }
     reserva_fijas();
+    reserva_dorso_grande();
     marcos_top = PAG_RAM_MAX / PAG_MARCO;
     while (marcos_top > 0 && bit_marco(marcos_top - 1)) marcos_top--;
     /* Lo que de verdad queda disponible tras reservar las zonas fijas. */
@@ -445,6 +475,12 @@ void pag_inicia(void) {
     mapea_rango(0, 0x800000, 0xD00000, sup);
     mapea_rango(0, 0xE00000, 0xF00000, sup);
     mapea_lfb();
+    /* Dorso grande (si cupo): identidad para que todo directorio (los
+       nuevos copian este) dibuje en el sin ventana. La reserva ya se
+       hizo junto a las fijas para cuadrar la contabilidad. */
+    if (dorso_grande)
+        mapea_rango(0, dorso_grande,
+                    dorso_grande + DORSO_GRANDE_MARCOS * PAG_MARCO, sup);
     mapea_apic();
 
     ventana_alta();

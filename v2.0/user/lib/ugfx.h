@@ -22,7 +22,7 @@
 #define UG_EV_DRAW 1        /* redibujar todo el contenido */
 #define UG_EV_FOCO 2        /* foco: ev.foco (1 dentro, 0 fuera) */
 #define UG_EV_TECLA 3       /* tecla: ev.tecla (ASCII, 8, 13, 9, 27, 0x101+) */
-#define UG_EV_RATON 4       /* raton: ev.rx, ev.ry (pantalla), ev.rbot */
+#define UG_EV_RATON 4       /* raton: rx,ry (pantalla), rbot, rueda */
 #define UG_EV_SALIR 5       /* el servidor pide cerrar (QUIT) */
 
 typedef struct {
@@ -31,6 +31,7 @@ typedef struct {
     int foco;               /* FOCO */
     int tecla;              /* TECLA */
     int rx, ry, rbot;       /* RATON (coords de pantalla) */
+    int rueda;              /* RATON: giro desde el aviso anterior */
 } ug_ev_t;
 
 typedef struct {

@@ -4,6 +4,12 @@
 
 void gfx_init(void);
 int gfx_activo(void);
+/* Cambio de resolucion en vivo (codigo propio, sin BIOS): 0 ok,
+   -1 modo sin soporte o sin adaptador, -2 sin memoria para componer.
+   Solo 640x480, 800x600, 1024x768 y 1920x1080 a 32bpp. */
+int pantalla_modo(int w, int h);
+/* Dimensiones vigentes (0 si no hay grafico). */
+void pantalla_dime(int *w, int *h, int *paso, int *prof);
 /* Entrada para el registro de drivers (v2.0): 0 si hay video VESA. */
 int pantalla_init(void);
 void gfx_clear(void);

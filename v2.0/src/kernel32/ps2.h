@@ -3,13 +3,15 @@
 #include <stdint.h>
 #include "irq.h"
 
-/* Raton PS/2 (etapa 4, E4): driver i8042/aux, IRQ12, paquetes de 3 B.
- * Modelo como el teclado: cola global de instantaneas + lectura con
- * bloqueo. Un unico consumidor (el servidor) por diseno v1. */
+/* Raton PS/2 (etapa 4, E4): driver i8042/aux, IRQ12, paquetes de 3 B
+ * (4 B si hay rueda). Modelo como el teclado: cola global de
+ * instantaneas + lectura con bloqueo. Un unico consumidor (el
+ * servidor) por diseno v1. */
 
 typedef struct {
-    int x, y;       /* 0..799, 0..599, ya recortados */
+    int x, y;       /* 0..W-1, 0..H-1, ya recortados */
     int botones;    /* bit0 izq, bit1 der, bit2 central */
+    int rueda;      /* giro con signo desde el ultimo paquete */
 } raton_t;
 
 int ps2_init(void);          /* entrada de drivers; 0 ok (hay raton) */

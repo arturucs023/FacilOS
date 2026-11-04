@@ -124,6 +124,8 @@ int ug_evento(ug_win_t *v, ug_ev_t *ev, int bloquear) {
             ev->rx = lee_num(b, r, &k);
             ev->ry = lee_num(b, r, &k);
             ev->rbot = lee_num(b, r, &k);
+            ev->rueda = 0;
+            if (k < r) ev->rueda = lee_num(b, r, &k);
             ev->tipo = UG_EV_RATON;
             return UG_EV_RATON;
         }
@@ -155,17 +157,29 @@ int ug_pide_info(ug_win_t *v, int *w, int *h) {
             {
                 int ww = lee_num(b, r, &k);
                 int hh = lee_num(b, r, &k);
-                if (ww > 0) v->w = ww;
-                if (hh > 0) v->h = hh;
-                if (w) *w = v->w;
-                if (h) *h = v->h;
+                /* INF devuelve la PANTALLA, no la ventana: no tocar
+                   v->w/v->h (antes los corrompia a 800x570 y el cliente
+                   limpiaba/presentaba fuera de su cromo). */
+                if (w) *w = ww;
+                if (h) *h = hh;
             }
             return 0;
         }
         if (r >= 4 && b[0] == 'D' && b[1] == 'R' && b[2] == 'A') {
-            /* DRAW interleado: se confirma sin dibujar (nada cambio). */
-            ug_comienza(v);
-            ug_fin(v);
+            /* DRAW interleado: actualiza la posicion (el dibujo inicial
+               depende de ella) y confirma sin pintar; el contenido
+               llega con el DRAW del bucle principal. Antes se
+               presentaba en (0,0) y dejaba un fantasma. */
+            k = 4;
+            v->x = lee_num(b, r, &k);
+            v->y = lee_num(b, r, &k);
+            if (k < r) {
+                int ww = lee_num(b, r, &k);
+                int hh = ww >= 0 && k < r ? lee_num(b, r, &k) : -1;
+                if (ww > 0) v->w = ww;
+                if (hh > 0) v->h = hh;
+            }
+            u_ipc_enviar(v->srv, "ACK", 4);
             continue;
         }
         if (r >= 4 && b[0] == 'Q' && b[1] == 'U') {
@@ -225,7 +239,8 @@ void ug_fin(ug_win_t *v) {
 
 /* Recorte al contenido (ox,oy,w,h-UG_CHROME). */
 static int recorta(ug_win_t *v, int *x, int *y, int *w, int *h) {
-    int x0 = v->ox, y0 = v->oy, x1 = v->ox + v->w, y1 = v->oy + v->h;
+    int ch = v->h - UG_CHROME;
+    int x0 = v->ox, y0 = v->oy, x1 = v->ox + v->w, y1 = v->oy + (ch < 1 ? 1 : ch);
     int ax = *x + x0, ay = *y + y0;
     int bx = ax + *w, by = ay + *h;
     if (ax < x0) ax = x0;

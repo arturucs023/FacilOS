@@ -8,7 +8,7 @@ void __main(void) {
  * Compone fondo + ventanas + barra de tareas + menu + cursor; gestiona
  * foco, orden Z, arrastre, botones de ventana, menu de apps y reloj.
  * Protocolo (<=64 B, texto). C->S: REG w h titulo / BYE / ACK / SYNC / INF.
- * S->C: ID n / DRAW x y w h / FOCUS 0-1 / KEY code / MOU x y bot /
+ * S->C: ID n / DRAW x y w h / FOCUS 0-1 / KEY code / MOU x y bot giro /
  * QUIT / INF w h. La shell queda excluida mientras corre (como el menu).
  */
 
@@ -41,6 +41,7 @@ static int nz = 0;
 static int foco_id = -1;
 static int mx = 400, my = 300, mb = 0, mb_antes = 0;
 static int mou_id = -1, mou_bot = 0;
+static int giro_lote = 0;   /* giro de rueda acumulado del lote */
 static int arr_id = -1, arr_dx = 0, arr_dy = 0, arr_modo = 0;
 static int menu_abierto = 0, menu_sel = -1, ultimo_min = -1;
 
@@ -71,6 +72,7 @@ static int fondo_idx = 0;
 static void marca_sucia(int id);
 static void atiende_tick(int de, char *b, int r);
 static void atiende_fondo(int de, char *b, int r);
+static void pantalla_recarga(void);   /* VIDEO: relee tamano y reencaja */
 
 /* Repintado por dano (etapa 6, Fase P): ver definicion junto a frame(). */
 static int bg_dirty = 1;
@@ -200,6 +202,12 @@ static void cromo(ventana_t *v) {
     t[n] = 0;
     u_texto(v->x + 24, v->y + 3, t, T_TIT_TEXTO);
 }
+
+/* Tamano minimo de ventana (v2.2-post): 320x200 (40x11 celdas) para
+   que el texto siempre quepa; antes 120x60 dejaba ventanas ilegibles.
+   Centralizado: vale para todas las apps (registro y arrastre). */
+#define VENT_MIN_W 320
+#define VENT_MIN_H 200
 
 /* Agarre de esquina (redimensionar): 3 diagonales sobre la esquina
    inferior derecha. Se dibuja tras el ACK (el DRAW del cliente lo
@@ -462,8 +470,8 @@ static int ventana_en(int x, int y) {
 
 static int registra(int pid, int w, int h, const char *tit) {
     int i, z, q = 0;
-    if (w < 120) w = 120;
-    if (h < 60) h = 60;
+    if (w < VENT_MIN_W) w = VENT_MIN_W;
+    if (h < VENT_MIN_H) h = VENT_MIN_H;
     if (w > PANT_W) w = PANT_W;
     if (h > AREA_H) h = AREA_H;
     for (i = 0; i < NVENT; i++) {
@@ -610,7 +618,7 @@ static void atiende_reg(int de, const char *b, int r, int diferido) {
     if (diferido) nuevo_marco = 1;
 }
 
-/* Responde "INF w h" (geometria util) a un cliente. */
+/* Responde "INF w h" (pantalla real del modo VESA) a un cliente. */
 static void envia_inf(int de) {
     char m[24];
     int t = 0, q = 0;
@@ -623,7 +631,7 @@ static void envia_inf(int de) {
     while (nb[q] && t < 22) m[t++] = nb[q++];
     m[t++] = ' ';
     q = 0;
-    u_itoa(AREA_H, nb);
+    u_itoa(PANT_H, nb);
     while (nb[q] && t < 22) m[t++] = nb[q++];
     m[t] = 0;
     u_ipc_enviar(de, m, t + 1);
@@ -693,6 +701,13 @@ static void espera_ack(int idx) {
             if (r >= 5 && b[0] == 'F' && b[1] == 'O' && b[2] == 'N' &&
                 b[3] == 'D') {
                 atiende_fondo(de, b, r);
+                continue;
+            }
+            if (r >= 5 && b[0] == 'V' && b[1] == 'I' && b[2] == 'D' &&
+                b[3] == 'E') {
+                /* VIDEO en espera: reencaja y pide reframe al salir. */
+                pantalla_recarga();
+                nuevo_marco = 1;
                 continue;
             }
             /* MODAL tambien aqui: si llega en espera (el cliente lo manda
@@ -823,6 +838,53 @@ static void lanza(const char *app) {
     u_print(" pid=");
     u_print_num(pid);
     u_print("\n");
+}
+
+/* VIDEO (cambio de resolucion en vivo): relee las dimensiones del
+   nucleo y reencaja todo (ventanas sujetas, maximizadas al nuevo
+   tamano, fondo y cromos a repintar). */
+static void pantalla_recarga(void) {
+    unsigned int v[4];
+    int k;
+    if (u_video_info(v)) return;
+    if ((int)v[0] < 640 || (int)v[0] > 2048 ||
+        (int)v[1] < 400 || (int)v[1] > 2048) return;
+    pan_w = (int)v[0];
+    pan_h = (int)v[1];
+    area_h = pan_h - T_BARRA_H;
+    if (mx > pan_w - 12) mx = pan_w - 12;
+    if (my > pan_h - 12) my = pan_h - 12;
+    if (mx < 0) mx = 0;
+    if (my < 0) my = 0;
+    for (k = 0; k < NVENT; k++) {
+        ventana_t *w = &vents[k];
+        if (!w->usado) continue;
+        if (w->max) {
+            w->w = pan_w;
+            w->h = area_h;
+        }
+        if (w->w < VENT_MIN_W) w->w = VENT_MIN_W;
+        if (w->h < VENT_MIN_H) w->h = VENT_MIN_H;
+        if (w->w > pan_w) w->w = pan_w;
+        if (w->h > area_h) w->h = area_h;
+        if (w->x + w->w > pan_w) w->x = pan_w - w->w;
+        if (w->y + w->h > area_h) w->y = area_h - w->h;
+        if (w->x < 0) w->x = 0;
+        if (w->y < 0) w->y = 0;
+        /* La geometria previa de una maximizada se reencaja al
+           restaurar (conmuta_max la sujeta al area nueva). */
+        if (w->px < 0) w->px = 0;
+        if (w->py < 0) w->py = 0;
+        if (w->px + w->pw > pan_w) w->px = pan_w - w->pw;
+        if (w->py + w->ph > area_h) w->py = area_h - w->ph;
+        if (w->px < 0) w->px = 0;
+        if (w->py < 0) w->py = 0;
+    }
+    bg_dirty = 1;
+    for (k = 0; k < NVENT; k++) {
+        win_dirty[k] = 1;
+        win_cromo[k] = 1;
+    }
 }
 
 static void frame(void) {
@@ -1045,6 +1107,33 @@ static void tecla_a_foco(int code) {
     frame();
 }
 
+/* Avisa MOU x y bot giro a la ventana (giro 0 si no hubo rueda). */
+static void avisa_mou(int id) {
+    char m[40], nx[12], ny[12], nb[12], nw[12];
+    int t = 0, q = 0;
+    if (id < 0 || id >= NVENT || !vents[id].usado) return;
+    u_itoa(mx, nx);
+    u_itoa(my, ny);
+    u_itoa(mb, nb);
+    u_itoa(giro_lote, nw);
+    m[t++] = 'M';
+    m[t++] = 'O';
+    m[t++] = 'U';
+    m[t++] = ' ';
+    while (nx[q] && t < 37) m[t++] = nx[q++];
+    m[t++] = ' ';
+    q = 0;
+    while (ny[q] && t < 37) m[t++] = ny[q++];
+    m[t++] = ' ';
+    q = 0;
+    while (nb[q] && t < 37) m[t++] = nb[q++];
+    m[t++] = ' ';
+    q = 0;
+    while (nw[q] && t < 37) m[t++] = nw[q++];
+    m[t] = 0;
+    u_ipc_enviar(vents[id].pid, m, t + 1);
+}
+
 static void clic_izquierdo(void) {
     int id, mi, bx;
     /* 1. menu abierto: item o cierre por clic fuera */
@@ -1160,27 +1249,8 @@ static void clic_izquierdo(void) {
             return;
         }
         /* contenido: avisa MOU (lo hace la rama de raton) */
-        {
-            char m[32], nx[12], ny[12], nb[12];
-            int t = 0, q = 0;
-            u_itoa(mx, nx);
-            u_itoa(my, ny);
-            u_itoa(mb, nb);
-            m[t++] = 'M';
-            m[t++] = 'O';
-            m[t++] = 'U';
-            m[t++] = ' ';
-            while (nx[q] && t < 29) m[t++] = nx[q++];
-            m[t++] = ' ';
-            q = 0;
-            while (ny[q] && t < 29) m[t++] = ny[q++];
-            m[t++] = ' ';
-            q = 0;
-            while (nb[q] && t < 29) m[t++] = nb[q++];
-            m[t] = 0;
-            u_ipc_enviar(vents[id].pid, m, t + 1);
-            marca_contenido(id);
-        }
+        avisa_mou(id);
+        marca_contenido(id);
         frame();
     }
 }
@@ -1273,6 +1343,11 @@ int main(void) {
                        b[3] == 'D') {
                 atiende_fondo(de, b, r);
                 frame();
+            } else if (r >= 5 && b[0] == 'V' && b[1] == 'I' && b[2] == 'D' &&
+                       b[3] == 'E') {
+                /* VIDEO: la resolucion cambio en vivo (ver configura). */
+                pantalla_recarga();
+                frame();
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
                 /* ACK tardio: reanuda + repinta (el contenido llego tarde
@@ -1345,11 +1420,11 @@ int main(void) {
                 tecla_a_foco(k);
             }
         } else if (!modal_pid && u_hay_raton()) {
-            unsigned int e[3];
+            unsigned int e[4];
             int pulsado = 0;
             /* Drena la rafaga: una sola composicion por lote de paquetes
                (si no, cada paquete reharía toda la pantalla). Solo importan
-               la ultima posicion y si hubo pulsacion. */
+               la ultima posicion, si hubo pulsacion y el giro total. */
             while (u_hay_raton()) {
                 int nb;
                 if (u_raton(e)) break;
@@ -1358,6 +1433,7 @@ int main(void) {
                 mx = (int)e[0];
                 my = (int)e[1];
                 mb = nb;
+                giro_lote += (int)e[3];
             }
             if (mx > PANT_W - 12) mx = PANT_W - 12;
             if (my > PANT_H - 12) my = PANT_H - 12;
@@ -1379,8 +1455,8 @@ int main(void) {
                     } else {
                         v->w = mx - v->x;
                         v->h = my - v->y;
-                        if (v->w < 120) v->w = 120;
-                        if (v->h < 60) v->h = 60;
+                        if (v->w < VENT_MIN_W) v->w = VENT_MIN_W;
+                        if (v->h < VENT_MIN_H) v->h = VENT_MIN_H;
                         if (v->x + v->w > PANT_W)
                             v->w = PANT_W - v->x;
                         if (v->y + v->h > AREA_H)
@@ -1413,25 +1489,9 @@ int main(void) {
                        constante (v2.1-p1). */
                     int id = ventana_en(mx, my);
                     if (id >= 0) {
-                        char m[32], nx[12], ny[12], nb[12];
-                        int t = 0, q = 0;
-                        u_itoa(mx, nx);
-                        u_itoa(my, ny);
-                        u_itoa(mb, nb);
-                        m[t++] = 'M';
-                        m[t++] = 'O';
-                        m[t++] = 'U';
-                        m[t++] = ' ';
-                        while (nx[q] && t < 29) m[t++] = nx[q++];
-                        m[t++] = ' ';
-                        q = 0;
-                        while (ny[q] && t < 29) m[t++] = ny[q++];
-                        m[t++] = ' ';
-                        q = 0;
-                        while (nb[q] && t < 29) m[t++] = nb[q++];
-                        m[t] = 0;
-                        u_ipc_enviar(vents[id].pid, m, t + 1);
-                        if (id != mou_id || mb != mou_bot || (mb & 1)) {
+                        avisa_mou(id);
+                        if (id != mou_id || mb != mou_bot || (mb & 1) ||
+                            giro_lote) {
                             mou_id = id;
                             mou_bot = mb;
                             marca_contenido(id);
@@ -1454,6 +1514,7 @@ int main(void) {
                         cursor_volcar(ox, oy);
                     }
                 }
+                giro_lote = 0;   /* consumido por el aviso de este lote */
             }
             mb_antes = mb;
         } else {

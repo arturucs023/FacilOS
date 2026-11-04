@@ -1101,7 +1101,7 @@ __attribute__((optimize("O0"))) static void sc_45(regs_t *r, int di)
             r->eax = (uint32_t)inb(0x71);
             return;
         }
-        if (op == 1 && r->ecx <= 2) {
+        if (op == 1 && r->ecx <= 3) {
             outb(0x70, 0x40);
             outb(0x71, (uint8_t)r->ecx);
             r->eax = 0;
@@ -1139,8 +1139,40 @@ __attribute__((optimize("O0"))) static void sc_46(regs_t *r, int di)
     }
 
 
+__attribute__((optimize("O0"))) static void sc_47(regs_t *r, int di)
+ {
+        /* video_modo(w, h): cambia la resolucion en vivo (ver gfx.h).
+           0 ok, -1 sin soporte, -2 sin memoria para componer. */
+        (void)di;
+        r->eax = (uint32_t)pantalla_modo((int)r->ebx, (int)r->ecx);
+        return;
+    }
+
+
+__attribute__((optimize("O0"))) static void sc_48(regs_t *r, int di)
+ {
+        /* video_info(buf) -> 0; buf: 4 x u32 [W, H, paso, prof]. */
+        uint32_t v[4];
+        int w = 0, h = 0, paso = 0, prof = 0;
+        r->eax = (uint32_t)-1;
+        if (di >= 0 && !ptr_ok(di, r->ebx, 16, 1)) return;
+        pantalla_dime(&w, &h, &paso, &prof);
+        v[0] = (uint32_t)w;
+        v[1] = (uint32_t)h;
+        v[2] = (uint32_t)paso;
+        v[3] = (uint32_t)prof;
+        if (di >= 0) {
+            if (pag_escribe_usr((unsigned)di, r->ebx, v, 16)) return;
+        } else {
+            for (int i = 0; i < 4; i++) ((uint32_t *)r->ebx)[i] = v[i];
+        }
+        r->eax = 0;
+        return;
+    }
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 47
+#define SC_N 49
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -1188,6 +1220,8 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [44] = sc_44,
     [45] = sc_45,
     [46] = sc_46,
+    [47] = sc_47,
+    [48] = sc_48,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1237,6 +1271,8 @@ static const char *const sc_nombre[SC_N] = {
     [44] = "reloj",
     [45] = "video_cmos",
     [46] = "teclado_distribucion",
+    [47] = "video_modo",
+    [48] = "video_info",
 };
 static uint32_t sc_count[SC_N];
 

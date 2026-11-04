@@ -555,8 +555,8 @@ int u_ipc_recibir(void *buf, int max, int *emisor) {
 int u_ipc_hay(void) {
     return sys_ipc_hay();
 }
-int u_raton(unsigned int *v3) {
-    return sys_raton(v3);
+int u_raton(unsigned int *v4) {
+    return sys_raton(v4);
 }
 int u_hay_raton(void) {
     return sys_hay_raton();
@@ -585,6 +585,12 @@ int u_renombrar(const char *ruta, const char *nuevo) {
 }
 int u_reloj(unsigned int *v6) {
     return sys_reloj(v6);
+}
+int u_video_modo(int w, int h) {
+    return sys_video_modo(w, h);
+}
+int u_video_info(unsigned int *v4) {
+    return sys_video_info(v4);
 }
 
 const char *u_estado_nombre(int e) {

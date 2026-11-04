@@ -140,7 +140,7 @@ int u_proc_stat(int pid, unsigned int *v5); /* v2.0: estado,ticks,cedes,pico,nma
 int u_ipc_enviar(int dst, const void *ptr, int len);
 int u_ipc_recibir(void *buf, int max, int *emisor);
 int u_ipc_hay(void);   /* mensajes pendientes (no bloquea) */
-int u_raton(unsigned int *v3);   /* [x,y,botones], bloquea hasta paquete */
+int u_raton(unsigned int *v4);   /* [x,y,botones,rueda], bloquea */
 int u_hay_raton(void);           /* paquetes pendientes (no bloquea) */
 const char *u_estado_nombre(int e);
 
@@ -156,5 +156,9 @@ int u_dir_hijo(int dir, int n, udir_t *dst);  /* tipo o -1; dir<0 = actual */
 int u_dir_crear(const char *ruta);            /* 0 ok, -1 mal/existe */
 int u_renombrar(const char *ruta, const char *nuevo); /* 0,-1,-2 choca */
 int u_reloj(unsigned int *v6);                /* [Y,M,D,h,m,s], 0 ok */
+
+/* ---- video en vivo (syscalls 47-48) ---- */
+int u_video_modo(int w, int h);   /* 0 ok, -1 sin soporte, -2 sin memoria */
+int u_video_info(unsigned int *v4);  /* [W,H,paso,prof], 0 ok */
 
 #endif

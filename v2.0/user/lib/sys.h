@@ -209,7 +209,8 @@ static inline int sys_ipc_hay(void) {
     return sys_llama(40, 0, 0, 0);
 }
 
-/* v2.0-etapa4: raton PS/2. leer bloquea hasta un paquete; v3=[x,y,bot]. */
+/* v2.0-etapa4: raton PS/2. leer bloquea hasta un paquete;
+   v4=[x,y,bot,rueda] (giro con signo desde el paquete anterior). */
 static inline int sys_raton(unsigned int *v3) {
     return sys_llama(38, (int)v3, 0, 0);
 }
@@ -239,7 +240,18 @@ static inline int sys_reloj(unsigned int *v6) {
     return sys_llama(44, (int)v6, 0, 0);
 }
 
-/* v2.1-p1: byte de video en CMOS (op 0=leer, 1=escribir 0-2). */
+/* v2.1-p1: byte de video en CMOS (op 0=leer, 1=escribir 0-3). */
+
+/* Cambio de resolucion en vivo (solo modos con soporte a 32bpp):
+   0 ok, -1 sin soporte, -2 sin memoria para componer. */
+static inline int sys_video_modo(int w, int h) {
+    return sys_llama(47, w, h, 0);
+}
+
+/* Dimensiones vigentes: [W, H, paso, prof] (0 si no hay grafico). */
+static inline int sys_video_info(unsigned int *v4) {
+    return sys_llama(48, (int)v4, 0, 0);
+}
 static inline int sys_video_cmos(int op, int val) {
     return sys_llama(45, op, val, 0);
 }

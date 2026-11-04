@@ -1,5 +1,17 @@
 #include "gfx.h"
 #include "bootinfo.h"
+#include "cpu.h"
+#include "pag.h"
+
+static int video_bga_hay(void);
+static void video_bga_modo(uint16_t w, uint16_t h);
+static void pantalla_arranque(void);
+
+/* Dorso: zona clasica de 2 MB o bloque alto de 9 MB (ver pag.h). */
+#define DORSO_BASE ((uint32_t)0xA00000)
+#define DORSO_BASE_TAM ((uint32_t)0x200000)
+static uint32_t dorso = 0;
+static uint32_t dorso_cap = 0;
 
 /* Consola grafica LFB 32bpp (XRGB). Fuente 8x16 copiada por el loader.
    Misma logica que video_glifo 16-bit: celdas opacas + cursor XOR. */
@@ -43,6 +55,12 @@ void gfx_init(void) {
     if (!lfb) return;
     GW = BI->w; GH = BI->h; GP = BI->pitch;
     if (GW < 640 || GH < 400 || !GP) { lfb = 0; return; }
+    pantalla_arranque();
+    /* Sin dorso grande no hay donde componer 1920x1080: mejor texto. */
+    if ((uint32_t)GP * (uint32_t)GH > 0x200000u && !pag_dorso_grande()) {
+        lfb = 0;
+        return;
+    }
     gcx = gcy = 0;
     cur_vis = 0;
     gfx_clear();
@@ -288,10 +306,131 @@ uint8_t cp_a_cp437(unsigned cp) {
     return (uint8_t)'?';
 }
 
+/* Adaptador de video programable por puertos (sin BIOS): indice 0x1CE,
+   datos 0x1CF. Registros: 0 identificacion (0xB0C0-0xB0C6), 1 anchura,
+   2 altura, 3 profundidad, 4 activacion (bit0 activo, bit6 marco
+   lineal, bit7 no limpiar), 6/7 tamano virtual, 8/9 desplazamiento. */
+#define PUERTO_VIDEO_IND 0x1CEu
+#define PUERTO_VIDEO_DAT 0x1CFu
+#define VIDEO_ID_MIN 0xB0C0u
+#define VIDEO_ID_MAX 0xB0C6u
+#define VIDEO_ACTIVO 0x01u
+#define VIDEO_LINEAL 0x40u
+
+/* Modos con soporte: los tres clasicos mas 1920x1080. */
+static const uint16_t modos_video[][2] = {
+    { 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1920, 1080 }
+};
+#define N_MODOS_VIDEO 4
+
+static void video_bga_indice(uint16_t r) { outw(PUERTO_VIDEO_IND, r); }
+
+static uint16_t video_bga_lee(uint16_t r) {
+    video_bga_indice(r);
+    return inw(PUERTO_VIDEO_DAT);
+}
+
+static void video_bga_pon(uint16_t r, uint16_t v) {
+    video_bga_indice(r);
+    outw(PUERTO_VIDEO_DAT, v);
+}
+
+static int video_bga_hay(void) {
+    uint16_t id = video_bga_lee(0);
+    return id >= VIDEO_ID_MIN && id <= VIDEO_ID_MAX;
+}
+
+static void video_bga_modo(uint16_t w, uint16_t h) {
+    video_bga_pon(4, 0);   /* apaga para reprogramar sin parpadeo */
+    video_bga_pon(1, w);
+    video_bga_pon(2, h);
+    video_bga_pon(6, w);
+    video_bga_pon(7, h);
+    video_bga_pon(8, 0);
+    video_bga_pon(9, 0);
+    video_bga_pon(3, 32);
+    video_bga_pon(4, VIDEO_ACTIVO | VIDEO_LINEAL);
+}
+
+/* Arranque con modo persistente 3 (1920x1080): el sector solo sabe
+   VESA, asi que el nucleo completa el cambio por puertos (el marco
+   lineal no se mueve). Si no hay adaptador, restablece el CMOS a
+   800x600 y sigue con el VESA que dejo el sector. */
+static void pantalla_arranque(void) {
+    uint8_t cv;
+    uint32_t fl;
+    if (!lfb) return;
+    if (GW == 1920 && GH == 1080) return;
+    outb(0x70, 0x40);
+    cv = inb(0x71);
+    if (cv != 3) return;
+    if (!video_bga_hay()) {
+        outb(0x70, 0x40);
+        outb(0x71, 0);
+        return;
+    }
+    fl = cpu_eflags();
+    cli();
+    video_bga_modo(1920, 1080);
+    GW = 1920;
+    GH = 1080;
+    GP = (uint16_t)(1920 * 4);
+    cpu_if_restaura(fl);
+}
+
+/* Cambia la resolucion en vivo. 0 ok, -1 modo sin soporte o sin
+   adaptador, -2 sin memoria para componer (solo 1920x1080). No toca
+   nada si falla: o cambia del todo o se queda como estaba. */
+int pantalla_modo(int w, int h) {
+    unsigned i;
+    uint32_t necesita, base, cap, fl;
+    if (!lfb) return -1;
+    for (i = 0; i < N_MODOS_VIDEO; i++)
+        if (modos_video[i][0] == w && modos_video[i][1] == h) break;
+    if (i >= N_MODOS_VIDEO) return -1;
+    if (w == GW && h == GH) return 0;
+    if (!video_bga_hay()) return -1;
+    necesita = (uint32_t)w * (uint32_t)h * 4u;
+    base = dorso ? dorso : DORSO_BASE;
+    cap = dorso ? dorso_cap : 0x200000u;
+    if (necesita > cap) {
+        if (necesita <= 0x200000u) {
+            base = DORSO_BASE;
+            cap = 0x200000u;
+        } else {
+            base = pag_dorso_grande();
+            if (!base) return -2;
+            cap = (uint32_t)DORSO_GRANDE_MARCOS * 4096u;
+        }
+    }
+    fl = cpu_eflags();
+    cli();
+    video_bga_modo((uint16_t)w, (uint16_t)h);
+    GW = (uint16_t)w;
+    GH = (uint16_t)h;
+    GP = (uint16_t)(w * 4);
+    dorso = base;
+    dorso_cap = cap;
+    {
+        volatile uint32_t *p = (volatile uint32_t *)dorso;
+        uint32_t n = necesita / 4u;
+        for (uint32_t k = 0; k < n; k++) p[k] = 0;
+    }
+    cpu_if_restaura(fl);
+    gfx_clear();   /* frente a negro y consola a (0,0) */
+    return 0;
+}
+
+/* Dimensiones vigentes para Anillo 3. */
+void pantalla_dime(int *w, int *h, int *paso, int *prof) {
+    if (w) *w = lfb ? GW : 0;
+    if (h) *h = lfb ? GH : 0;
+    if (paso) *paso = lfb ? GP : 0;
+    if (prof) *prof = lfb ? 32 : 0;
+}
+
 /* ---- primitivas v1.5: solo 32bpp XRGB, clipping con signo ---- */
 /* v1.6: destino de dibujo. La consola (glifo/putc/scroll) usa lfb fijo. */
-#define DORSO_BASE ((uint32_t)0xA00000)
-static uint32_t dorso = 0;
 static int gdest = 0;
 static uint32_t base_dib(void) {
     return (gdest && dorso) ? dorso : lfb;
@@ -300,10 +439,17 @@ static uint32_t base_dib(void) {
 void g_destino(int d) {
     if (!lfb) { gdest = 0; return; }
     if (d && !dorso) {
+        uint32_t necesita = (uint32_t)GP * (uint32_t)GH;
         dorso = DORSO_BASE;
-        uint32_t n = (uint32_t)GP * GH / 4;
+        dorso_cap = DORSO_BASE_TAM;
+        if (necesita > dorso_cap) {
+            /* Pantalla grande desde el arranque: usa el bloque alto. */
+            dorso = pag_dorso_grande();
+            if (!dorso) { gdest = 0; return; }
+            dorso_cap = (uint32_t)DORSO_GRANDE_MARCOS * 4096u;
+        }
         volatile uint32_t *p = (volatile uint32_t *)dorso;
-        for (uint32_t i = 0; i < n; i++) p[i] = 0;
+        for (uint32_t i = 0; i < necesita / 4u; i++) p[i] = 0;
     }
     gdest = d ? 1 : 0;
 }

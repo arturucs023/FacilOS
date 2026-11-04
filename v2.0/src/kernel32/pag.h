@@ -15,11 +15,13 @@
  *   0x480000-0x5FFFFF  pilas de anillo 0                    supervisor
  *   0x600000-0x63FFFF  pool de datos del FS en RAM          supervisor
  *   0x800000-0x9FFFFF  heap del kernel                      supervisor
- *   0xA00000-0xBFFFFF  dorso grafico                        supervisor
+ *   0xA00000-0xBFFFFF  dorso grafico (modos de hasta 2 MB)    supervisor
  *   0xC00000-0xC5A000  tablas de pagina (PDs y PTs)         supervisor
  *   0x40000000         ventana del kernel para tocar memoria de usuario
- *   LFB (VESA)         ventana de 4 MB                      supervisor
- *
+ *   LFB (VESA)         ventana de 12 MB                      supervisor
+ *   dorso grande       bloque alto de 9 MB detectado por E820
+ *                      (pantalla completa a 1920x1080x32)   supervisor
+  *
  * Cada proceso tiene su propio directorio y sus propias paginas de
  * usuario; el nucleo (0-0x1FFFFF, 0x480000-0x7FFFFF, 0x800000-0xCFFFFF y el
  * LFB) se comparte como supervisor, asi que un proceso de usuario no
@@ -43,6 +45,12 @@
 /* Topes del gestor de marcos. */
 #define PAG_RAM_MAX 0x4000000u    /* 64 MB administrables */
 #define PAG_RAM_MIN 0x400000u     /* 4 MB: por debajo, alternativa insegura */
+
+/* Dorso grande: 9 MB (cabe 1920x1080x32 = 8,3 MB). */
+#define DORSO_GRANDE_MARCOS 2304u
+
+/* Base fisica del dorso grande (0 si la RAM no da para 9 MB seguidos). */
+uint32_t pag_dorso_grande(void);
 
 void pag_inicia(void);
 int pag_hay_mapa(void);
