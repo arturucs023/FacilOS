@@ -175,4 +175,8 @@ int u_video_info(unsigned int *v4);  /* [W,H,paso,prof], 0 ok */
 /* ---- modificadores de teclado (syscall 49, v2.2-editor) ---- */
 int u_teclado_mod(void);  /* bit0 Shift, bit1 Ctrl, bit2 AltGr, bit3 Caps */
 
+/* ---- energia (syscalls 50-51, v2.2-f32 boton FacilOS) ---- */
+void u_apagar(void);     /* no retorna si hay ACPI */
+void u_reiniciar(void);  /* no retorna si el 8042 responde */
+
 #endif

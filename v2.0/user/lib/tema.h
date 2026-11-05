@@ -95,8 +95,8 @@ static const char *t_fondo_nombre(int i) {
  * 28 ed_deshacer, 29 ed_rehacer, 30 ed_cortar, 31 ed_copiar,
  * 32 ed_pegar, 33 ed_negrita, 34 ed_cursiva, 35 ed_subrayado,
  * 36 ed_color, 37 ed_buscar, 38 ed_reemplazar, 39 ed_todo,
- * 40 ed_cerrar_doc. */
-static const char *const T_ICONOS[41][16] = {
+ * 40 ed_cerrar_doc, 41 apagar, 42 reiniciar. */
+static const char *const T_ICONOS[43][16] = {
     { /* 0 F32: roseta azul con F blanca */
       ".....KKKKKK.....",
       "...KKBBBBBBKK...",
@@ -792,6 +792,40 @@ static const char *const T_ICONOS[41][16] = {
       "...KKKKKKKK.....",
       "................",
       "................",
+      "................",
+      "................" },
+    { /* 41 apagar: simbolo de encendido blanco sobre rojo */
+      "................",
+      "..KKKKKKKKKKKK..",
+      "..KRRRRRRRRRRK..",
+      "..KRRRRWWRRRRK..",
+      "..KRRRRWWRRRRK..",
+      "..KRRRRWWRRRRK..",
+      "..KRRWWRRWWRRK..",
+      "..KWRRRRRRRRWK..",
+      "..KWRRRRRRRRWK..",
+      "..KWRRRRRRRRWK..",
+      "..KWRRRRRRRRWK..",
+      "..KRRWWWWWWRRK..",
+      "..KRRRRRRRRRRK..",
+      "..KKKKKKKKKKKK..",
+      "................",
+      "................" },
+    { /* 42 reiniciar: flecha circular blanca sobre azul */
+      "................",
+      "..KKKKKKKKKKKK..",
+      "..KBBBBBBBBBBK..",
+      "..KBBBBBBBWWBK..",
+      "..KBBBBBBWWWWK..",
+      "..KBBBBBBBWWBK..",
+      "..KBBWWBBWWBBK..",
+      "..KWBBBBBBBBWK..",
+      "..KWBBBBBBBBWK..",
+      "..KWBBBBBBBBWK..",
+      "..KWBBBBBBBBWK..",
+      "..KBBWWWWWWBBK..",
+      "..KBBBBBBBBBBK..",
+      "..KKKKKKKKKKKK..",
       "................",
       "................" },
 };

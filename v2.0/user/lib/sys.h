@@ -267,6 +267,15 @@ static inline int sys_teclado_mod(void) {
     return sys_llama(49, 0, 0, 0);
 }
 
+/* v2.2-f32: apagar (50) y reiniciar (51) desde el boton FacilOS.
+   No retornan si tienen efecto; flush de disco en el nucleo. */
+static inline int sys_apagar(void) {
+    return sys_llama(50, 0, 0, 0);
+}
+static inline int sys_reiniciar(void) {
+    return sys_llama(51, 0, 0, 0);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2

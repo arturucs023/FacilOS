@@ -1191,8 +1191,40 @@ __attribute__((optimize("O0"))) static void sc_49(regs_t *r, int di)
 }
 
 
+__attribute__((optimize("O0"))) static void sc_50(regs_t *r, int di)
+ {
+        /* v2.2-f32: apagar (boton FacilOS). Flush de disco y poweroff
+           ACPI de QEMU (0x604/0xB004); sin ACPI queda halt. */
+        extern int blk_flush(void);
+        (void)di;
+        cons_puts("apagando...\n");
+        blk_flush();
+        outw(0x604, 0x2000);
+        outw(0xB004, 0x2000);
+        r->eax = 0;
+        for (;;) { cli(); hlt(); }
+}
+
+
+__attribute__((optimize("O0"))) static void sc_51(regs_t *r, int di)
+ {
+        /* v2.2-f32: reiniciar (boton FacilOS). Flush y pulso al
+           controlador de teclado (0x64:FE); alternativa 0x92. */
+        extern int blk_flush(void);
+        unsigned char b;
+        (void)di;
+        cons_puts("reiniciando...\n");
+        blk_flush();
+        outb(0x64, 0xFE);
+        b = inb(0x92);
+        outb(0x92, (uint8_t)(b | 1));
+        r->eax = 0;
+        for (;;) { cli(); hlt(); }
+}
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 50
+#define SC_N 52
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -1243,6 +1275,8 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [47] = sc_47,
     [48] = sc_48,
     [49] = sc_49,
+    [50] = sc_50,
+    [51] = sc_51,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1295,6 +1329,8 @@ static const char *const sc_nombre[SC_N] = {
     [47] = "video_modo",
     [48] = "video_info",
     [49] = "teclado_mod",
+    [50] = "apagar",
+    [51] = "reiniciar",
 };
 static uint32_t sc_count[SC_N];
 

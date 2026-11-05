@@ -20,7 +20,7 @@ static int pan_w = 800, pan_h = 600, area_h = 570;
 #define PANT_H (pan_h)
 #define AREA_H (area_h)
 #define CROMO_H 20
-#define NMENU 5
+#define NMENU 7
 
 typedef struct {
     int usado;
@@ -123,7 +123,7 @@ static void fondo(void) {
 /* Icono 16x16 propio en (x,y); '.' y letras ajenas = transparente. */
 static void dibuja_icono(int idx, int x, int y) {
     int r, c;
-    if (idx < 0 || idx > 11) return;
+    if (idx < 0 || idx > 42) return;
     for (r = 0; r < 16; r++) {
         const char *fila = T_ICONOS[idx][r];
         for (c = 0; c < 16; c++) {
@@ -272,7 +272,9 @@ static const char *menu_app(int i) {
     if (i == 1) return "explorador";
     if (i == 2) return "sysinfo";
     if (i == 3) return "editor";
-    return "configura";
+    if (i == 4) return "configura";
+    if (i == 5) return "apagar";
+    return "reiniciar";
 }
 
 static void barra(void) {
@@ -325,8 +327,10 @@ static void dibuja_menu(void) {
     for (i = 0; i < NMENU; i++) {
         int yy = y0 + CROMO_H + i * 26;
         /* menu_app: 0 terminal, 1 explorador, 2 sysinfo, 3 editor,
-           4 configura -> iconos 1, 2, 4, 3, 5. */
-        int ic = (i == 2) ? 4 : (i == 3) ? 3 : i + 1;
+           4 configura -> iconos 1, 2, 4, 3, 5; 5 apagar -> 41,
+           6 reiniciar -> 42. */
+        int ic = (i == 2) ? 4 : (i == 3) ? 3 : (i == 5) ? 41 :
+                 (i == 6) ? 42 : i + 1;
         if (i == menu_sel)
             u_rectangulo(2, yy, 220, 26, T_MENU_SEL);
         dibuja_icono(ic, 8, yy + 5);
@@ -844,6 +848,18 @@ static void carga_fondo(void) {
 static void lanza(const char *app) {
     char arg[16];
     int pid;
+    /* v2.2-f32: apagar/reiniciar son acciones del sistema, no apps:
+       syscalls 50/51 (con flush de disco en el nucleo). */
+    if (app && app[0] == 'a' && app[1] == 'p') {
+        u_print("apagando\n");
+        u_apagar();
+        return;
+    }
+    if (app && app[0] == 'r' && app[1] == 'e') {
+        u_print("reiniciando\n");
+        u_reiniciar();
+        return;
+    }
     u_itoa(u_mi_pid(), arg);
     pid = u_crear(app, arg);
     u_print("lanza ");

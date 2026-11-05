@@ -596,6 +596,12 @@ int u_teclado_mod(void) {
     int r = sys_teclado_mod();
     return r < 0 ? 0 : r;
 }
+void u_apagar(void) {
+    sys_apagar();
+}
+void u_reiniciar(void) {
+    sys_reiniciar();
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {
