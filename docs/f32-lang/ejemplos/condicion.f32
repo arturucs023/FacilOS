@@ -1,0 +1,19 @@
+programa
+
+    variable edad = 19
+
+    si edad >= 18
+
+        escribir "Mayor de edad"
+
+    sinosi edad >= 16
+
+        escribir "Edad intermedia"
+
+    sino
+
+        escribir "Menor de edad"
+
+    finsi
+
+fin

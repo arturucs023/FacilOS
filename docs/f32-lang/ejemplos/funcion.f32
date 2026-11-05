@@ -1,0 +1,20 @@
+programa
+
+    funcion saludar
+
+        escribir "Hola desde F32 Lang"
+
+    finfuncion
+
+    funcion suma(a, b)
+
+        retornar a + b
+
+    finfuncion
+
+    saludar()
+
+    variable r = suma(2, 3)
+    escribir r
+
+fin

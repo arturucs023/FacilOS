@@ -1,0 +1,6 @@
+programa
+
+    escribir "Hola, mundo!"
+    escribir "Bienvenido a FacilOS32"
+
+fin

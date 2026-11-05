@@ -1,0 +1,14 @@
+programa
+
+    variable nombre = "Artur"
+    variable edad = 19
+    variable numero = 25
+
+    escribir nombre
+    escribir edad
+    escribir numero
+
+    escribir "Suma:"
+    escribir numero + edad
+
+fin

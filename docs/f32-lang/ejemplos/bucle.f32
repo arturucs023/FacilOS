@@ -1,0 +1,12 @@
+programa
+
+    variable contador = 0
+
+    mientras contador < 5
+
+        escribir contador
+        contador = contador + 1
+
+    finmientras
+
+fin
