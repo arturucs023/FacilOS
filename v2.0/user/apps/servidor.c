@@ -120,6 +120,58 @@ static void fondo(void) {
     }
 }
 
+/* Rectangulo de fondo recortado a (cx,cy,cw,ch): mismos pixeles que
+   fondo() en esa zona (bandas y adornos son deterministicos).
+   Para el arrastre: repara solo la zona tocada en vez de borrar toda
+   la pantalla y repintar todas las ventanas en cada tick de raton
+   (ese bucle global + ACKs de 100 ms era el parpadeo al solapar). */
+static void frect(int x, int y, int w, int h, int col,
+                  int cx, int cy, int cw, int ch) {
+    int ax = x, ay = y, bx = x + w, by = y + h;
+    int qx = cx, qy = cy, qx2 = cx + cw, qy2 = cy + ch;
+    if (ax < qx) ax = qx;
+    if (ay < qy) ay = qy;
+    if (bx > qx2) bx = qx2;
+    if (by > qy2) by = qy2;
+    if (bx > ax && by > ay)
+        u_rectangulo(ax, ay, bx - ax, by - ay, col);
+}
+
+static void fondo_clip(int cx, int cy, int cw, int ch) {
+    unsigned char r0 = FONDO_RT[fondo_idx], g0 = FONDO_GT[fondo_idx];
+    unsigned char b0 = FONDO_BT[fondo_idx];
+    unsigned char r1 = r0 > 15 ? (unsigned char)(r0 - 15) : 0;
+    unsigned char g1 = g0 > 22 ? (unsigned char)(g0 - 22) : 0;
+    unsigned char b1 = b0 > 34 ? (unsigned char)(b0 - 34) : 0;
+    int i, nb = 16;
+    int bh = AREA_H / nb;
+    int banda;
+    if (cw <= 0 || ch <= 0) return;
+    if (cx < 0) { cw += cx; cx = 0; }
+    if (cy < 0) { ch += cy; cy = 0; }
+    if (cx + cw > PANT_W) cw = PANT_W - cx;
+    if (cy + ch > AREA_H) ch = AREA_H - cy;
+    if (cw <= 0 || ch <= 0) return;
+    u_destino(1);
+    for (i = 0; i < nb; i++) {
+        int y = i * bh;
+        int h = (i == nb - 1) ? (AREA_H - y) : bh;
+        int rr = r0 + (r1 - r0) * i / (nb - 1);
+        int gg = g0 + (g1 - g0) * i / (nb - 1);
+        int bb = b0 + (b1 - b0) * i / (nb - 1);
+        frect(0, y, PANT_W, h, RGB24(rr, gg, bb), cx, cy, cw, ch);
+    }
+    banda = RGB24(r0 + 9 > 255 ? 255 : r0 + 9,
+                  g0 + 12 > 255 ? 255 : g0 + 12,
+                  b0 + 20 > 255 ? 255 : b0 + 20);
+    frect(0, 120, PANT_W, 46, banda, cx, cy, cw, ch);
+    frect(0, 166, PANT_W, 2, T_FONDO_LINEA, cx, cy, cw, ch);
+    frect(560, 300, 140, 90, banda, cx, cy, cw, ch);
+    frect(560, 300, 140, 2, T_FONDO_LINEA, cx, cy, cw, ch);
+    frect(120, 380, 220, 60, banda, cx, cy, cw, ch);
+    frect(120, 438, 220, 2, T_FONDO_LINEA, cx, cy, cw, ch);
+}
+
 /* Icono 16x16 propio en (x,y); '.' y letras ajenas = transparente. */
 static void dibuja_icono(int idx, int x, int y) {
     int r, c;
@@ -789,6 +841,27 @@ static void marca_contenido(int id) {
     if (id >= 0 && id < NVENT && vents[id].usado) win_dirty[id] = 1;
 }
 
+/* Rectangulos que se tocan (bordes excluidos igual que el pintado). */
+static int toca(int ax, int ay, int aw, int ah,
+                int bx, int by, int bw, int bh) {
+    return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
+}
+
+/* Marca contenido+cromo de las ventanas que pisan (x,y,w,h):
+   su franja quedo bajo el fondo recien reparado o bajo otra ventana
+   repintada y deben redibujarse en este pase (orden Z). */
+static void marca_toca(int x, int y, int w, int h) {
+    int k;
+    for (k = 0; k < NVENT; k++) {
+        ventana_t *a = &vents[k];
+        if (!a->usado || a->minimizada || !a->visible) continue;
+        if (toca(x, y, w, h, a->x, a->y, a->w, a->h)) {
+            win_dirty[k] = 1;
+            win_cromo[k] = 1;
+        }
+    }
+}
+
 /* TICK s del pid de: refresco cada s segundos (0 cancela). */
 static void atiende_tick(int de, char *b, int r) {
     int k = 5, s = 0, j;
@@ -1396,12 +1469,14 @@ int main(void) {
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
                 /* ACK tardio: reanuda + repinta (el contenido llego tarde
-                   y nadie lo redibuja si no). */
+                   y nadie lo redibuja si no). Con cromo incluido: si el
+                   ACK se perdio un frame con geometria nueva, solo
+                   contenido dejaba el marco rancio para siempre. */
                 int k;
                 for (k = 0; k < NVENT; k++) {
                     if (vents[k].usado && vents[k].pid == de) {
                         vents[k].ack_pend = 0;
-                        marca_contenido(k);
+                        marca_sucia(k);
                     }
                 }
             }
@@ -1488,6 +1563,7 @@ int main(void) {
             if (arr_id >= 0 && (mb & 1)) {
                 ventana_t *v = &vents[arr_id];
                 if (v->usado) {
+                    int ox = v->x, oy = v->y, ow = v->w, oh = v->h;
                     if (arr_modo == 0) {
                         v->x = mx - arr_dx;
                         v->y = my - arr_dy;
@@ -1507,8 +1583,29 @@ int main(void) {
                         if (v->y + v->h > AREA_H)
                             v->h = AREA_H - v->y;
                     }
-                    bg_dirty = 1;
-                    marca_sucia(arr_id);
+                    if (v->x != ox || v->y != oy ||
+                        v->w != ow || v->h != oh) {
+                        /* Solo la union viejo/nuevo (+sombra): fondo
+                           recortado y repintan las que la pisan. Sin
+                           el bg_dirty global, que borraba todas las
+                           ventanas y las repintaba una a una con ACK
+                           (carrera que pegaba y parpadeaba al solapar). */
+                        int ux = ox < v->x ? ox : v->x;
+                        int uy = oy < v->y ? oy : v->y;
+                        int ex = ox + ow > v->x + v->w ?
+                               ox + ow : v->x + v->w;
+                        int ey = oy + oh > v->y + v->h ?
+                               oy + oh : v->y + v->h;
+                        int uw = ex - ux + 4, uh = ey - uy + 4;
+                        ux -= 4;
+                        uy -= 4;
+                        if (ux < 0) { uw += ux; ux = 0; }
+                        if (uy < 0) { uh += uy; uy = 0; }
+                        if (ux + uw > PANT_W) uw = PANT_W - ux;
+                        if (uy + uh > AREA_H) uh = AREA_H - uy;
+                        fondo_clip(ux, uy, uw, uh);
+                        marca_toca(ux, uy, uw, uh);
+                    }
                 }
                 frame();
             } else {
