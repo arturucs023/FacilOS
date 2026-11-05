@@ -44,4 +44,4 @@ Con parámetros y retorno:
    (error F32-085). Sin cierres ni funciones como valores.
 7. Las funciones se recolectan antes de ejecutar el cuerpo
    principal: el orden de declaración no importa.
-8. Redefinir una función = error F32-086.
+8. Redefinir una función = error F32-082.

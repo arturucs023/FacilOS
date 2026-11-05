@@ -260,6 +260,7 @@ _apps3 = [
     ("explorador", ["explorador.c"], True, True),
     ("sysinfo", ["sysinfo.c"], True, True),
     ("editor", ["editor.c"], True, True),
+    ("f32", ["f32.c"], True),
     ("configura", ["configura.c"], True, True),
     ("gbye", ["gbye.c"], True),
     ("planificador32", ["planificador32.c"], True),
