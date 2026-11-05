@@ -998,6 +998,11 @@ static void pulsa_boton(int b) {
     else if (b == 3) {
         recarga();
         u_strcpy(msg, "actualizado");
+    } else if (b == 11) {
+        /* Propiedades alterna: si ya se ve, la cierra (antes el
+           retorno de viendo_prop de abajo la dejaba clavada y el
+           raton no tenia forma de quitarla). */
+        if (sel >= 0 && sel < nn) viendo_prop = !viendo_prop;
     } else if (viendo_prop) {
         return;
     } else if (b == 4) {
@@ -1036,8 +1041,6 @@ static void pulsa_boton(int b) {
         pega();
     } else if (b == 10) {
         borra_sel();
-    } else if (b == 11) {
-        if (sel >= 0 && sel < nn) viendo_prop = 1;
     }
 }
 
@@ -1066,7 +1069,9 @@ int main(void) {
                 else if (k == 27) pidiendo = 0;
                 else ug_campo_tecla(pbuf, NNOM, &ppos, k);
             } else if (viendo_prop) {
-                if (k == 27 || k == 13 || k == 8) viendo_prop = 0;
+                if (k == 27 || k == 13 || k == 8 || k == 'p' ||
+                    k == 'P')
+                    viendo_prop = 0;
             } else if (k == TEC_ARRIBA_U) {
                 if (sel > 0) {
                     sel--;
@@ -1113,7 +1118,7 @@ int main(void) {
             } else if (k == 'x' || k == 'X') {
                 borra_sel();
             } else if (k == 'p' || k == 'P') {
-                if (sel >= 0 && sel < nn) viendo_prop = 1;
+                if (sel >= 0 && sel < nn) viendo_prop = !viendo_prop;
             } else if (k == 'o' || k == 'O') {
                 orden = orden ? 0 : 1;
                 recarga();
@@ -1132,6 +1137,16 @@ int main(void) {
             raton_ly = ly;
             if (en_boton_barra(lx, ly, &b) && ug_clic(antes, ev.rbot)) {
                 pulsa_boton(b);
+            } else if (!pidiendo && viendo_prop) {
+                /* Clic fuera del panel de propiedades lo cierra
+                   (el panel no tiene [X]; antes solo ESC/Enter
+                   por teclado lo quitaban). */
+                int yw = (v.h - UG_CHROME) / 2 - 44;
+                if (yw < 60) yw = 60;
+                if (ug_clic(antes, ev.rbot) &&
+                    !(lx >= 60 && lx < v.w - 60 &&
+                      ly >= yw && ly < yw + 92))
+                    viendo_prop = 0;
             } else if (!pidiendo && !viendo_prop) {
                 /* cabeceras: ordena */
                 int yc = TB_H + 2 + DIR_ALT + 4;
