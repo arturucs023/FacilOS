@@ -215,17 +215,27 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
         assert len(plano) + 20 <= 512, nom + " no cabe en 512"
         assert bss_tam <= 0x10000, nom + " bss enorme"
     else:
-        assert len(plano) + 20 <= 65535, nom + " no cabe en 64K"
+        # v2.2-editor: el editor avanzado (multidoc, undo, buscar, iconos)
+        # supera los 64K clasicos; el nucleo admite plano+bss<=768K
+        # (ver kern_crea_proceso), asi que el tope real es 128K plano.
+        assert len(plano) + 20 <= 131071, nom + " no cabe en 128K"
         assert bss_tam <= 0x40000, nom + " bss enorme"
         assert len(plano) + bss_tam <= 0xC0000, nom + " +bss > 768K"
     cab = b"F32X" + _st.pack("<IIII", ver, 0, len(plano) + 20, bss_tam)
     (BLD / nom).write_bytes(cab + plano)
     print(f"OK programa {nom} v{ver} ({len(plano) + 20} bytes, bss {bss_tam})")
     if al_disco:
-        base = (str(BASE / "build" / "FacilOS-v1.3-datos.img") if primero
-                else str(_datos_img))
-        run([sys.executable, str(BASE / "tools" / "inyecta.py"),
-             base, str(_datos_img), nom, str(BLD / nom)])
+        # v2.2-editor: los binarios >64K (editor avanzado) no caben como
+        # archivo del FS (tam uint16). Siguen disponibles en el catalogo
+        # de la ISO; aqui se omiten con aviso en vez de abortar todo.
+        if len(cab + plano) > 65535:
+            print(f"AVISO {nom}: {len(cab + plano)} B, no cabe en datos.img "
+                  f"(sigue en la ISO)")
+        else:
+            base = (str(BASE / "build" / "FacilOS-v1.3-datos.img") if primero
+                    else str(_datos_img))
+            run([sys.executable, str(BASE / "tools" / "inyecta.py"),
+                 base, str(_datos_img), nom, str(BLD / nom)])
 
 
 _programas = ["hola", "editor32", "visor32", "paint32", "benchmark32"]

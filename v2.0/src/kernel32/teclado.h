@@ -16,6 +16,15 @@
 #define TEC_FIN    0x108
 #define TEC_REPAG  0x109
 #define TEC_AVPA   0x10A
+/* v2.2-editor: modificadores codificados en la tecla por el driver
+   (sin carreras de consulta): bit 0x200 May, 0x400 Ctrl sobre el
+   codigo base (p.ej. May+Arriba = 0x301, Ctrl+Arriba = 0x501).
+   Ctrl+letra = 0xE100+idx (0xE200+idx con May); Ctrl+Retroceso = 0x7F.
+   La syscall 49 queda como lectura complementaria. */
+#define TEC_MAY  0x200
+#define TEC_CTRL 0x400
+#define TEC_CTRL_A 0xE100  /* +0..25: Ctrl+A..Z (minuscula plegada) */
+#define TEC_CTRL_MAYA 0xE200
 
 /* Lee una tecla (bloquea). Requiere IRQ1 con teclado_es() registrado. */
 int kbd_tecla(void);
@@ -30,5 +39,7 @@ int teclado_init(void);
 /* v2.2: distribucion 0=US, 1=ES, 2=CA (persiste en cabecera). */
 int distribucion_actual(void);
 void distribucion_pon(int d);
+/* v2.2-editor: modificadores (bit0 Shift, bit1 Ctrl, bit2 AltGr, bit3 Caps). */
+int teclado_mod(void);
 
 #endif

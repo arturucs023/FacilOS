@@ -1946,6 +1946,14 @@ int main(void) {
         if (t == UG_EV_SALIR) return 0;
         if (t == UG_EV_TECLA) {
             int k = ev.tecla;
+            /* v2.2-editor: teclas con modificador del driver:
+               ctrl+letra y ctrl+retroceso se ignoran aqui (la
+               terminal no usa atajos); may+especial = base. */
+            if ((k >= 0xE100 && k <= 0xE219) || k == 0x7F) continue;
+            if ((k >= 0x301 && k <= 0x30A) ||
+                (k >= 0x501 && k <= 0x50A) ||
+                (k >= 0x701 && k <= 0x70A))
+                k &= 0x1FF;
             if (pop_abierto) {
                 if (k == TEC_ARRIBA_U) {
                     if (pop_sel > 0) pop_sel--;
@@ -2048,8 +2056,11 @@ int main(void) {
                 ent[0] = 0;
                 nent = 0;
                 pos = 0;
-            } else if (k >= 32 && !(k >= 0x101 && k <= 0x10A) &&
-                       !(k >= 0xE000 && k <= 0xE004)) {
+            } else if (k >= 32 && k != 0x7F &&
+                       !(k >= 0x101 && k <= 0x10A) &&
+                       !(k >= 0xE000 && k <= 0xE004) &&
+                       !(k >= 0xE100 && k <= 0xE219) &&
+                       !(k >= 0x300 && k <= 0x7FF)) {
                 inserta_cp((unsigned)k);
             }
         } else if (t == UG_EV_RATON) {

@@ -592,6 +592,10 @@ int u_video_modo(int w, int h) {
 int u_video_info(unsigned int *v4) {
     return sys_video_info(v4);
 }
+int u_teclado_mod(void) {
+    int r = sys_teclado_mod();
+    return r < 0 ? 0 : r;
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {

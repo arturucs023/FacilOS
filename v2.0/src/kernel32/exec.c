@@ -1178,8 +1178,19 @@ __attribute__((optimize("O0"))) static void sc_48(regs_t *r, int di)
     }
 
 
+__attribute__((optimize("O0"))) static void sc_49(regs_t *r, int di)
+ {
+        /* v2.2-editor: modificadores de teclado (bit0 Shift, bit1 Ctrl,
+           bit2 AltGr, bit3 BloqMay). Solo lectura; ABI 0-48 intacta. */
+        extern int teclado_mod(void);
+        (void)di;
+        r->eax = (uint32_t)teclado_mod();
+        return;
+}
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 49
+#define SC_N 50
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -1229,6 +1240,7 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [46] = sc_46,
     [47] = sc_47,
     [48] = sc_48,
+    [49] = sc_49,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1280,6 +1292,7 @@ static const char *const sc_nombre[SC_N] = {
     [46] = "teclado_distribucion",
     [47] = "video_modo",
     [48] = "video_info",
+    [49] = "teclado_mod",
 };
 static uint32_t sc_count[SC_N];
 

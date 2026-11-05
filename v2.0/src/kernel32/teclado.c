@@ -70,6 +70,7 @@ static volatile int tk_cola[TK_N];
 static volatile int tk_ini = 0, tk_fin = 0;
 static int tk_ext = 0;
 static int sh_izq = 0, sh_der = 0, bloqmay = 0, altgr = 0, numlock = 1;
+static int ctrl_izq = 0, ctrl_der = 0;
 static int muerto = 0;
 
 static void tk_mete(int v) {
@@ -77,6 +78,15 @@ static void tk_mete(int v) {
     if (s == tk_ini) return;
     tk_cola[tk_fin] = v;
     tk_fin = s;
+}
+
+/* Especial con modificadores del momento (0x200 May, 0x400 Ctrl):
+   la app lo decodifica sin carreras (ver TEC_MAY/TEC_CTRL). */
+static void tk_mete_mod(int base) {
+    int m = 0;
+    if (sh_izq || sh_der) m |= 0x200;
+    if (ctrl_izq || ctrl_der) m |= 0x400;
+    tk_mete(base | m);
 }
 
 void teclado_pon(int es) { distribucion_pon(es ? 1 : 0); }
@@ -87,9 +97,22 @@ int teclado_init(void) {
     tk_ini = tk_fin = 0;
     tk_ext = 0;
     sh_izq = sh_der = bloqmay = altgr = 0;
+    ctrl_izq = ctrl_der = 0;
     numlock = 1;
     muerto = 0;
     return 0;
+}
+
+/* v2.2-editor: modificadores para Ring3 (syscall 49). bit0 Shift,
+   bit1 Ctrl, bit2 AltGr, bit3 BloqMay. Sin esto no hay Shift+flechas
+   ni Ctrl+A/C/X/V/Z/Y (el driver descarta Ctrl y no lo exponia). */
+int teclado_mod(void) {
+    int m = 0;
+    if (sh_izq || sh_der) m |= 1;
+    if (ctrl_izq || ctrl_der) m |= 2;
+    if (altgr) m |= 4;
+    if (bloqmay) m |= 8;
+    return m;
 }
 
 static int mu_literal(int m) {
@@ -152,6 +175,22 @@ static int aplica_may(int ch, int may) {
 }
 
 static void emite(int ch) {
+    /* v2.2-editor: Ctrl+letra se codifica en la propia tecla
+       (0xE100+idx, 0xE200+idx con May) para que Ring3 no dependa
+       de consultar el modificador tras el evento (carrera en QEMU:
+       el Ctrl ya se solto al procesar KEY y se insertaba la letra).
+       Sin esto no hay atajos Ctrl fiables. */
+    if (ctrl_izq || ctrl_der) {
+        int idx = -1;
+        if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
+        else if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
+        if (idx >= 0) {
+            muerto = 0;
+            tk_mete((sh_izq || sh_der) ? (0xE200 + idx)
+                                      : (0xE100 + idx));
+            return;
+        }
+    }
     if (muerto) {
         int m = muerto;
         muerto = 0;
@@ -219,22 +258,24 @@ void teclado_irq(void) {
     if (tk_ext) {
         tk_ext = 0;
         if (c == 0x38) { altgr = !suelto; return; }
+        if (c == 0x1D) { ctrl_der = !suelto; return; }
         if (suelto) return;
         muerto = 0;
-        if (c == 0x48) tk_mete(TEC_ARRIBA);
-        else if (c == 0x50) tk_mete(TEC_ABAJO);
-        else if (c == 0x4B) tk_mete(TEC_IZQ);
-        else if (c == 0x4D) tk_mete(TEC_DER);
-        else if (c == 0x47) tk_mete(TEC_INICIO);
-        else if (c == 0x4F) tk_mete(TEC_FIN);
-        else if (c == 0x49) tk_mete(TEC_REPAG);
-        else if (c == 0x51) tk_mete(TEC_AVPA);
+        if (c == 0x48) tk_mete_mod(TEC_ARRIBA);
+        else if (c == 0x50) tk_mete_mod(TEC_ABAJO);
+        else if (c == 0x4B) tk_mete_mod(TEC_IZQ);
+        else if (c == 0x4D) tk_mete_mod(TEC_DER);
+        else if (c == 0x47) tk_mete_mod(TEC_INICIO);
+        else if (c == 0x4F) tk_mete_mod(TEC_FIN);
+        else if (c == 0x49) tk_mete_mod(TEC_REPAG);
+        else if (c == 0x51) tk_mete_mod(TEC_AVPA);
         /* v2.0-etapa5: teclas Windows/menu (E0 5B/5D) para el escritorio. */
         else if (c == 0x5B || c == 0x5D) tk_mete(TEC_MENU);
         return;
     }
     if (c == 0x2A) { sh_izq = !suelto; return; }
     if (c == 0x36) { sh_der = !suelto; return; }
+    if (c == 0x1D) { ctrl_izq = !suelto; return; }   /* Ctrl izq: solo mod */
     if (c == 0x3A) { if (!suelto) bloqmay = !bloqmay; return; }
     if (c == 0x45) { if (!suelto) numlock = !numlock; return; }
     if (c == 0x38 && !(sh_izq || sh_der)) {
@@ -243,16 +284,30 @@ void teclado_irq(void) {
     }
     if (suelto) return;
     if (c == 0x1C) { muerto = 0; tk_mete(13); return; }
-    if (c == 0x0E) { muerto = 0; tk_mete(8); return; }
+    if (c == 0x0E) {
+        muerto = 0;
+        /* Ctrl+Retroceso = 0x7F (borrado de palabra en el editor) */
+        tk_mete((ctrl_izq || ctrl_der) ? 0x7F : 8);
+        return;
+    }
     if (c == 0x01) { muerto = 0; tk_mete(27); return; }
-    if (c == 0x0F) { muerto = 0; tk_mete(9); return; }
+    if (c == 0x0F) {
+        muerto = 0;
+        /* Ctrl+Tab = cambia de pestana (0xE120, 0xE220 con May):
+           el Tab normal (9) no lleva ctrl codificado. */
+        if (ctrl_izq || ctrl_der)
+            tk_mete((sh_izq || sh_der) ? 0xE220 : 0xE120);
+        else
+            tk_mete(9);
+        return;
+    }
     /* v2.0-etapa5: F1 abre el menu (en QEMU es la via testeable; en HW
        real tambien vale la tecla Menu E0 5B/5D). */
     if (c == 0x3B) { muerto = 0; tk_mete(TEC_MENU); return; }
     /* Supr y numerico */
     if (c == 0x53) {
         if (numlock) { muerto = 0; emite('.'); return; }
-        tk_mete(TEC_SUPR);
+        tk_mete_mod(TEC_SUPR);
         return;
     }
     if (numlock) {
@@ -273,14 +328,14 @@ void teclado_irq(void) {
         if (c == 0x4A) { muerto = 0; emite('-'); return; }
         if (c == 0x4E) { muerto = 0; emite('+'); return; }
     } else {
-        if (c == 0x47) { tk_mete(TEC_INICIO); return; }
-        if (c == 0x48) { tk_mete(TEC_ARRIBA); return; }
-        if (c == 0x49) { tk_mete(TEC_REPAG); return; }
-        if (c == 0x4B) { tk_mete(TEC_IZQ); return; }
-        if (c == 0x4D) { tk_mete(TEC_DER); return; }
-        if (c == 0x4F) { tk_mete(TEC_FIN); return; }
-        if (c == 0x50) { tk_mete(TEC_ABAJO); return; }
-        if (c == 0x51) { tk_mete(TEC_AVPA); return; }
+        if (c == 0x47) { tk_mete_mod(TEC_INICIO); return; }
+        if (c == 0x48) { tk_mete_mod(TEC_ARRIBA); return; }
+        if (c == 0x49) { tk_mete_mod(TEC_REPAG); return; }
+        if (c == 0x4B) { tk_mete_mod(TEC_IZQ); return; }
+        if (c == 0x4D) { tk_mete_mod(TEC_DER); return; }
+        if (c == 0x4F) { tk_mete_mod(TEC_FIN); return; }
+        if (c == 0x50) { tk_mete_mod(TEC_ABAJO); return; }
+        if (c == 0x51) { tk_mete_mod(TEC_AVPA); return; }
         if (c == 0x4A) { muerto = 0; emite('-'); return; }
         if (c == 0x4E) { muerto = 0; emite('+'); return; }
     }

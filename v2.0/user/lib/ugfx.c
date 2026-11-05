@@ -427,6 +427,16 @@ void ug_campo(ug_win_t *v, int x, int y, int w, const char *buf, int pos,
 
 int ug_campo_tecla(char *buf, int max, int *pos, int tecla) {
     int n = u_strlen(buf);
+    /* v2.2-editor: el driver codifica modificadores en la tecla.
+       En campos de una linea se ignoran los de control y May mueve
+       igual (sin seleccion por teclado aqui). */
+    if ((tecla >= 0xE100 && tecla <= 0xE219) || tecla == 0x7F) return 0;
+    if ((tecla & ~0x1FF) == 0x200 && (tecla & 0x1FF) >= 0x101 &&
+        (tecla & 0x1FF) <= 0x10A)
+        tecla &= 0x1FF;
+    else if ((tecla & ~0x1FF) && (tecla & 0x1FF) >= 0x101 &&
+             (tecla & 0x1FF) <= 0x10A)
+        return 0;   /* ctrl+especial: sin accion en campos */
     if (tecla == 8) {
         if (*pos > 0 && *pos <= n) {
             int a = ut_anterior(buf, *pos), i;
@@ -451,8 +461,11 @@ int ug_campo_tecla(char *buf, int max, int *pos, int tecla) {
         }
         return 0;
     }
-    if (tecla >= 32 && !(tecla >= 0x101 && tecla <= 0x10A) &&
-        !(tecla >= 0xE000 && tecla <= 0xE004) && n + 1 < max) {
+    if (tecla >= 32 && tecla != 0x7F &&
+        !(tecla >= 0x101 && tecla <= 0x10A) &&
+        !(tecla >= 0xE000 && tecla <= 0xE004) &&
+        !(tecla >= 0xE100 && tecla <= 0xE219) &&
+        !(tecla >= 0x300 && tecla <= 0x7FF) && n + 1 < max) {
         char tmp[5];
         int w = ut_enc(tmp, 5, (unsigned)tecla), i;
         if (!w || n + w >= max) return 0;

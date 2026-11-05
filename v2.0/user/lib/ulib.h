@@ -70,6 +70,13 @@ void u_lee_linea(char *d, int max);
 #define TEC_FIN_U    0x108
 #define TEC_REPAG_U  0x109
 #define TEC_AVPA_U   0x10A
+/* v2.2-editor: modificadores en la tecla (ver teclado.h): May 0x200,
+   Ctrl 0x400 sobre 0x101-0x10A; Ctrl+letra 0xE100-0xE119
+   (0xE200-0xE219 con May); Ctrl+Retroceso 0x7F. */
+#define TEC_MAY_U  0x200
+#define TEC_CTRL_U 0x400
+#define TEC_CTRL_AU  0xE100
+#define TEC_CTRL_MAYAU 0xE200
 
 /* ---- graficos ---- */
 #define C_NEGRO 0x00
@@ -160,5 +167,8 @@ int u_reloj(unsigned int *v6);                /* [Y,M,D,h,m,s], 0 ok */
 /* ---- video en vivo (syscalls 47-48) ---- */
 int u_video_modo(int w, int h);   /* 0 ok, -1 sin soporte, -2 sin memoria */
 int u_video_info(unsigned int *v4);  /* [W,H,paso,prof], 0 ok */
+
+/* ---- modificadores de teclado (syscall 49, v2.2-editor) ---- */
+int u_teclado_mod(void);  /* bit0 Shift, bit1 Ctrl, bit2 AltGr, bit3 Caps */
 
 #endif

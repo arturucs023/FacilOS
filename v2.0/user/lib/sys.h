@@ -261,6 +261,12 @@ static inline int sys_teclado_dist(int op, int val) {
     return sys_llama(46, op, val, 0);
 }
 
+/* v2.2-editor: modificadores (bit0 Shift, bit1 Ctrl, bit2 AltGr,
+   bit3 BloqMay). Solo lectura. */
+static inline int sys_teclado_mod(void) {
+    return sys_llama(49, 0, 0, 0);
+}
+
 #define PROC_NUEVO 0
 #define PROC_LISTO 1
 #define PROC_EJECUTO 2
