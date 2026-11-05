@@ -1,5 +1,11 @@
 # F32 Lang v0.1 — Integración con la terminal
 
+Estado v0.1: implementado y probado (ver `pruebas-f32.md`).
+Rama `ejecutar` por extensión dentro de `op_ejecutar`;
+`ejecutar menu` (F32X) intacto.
+
+Funcionamiento real verificado en QEMU:
+
 Comando nativo `ejecutar` (existente; se extiende, no se
 duplica). Flujo para `.f32`:
 

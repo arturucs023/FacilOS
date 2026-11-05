@@ -333,9 +333,9 @@ static const cmd_t CMDS[] = {
       "Escribe los argumentos tal cual.",
       "eco \"texto\"", "eco hola mundo", 0, 4, 0, 0 },
     { "ejecutar", "sistema",
-      "Ejecuta un programa.",
-      "Lanza un programa F32X con sus argumentos.",
-      "ejecutar <programa> [args]", "ejecutar menu", 1, 4, 0, 0 },
+      "Ejecuta un programa o un script .f32.",
+      "Lanza un programa F32X con sus argumentos. Si el nombre termina en .f32 (o existe con esa extension), lo ejecuta con el interprete F32 Lang.",
+      "ejecutar <programa> [args]", "ejecutar hola.f32", 1, 4, 0, 0 },
     { "salir", "sistema",
       "Cierra la terminal.",
       "Cierra esta ventana de terminal.",
@@ -1593,11 +1593,85 @@ static void op_eco(const cmd_t *c) {
     pon(b);
 }
 
+static int termina_en_f32(const char *r) {
+    int l = u_strlen(r);
+    if (l < 4) return 0;
+    return r[l - 4] == '.' &&
+           (r[l - 3] == 'f' || r[l - 3] == 'F') &&
+           (r[l - 2] == '3') &&
+           (r[l - 1] == '2');
+}
+
+static int tiene_punto(const char *r) {
+    int i = 0;
+    while (r[i]) {
+        if (r[i] == '.') return 1;
+        i++;
+    }
+    return 0;
+}
+
 static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
     char args[256];
     int t = 0, i, rc;
     char rb[32];
+    char ruta[128];
+    int es_f32 = 0;
     (void)c;
+    if (npos < 1) {
+        perr(10, "Falta indicar el programa o archivo .f32.");
+        pon("Uso:");
+        pon("ejecutar <programa> [args]");
+        return;
+    }
+    /* Rama .f32 (F32 Lang v0.1): el argumento es un script, no un
+       programa F32X. Sin extension se prueba anadiendo .f32. */
+    if (termina_en_f32(pos_arg[0])) {
+        es_f32 = 1;
+        a_absoluta(pos_arg[0], ruta);
+    } else if (!tiene_punto(pos_arg[0])) {
+        char con_ext[128];
+        int q = 0;
+        UFILE *pr;
+        while (pos_arg[0][q] && q < 120) {
+            con_ext[q] = pos_arg[0][q];
+            q++;
+        }
+        con_ext[q++] = '.';
+        con_ext[q++] = 'f';
+        con_ext[q++] = '3';
+        con_ext[q++] = '2';
+        con_ext[q] = 0;
+        a_absoluta(con_ext, ruta);
+        pr = u_fopen(ruta, "r");
+        if (pr) {
+            u_fclose(pr);
+            es_f32 = 1;
+        }
+    }
+    if (es_f32) {
+        if (npos > 1) {
+            perr(10, "ejecutar archivo.f32 no admite argumentos.");
+            return;
+        }
+        ug_modal(v, 1);
+        rc = u_ejecutar("f32", ruta);
+        ug_modal(v, 0);
+        {
+            char nb[12];
+            int w = 0, q = 0;
+            rb[w++] = 'r';
+            rb[w++] = 'c';
+            rb[w++] = '=';
+            u_itoa(rc, nb);
+            while (nb[q] && w < 30) rb[w++] = nb[q++];
+            rb[w] = 0;
+        }
+        pon(rb);
+        if (rc == 0) pon("Programa finalizado correctamente.");
+        else if (rc < -100) perr(33, "No se pudo lanzar (nombre o formato).");
+        return;
+    }
     for (i = 1; i < npos; i++) {
         int q = 0;
         if (t) args[t++] = ' ';

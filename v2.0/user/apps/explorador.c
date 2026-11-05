@@ -173,7 +173,7 @@ static int icono_de(int tipo, const char *nom) {
         if (!u_strcmp(b, "txt") || !u_strcmp(b, "md") ||
             !u_strcmp(b, "cfg") || !u_strcmp(b, "log") ||
             !u_strcmp(b, "ini") || !u_strcmp(b, "c") ||
-            !u_strcmp(b, "h"))
+            !u_strcmp(b, "h") || !u_strcmp(b, "f32"))
             return 7;
         if (!u_strcmp(b, "f32x") || !u_strcmp(b, "bin") ||
             !u_strcmp(b, "exe"))

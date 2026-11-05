@@ -3,8 +3,11 @@
 ## 1. Líneas y bloques
 
 - Una instrucción por línea. Sin `;` ni continuaciones.
+  `escribir` sin argumento escribe una línea vacía.
 - Indentación: múltiplos de 4 espacios. Tabuladores = error
-  léxico (el editor inserta espacios y nunca tabs).
+  léxico (el editor inserta espacios y nunca tabs). Finales
+  de línea CRLF se toleran (el `\r` no forma parte de la
+  línea).
 - Tras `programa`, `si`, `sinosi`, `sino`, `mientras`,
   `funcion`, la línea siguiente no vacía debe estar más
   indentada (error F32-020 si no).

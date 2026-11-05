@@ -72,11 +72,15 @@ void u_lee_linea(char *d, int max);
 #define TEC_AVPA_U   0x10A
 /* v2.2-editor: modificadores en la tecla (ver teclado.h): May 0x200,
    Ctrl 0x400 sobre 0x101-0x10A; Ctrl+letra 0xE100-0xE119
-   (0xE200-0xE219 con May); Ctrl+Retroceso 0x7F. */
+   (0xE200-0xE219 con May); Ctrl+Tab 0xE120/0xE220; May+Tab 0xE121;
+   Ctrl+Retroceso 0x7F. */
 #define TEC_MAY_U  0x200
 #define TEC_CTRL_U 0x400
 #define TEC_CTRL_AU  0xE100
 #define TEC_CTRL_MAYAU 0xE200
+#define TEC_CTRL_TAB_U 0xE120
+#define TEC_CTRL_MAY_TAB_U 0xE220
+#define TEC_MAY_TAB_U 0xE121
 
 /* ---- graficos ---- */
 #define C_NEGRO 0x00

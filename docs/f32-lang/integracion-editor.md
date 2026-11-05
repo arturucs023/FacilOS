@@ -1,5 +1,14 @@
 # F32 Lang v0.1 — Integración con el editor
 
+Estado v0.1: implementado y probado (ver `pruebas-f32.md`):
+auto-indent +4 tras apertura, dedent de cierres al
+completarlos, Backspace y May+Tab (0xE121) por niveles,
+`.f32` como «Texto» en el explorador. Sin coloreado (fase
+futura, por estabilidad).
+
+Sin reescribir el editor (v2.2-editor `29eb475` intacto en
+funcionalidad). Cambios mínimos aplicados:
+
 Sin reescribir el editor (v2.2-editor `29eb475` intacto en
 funcionalidad). Solo indentación + reconocimiento mínimo.
 

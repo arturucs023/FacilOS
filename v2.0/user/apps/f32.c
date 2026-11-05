@@ -99,16 +99,13 @@ static int es_idc(char c) {
     return es_idini(c) || (c >= '0' && c <= '9');
 }
 
-static int carga(const char *ruta) {
-    UFILE *f = u_fopen(ruta, "r");
+static int carga(UFILE *f) {
     char *tmp;
     int n, tot = 0;
-    if (!f) { falla(1, 0); return -1; }
     tmp = (char *)u_malloc(MAXSRC + 1);
-    if (!tmp) { u_fclose(f); falla(90, 0); return -1; }
+    if (!tmp) { falla(90, 0); return -1; }
     while (tot <= MAXSRC && (n = u_fread(tmp + tot, MAXSRC + 1 - tot, f)) > 0)
         tot += n;
-    u_fclose(f);
     if (tot > MAXSRC) { u_free(tmp); falla(2, 0); return -1; }
     SRC = tmp;
     SRCL = tot;
@@ -128,6 +125,15 @@ static int parte_lineas(void) {
         {
             int f = p;
             while (f < SRCL && SRC[f] != '\n') f++;
+            /* tolera CRLF: el \r no forma parte de la linea */
+            if (f > p && SRC[f - 1] == '\r') {
+                LINI[l] = ini;
+                LNL[l] = f - 1 - ini;
+                LIND[l] = ind;
+                l++;
+                p = f + 1;
+                continue;
+            }
             LINI[l] = ini;
             LNL[l] = f - ini;
             LIND[l] = ind;
@@ -414,7 +420,7 @@ static nodo_t *haz(int tipo, int lin) {
 
 /* forward */
 static nodo_t *p_expr(void);
-static nodo_t *p_bloque(int ind);
+static nodo_t *p_cmp(void);
 
 static int tk_es(int t, int r) {
     return POS < NTOK && TOKS[POS].tipo == t &&
@@ -515,10 +521,19 @@ static nodo_t *p_un(void) {
         if (pon_h(n, e)) return 0;
         return n;
     }
-    if (TOKS[POS].tipo == T_RES && TOKS[POS].ival == R_NO) {
+    return p_prim();
+}
+
+/* `no` liga menos que las comparaciones (nivel propio entre `y`
+   y comparacion): `no a == b` es `no (a == b)`. */
+static nodo_t *p_no(void) {
+    int ln;
+    if (POS < NTOK && TOKS[POS].tipo == T_RES &&
+        TOKS[POS].ival == R_NO) {
         nodo_t *n, *e;
+        ln = TOKS[POS].lin;
         POS++;
-        e = p_un();
+        e = p_no();
         if (ERR || !e) return 0;
         n = haz(N_UN, ln);
         if (!n) return 0;
@@ -526,7 +541,7 @@ static nodo_t *p_un(void) {
         if (pon_h(n, e)) return 0;
         return n;
     }
-    return p_prim();
+    return p_cmp();
 }
 
 static nodo_t *p_mul(void) {
@@ -594,14 +609,14 @@ static nodo_t *p_cmp(void) {
 }
 
 static nodo_t *p_y(void) {
-    nodo_t *e = p_cmp();
+    nodo_t *e = p_no();
     if (ERR || !e) return 0;
     while (POS < NTOK && TOKS[POS].tipo == T_RES &&
            TOKS[POS].ival == R_Y) {
         int ln = TOKS[POS].lin;
         nodo_t *n, *d;
         POS++;
-        d = p_cmp();
+        d = p_no();
         if (ERR || !d) return 0;
         n = haz(N_BIN, ln);
         if (!n) return 0;
@@ -1366,9 +1381,10 @@ static int semantica(nodo_t *prog) {
             }
             FUN[nf].nombre[q] = 0;
         }
-        FUN[nf].npar = d->nh;
+        FUN[nf].npar = d->nh - 1;   /* ultimo hijo = cuerpo */
+        if (FUN[nf].npar < 0) FUN[nf].npar = 0;
         if (FUN[nf].npar > MAXPAR) { falla(81, d->lin); return -1; }
-        for (k = 0; k < d->nh; k++) {
+        for (k = 0; k < FUN[nf].npar; k++) {
             int q = 0;
             while (d->h[k]->s[q] && q < 31) {
                 FUN[nf].par[k][q] = d->h[k]->s[q];
@@ -1879,15 +1895,30 @@ int main(void) {
         alibera();
         return 2;
     }
-    if (f32_init()) {
-        u_print("Error F32-090: sin memoria\n");
-        return 2;
-    }
-    if (carga(ruta)) {
-        if (!ERR) falla(1, 0);
-        imp_error();
-        alibera();
-        return ERR == 2 ? 2 : 1;
+    /* Abre ANTES de reservar: abrir (syscall 3/9) reinicia el brk
+       del heap Ring3 e invalidaria los malloc previos. Todo
+       malloc posterior al ultimo fopen es seguro. */
+    {
+        UFILE *fh = u_fopen(ruta, "r");
+        if (!fh) {
+            falla(1, 0);
+            imp_error();
+            alibera();
+            return 1;
+        }
+        if (f32_init()) {
+            u_fclose(fh);
+            u_print("Error F32-090: sin memoria\n");
+            return 2;
+        }
+        if (carga(fh)) {
+            u_fclose(fh);
+            if (!ERR) falla(1, 0);
+            imp_error();
+            alibera();
+            return ERR == 2 ? 2 : 1;
+        }
+        u_fclose(fh);
     }
     if (parte_lineas()) {
         imp_error();

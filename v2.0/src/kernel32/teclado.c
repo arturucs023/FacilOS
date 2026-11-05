@@ -293,10 +293,13 @@ void teclado_irq(void) {
     if (c == 0x01) { muerto = 0; tk_mete(27); return; }
     if (c == 0x0F) {
         muerto = 0;
-        /* Ctrl+Tab = cambia de pestana (0xE120, 0xE220 con May):
-           el Tab normal (9) no lleva ctrl codificado. */
+        /* Ctrl+Tab = cambia de pestana (0xE120, 0xE220 con May);
+           May+Tab = reduce indentacion (0xE121, F32 Lang v0.1);
+           el Tab normal (9) no lleva modificador codificado. */
         if (ctrl_izq || ctrl_der)
-            tk_mete((sh_izq || sh_der) ? 0xE220 : 0xE120);
+            tk_mete((sh_izq || sh_der) ? TEC_CTRL_MAY_TAB : TEC_CTRL_TAB);
+        else if (sh_izq || sh_der)
+            tk_mete(TEC_MAY_TAB);
         else
             tk_mete(9);
         return;

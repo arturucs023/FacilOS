@@ -27,13 +27,14 @@ regs_t *syscall_regs_ptr = 0;
 static int *fds(void) { return proc_actual->fds; }
 static uint32_t *fds_pos(void) { return proc_actual->fds_pos; }
 static uint32_t *user_brk(void) { return &proc_actual->brk; }
-static void fds_init(void) {
-    for (int i = 0; i < NFD; i++) {
-        proc_actual->fds[i] = -1;
-        proc_actual->fds_pos[i] = 0;
-    }
-    proc_actual->brk = UBRK_INI;
-}
+/* NOTA v2.2-f32: aqui hubo un fds_init() que reiniciaba fds[] Y brk
+   en cada abrir/crear. Eso rompia dos cosas reales y verificadas:
+   (a) el heap Ring3 se solapaba (malloc tras fopen devolvia un
+   bloque ya usado: f32 leia SRC==LINI); (b) dos ficheros abiertos
+   a la vez compartian fd (copiar producia ficheros vacios con
+   "verificacion" vacua). Cada proceso ya nace con fds/brk
+   inicializados en proc_crea (tarea 0 al arranque), asi que el
+   reinicio por llamada no solo es innecesario sino incorrecto. */
 
 /* ruta (abs o relativa a exec_base_dir) -> dir + nombre base. 0 ok. */
 static int parte_sys(const char *ruta, int *dir, char *base) {
@@ -364,7 +365,8 @@ __attribute__((optimize("O0"))) static void sc_02(regs_t *r, int di)
 
 __attribute__((optimize("O0"))) static void sc_03(regs_t *r, int di)
  {
-        fds_init();
+        /* v2.2-f32: sin fds_init (ver nota arriba): los fds y el brk
+           viven mientras vive el proceso. */
         const char *pa = (const char *)r->ebx;
         char ruta[128];
         uint32_t i = 0;
@@ -514,7 +516,7 @@ __attribute__((optimize("O0"))) static void sc_08(regs_t *r, int di)
 
 __attribute__((optimize("O0"))) static void sc_09(regs_t *r, int di)
  {
-        fds_init();
+        /* v2.2-f32: sin fds_init (ver nota arriba). */
         const char *pa = (const char *)r->ebx;
         char ruta[128];
         uint32_t i = 0;

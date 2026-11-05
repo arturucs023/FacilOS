@@ -2592,6 +2592,162 @@ static void hace_guardar_como(void) {
     }
 }
 
+/* ---- F32 Lang: indentacion automatica (solo .f32) ---- */
+static int es_f32ruta(const char *r) {
+    int l = u_strlen(r), i;
+    if (l < 4) return 0;
+    if (r[l - 4] != '.') return 0;
+    if (r[l - 3] != 'f' && r[l - 3] != 'F') return 0;
+    if (r[l - 2] != '3') return 0;
+    if (r[l - 1] != '2') return 0;
+    (void)i;
+    return 1;
+}
+
+/* 1 si [ini,fin) recortado es exactamente la palabra w */
+static int linea_es(doc_t *d, int ini, int fin, const char *w) {
+    int a = ini, b = fin, i = 0;
+    while (a < b && (d->txt[a] == ' ' || d->txt[a] == '\t')) a++;
+    while (b > a && (d->txt[b - 1] == ' ' || d->txt[b - 1] == '\t')) b--;
+    while (w[i]) {
+        if (a + i >= b || d->txt[a + i] != w[i]) return 0;
+        i++;
+    }
+    return a + i == b;
+}
+
+/* 1 si la linea recortada es w o empieza por w + espacio */
+static int emp_o_igual(doc_t *d, int ini, int fin, const char *w) {
+    int a = ini, b = fin, i = 0;
+    while (a < b && (d->txt[a] == ' ' || d->txt[a] == '\t')) a++;
+    while (b > a && (d->txt[b - 1] == ' ' || d->txt[b - 1] == '\t')) b--;
+    while (w[i]) {
+        if (a + i >= b || d->txt[a + i] != w[i]) return 0;
+        i++;
+    }
+    return a + i == b || d->txt[a + i] == ' ' || d->txt[a + i] == '\t';
+}
+
+static int es_apertura_f32(doc_t *d, int ini, int fin) {
+    return linea_es(d, ini, fin, "programa") ||
+           emp_o_igual(d, ini, fin, "si") ||
+           linea_es(d, ini, fin, "sinosi") ||
+           linea_es(d, ini, fin, "sino") ||
+           emp_o_igual(d, ini, fin, "mientras") ||
+           emp_o_igual(d, ini, fin, "funcion");
+}
+
+static int es_cierre_f32(doc_t *d, int ini, int fin) {
+    return linea_es(d, ini, fin, "finsi") ||
+           linea_es(d, ini, fin, "finmientras") ||
+           linea_es(d, ini, fin, "finfuncion") ||
+           linea_es(d, ini, fin, "fin") ||
+           linea_es(d, ini, fin, "sinosi") ||
+           linea_es(d, ini, fin, "sino");
+}
+
+/* indentacion (espacios iniciales) de la linea que empieza en li */
+static int ind_de(doc_t *d, int li) {
+    int n = 0;
+    while (li + n < d->len && d->txt[li + n] == ' ') n++;
+    return n;
+}
+
+/* quita n espacios en li con undo */
+static void quita_ind(doc_t *d, int li, int n) {
+    if (n <= 0) return;
+    doc_del(d, li, n, 1);
+}
+
+/* inserta n espacios en pos (uno a uno, como Tab: mismo grano undo) */
+static void mete_esp(doc_t *d, int pos) {
+    int i;
+    for (i = 0; i < 4; i++) {
+        char sp = ' ';
+        if (doc_ins(d, pos, &sp, 0, 0, 1, 1)) break;
+        pos++;
+        d->cur++;
+    }
+    d->anc = d->cur;
+}
+
+/* realinea la linea actual si es un cierre/continuacion f32 */
+static void f32_alinea(doc_t *d) {
+    int nl = lin_de_pos(d, d->cur);
+    int li = lin_inicio(d, nl), lf = lin_fin(d, li);
+    int t, ind, ps = 0, pm = 0, pf = 0;
+    if (!linea_es(d, li, lf, "finsi") &&
+        !linea_es(d, li, lf, "finmientras") &&
+        !linea_es(d, li, lf, "finfuncion") &&
+        !linea_es(d, li, lf, "fin") && !linea_es(d, li, lf, "sinosi") &&
+        !linea_es(d, li, lf, "sino"))
+        return;
+    /* busca la apertura: cuenta cierres del mismo tipo */
+    t = nl - 1;
+    while (t >= 0) {
+        int a = lin_inicio(d, t), b = lin_fin(d, a);
+        if (linea_es(d, a, b, "finsi")) ps++;
+        else if (linea_es(d, a, b, "finmientras"))
+            pm++;
+        else if (linea_es(d, a, b, "finfuncion"))
+            pf++;
+        else if (emp_o_igual(d, a, b, "si")) {
+            if (ps > 0) ps--;
+            else break;
+        } else if (emp_o_igual(d, a, b, "mientras")) {
+            if (pm > 0) pm--;
+            else break;
+        } else if (emp_o_igual(d, a, b, "funcion")) {
+            if (pf > 0) pf--;
+            else break;
+        } else if (linea_es(d, a, b, "programa")) {
+            if (!ps && !pm && !pf) break;
+        }
+        t--;
+    }
+    if (t < 0) return;
+    ind = ind_de(d, lin_inicio(d, t));
+    /* sinosi/sino/finsi/finmientras/finfuncion alinean con apertura;
+       fin va al margen */
+    if (linea_es(d, li, lf, "fin")) ind = 0;
+    {
+        int cur = ind_de(d, li), i;
+        if (cur == ind) return;
+        if (cur > ind) {
+            quita_ind(d, li, cur - ind);
+            if (d->cur > li) {
+                d->cur -= cur - ind;
+                if (d->cur < li + ind) d->cur = li + ind;
+            }
+        } else {
+            for (i = 0; i < ind - cur; i++) {
+                char sp = ' ';
+                if (doc_ins(d, li + cur + i, &sp, 0, 0, 1, 1)) break;
+                d->cur++;
+            }
+        }
+        d->anc = d->cur;
+    }
+}
+
+/* reduce un nivel la linea actual; 1 si cambio */
+static int f32_sin_ind(doc_t *d) {
+    int nl = lin_de_pos(d, d->cur);
+    int li = lin_inicio(d, nl);
+    int n = ind_de(d, li);
+    int quita, nn;
+    if (!n) return 0;
+    nn = ((n - 1) / 4) * 4;
+    quita = n - nn;
+    quita_ind(d, li, quita);
+    if (d->cur > li) {
+        d->cur -= quita;
+        if (d->cur < li) d->cur = li;
+    }
+    d->anc = d->cur;
+    return 1;
+}
+
 /* ---- teclado ---- */
 /* Decodifica tecla con modificadores del driver (sin carreras):
    devuelve el codigo base y pone sh/ct. Ctrl+letra llega como
@@ -2624,6 +2780,11 @@ static void tecla_doc(doc_t *d, int k, int mod) {
     /* Ctrl+Tab cambia de pestana (codificado en la tecla) */
     if (k == 0xE120) { cambia_pestana(1); return; }
     if (k == 0xE220) { cambia_pestana(-1); return; }
+    /* May+Tab reduce indentacion (F32 y texto general) */
+    if (k == TEC_MAY_TAB_U) {
+        f32_sin_ind(d);
+        return;
+    }
     k = dec_tecla(k, &sh2, &ct2);
     shift = (sh2 || (mod & 1)) ? 1 : 0;
     ctrl = (ct2 || (mod & 2)) ? 1 : 0;
@@ -2835,9 +2996,27 @@ static void tecla_doc(doc_t *d, int k, int mod) {
         }
         if (ctrl) { borra_palabra(d, 0); return; }
         if (d->cur > 0) {
-            int a = ant_c(d->txt, d->cur);
-            doc_del(d, a, d->cur - a, 1);
-            d->cur = d->anc = a;
+            /* F32: al inicio de la indentacion borra un nivel */
+            if (es_f32ruta(d->ruta)) {
+                int nl = lin_de_pos(d, d->cur);
+                int li = lin_inicio(d, nl), p = li, ok = 1;
+                while (p < d->cur) {
+                    if (d->txt[p] != ' ') { ok = 0; break; }
+                    p++;
+                }
+                if (ok && d->cur > li) {
+                    int cc = d->cur - li;
+                    int nn = ((cc - 1) / 4) * 4, q = cc - nn;
+                    doc_del(d, d->cur - q, q, 1);
+                    d->cur = d->anc = d->cur - q;
+                    return;
+                }
+            }
+            {
+                int a = ant_c(d->txt, d->cur);
+                doc_del(d, a, d->cur - a, 1);
+                d->cur = d->anc = a;
+            }
         }
         return;
     }
@@ -2867,6 +3046,28 @@ static void tecla_doc(doc_t *d, int k, int mod) {
         doc_ins(d, d->cur, &nl, 0, 0, 1, 1);
         d->cur++;
         d->anc = d->cur;
+        /* F32: auto-indent (copia nivel + 4 tras apertura) */
+        if (es_f32ruta(d->ruta)) {
+            int pl = lin_de_pos(d, d->cur - 1);
+            int li = lin_inicio(d, pl), lf = lin_fin(d, li);
+            int ind = ind_de(d, li), t, q;
+            if (es_apertura_f32(d, li, lf)) ind += 4;
+            q = ind;
+            /* inserta de 4 en 4 como Tab (mismo grano undo) */
+            while (q >= 4) {
+                int pp = d->cur;
+                mete_esp(d, pp);
+                if (d->cur == pp) break;
+                q -= 4;
+            }
+            for (t = 0; t < q; t++) {
+                char sp = ' ';
+                int pp = d->cur;
+                if (doc_ins(d, pp, &sp, 0, 0, 1, 1)) break;
+                d->cur++;
+            }
+            d->anc = d->cur;
+        }
         return;
     }
     if (k == 9) {   /* tab: 4 espacios */
@@ -2901,6 +3102,8 @@ static void tecla_doc(doc_t *d, int k, int mod) {
         if (doc_ins(d, d->cur, tmp, 0, 0, w, 1)) return;
         d->cur += w;
         d->anc = d->cur;
+        /* F32: al completar un cierre se realinea */
+        if (es_f32ruta(d->ruta)) f32_alinea(d);
         return;
     }
 }
