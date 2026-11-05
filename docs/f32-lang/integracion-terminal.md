@@ -4,6 +4,13 @@ Estado v0.1: implementado y probado (ver `pruebas-f32.md`).
 Rama `ejecutar` por extensión dentro de `op_ejecutar`;
 `ejecutar menu` (F32X) intacto.
 
+Captura Ring3 v0.1 (sin pipes en ABI): el intérprete duplica su
+salida (`escribir` y errores `F32-0NN`) a `/f32sal.tmp`; la
+terminal la vuelca en la ventana tras `u_ejecutar` y borra el
+temporal. Vale para `ejecutar /x.f32` y `ejecutar f32 /x.f32`.
+Sin esto, en escritorio solo se veía `rc=N` (la salida iba a
+consola/serie por `cons_putc`).
+
 Funcionamiento real verificado en QEMU:
 
 Comando nativo `ejecutar` (existente; se extiende, no se

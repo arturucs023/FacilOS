@@ -24,8 +24,10 @@ Funcionales (todos OK en QEMU):
 
 Integración (OK con captura):
 - Terminal: `ejecutar /hola.f32` y `ejecutar /variables`
-  (sin extensión) → salida + `rc=0` + «Programa finalizado
-  correctamente.»; `ejecutar menu` (F32X) intacto.
+  (sin extensión) → salida en ventana + `rc=0` + «Programa finalizado
+  correctamente.»; `ejecutar menu` (F32X) intacto. Captura Ring3
+  vía `/f32sal.tmp` (sin pipes en ABI): vale para `ejecutar /x.f32`
+  y `ejecutar f32 /x.f32`; errores `F32-0NN` también salen en ventana.
 - Editor: auto-indent en `.f32` (+4 tras apertura), dedent de
   cierres al escribirlos, Shift+Tab y Backspace por niveles,
   `.f32` como «Texto» en el explorador, apertura con ruta.

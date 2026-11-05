@@ -1611,6 +1611,23 @@ static int tiene_punto(const char *r) {
     return 0;
 }
 
+/* Captura Ring3 v0.1 (sin pipes en ABI): f32 duplica su salida a
+   /f32sal.tmp; la terminal la vuelca en la ventana tras el hijo.
+   Sin este volcado, en escritorio solo se veria rc=N. */
+static void muestra_sal_f32(void) {
+    UFILE *f = u_fopen("/f32sal.tmp", "r");
+    char buf[513];
+    int n, total = 0;
+    if (!f) return;
+    while (total < 8192 && (n = u_fread(buf, 512, f)) > 0) {
+        buf[n] = 0;
+        pon(buf);
+        total += n;
+    }
+    u_fclose(f);
+    u_remove("/f32sal.tmp");
+}
+
 static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
     char args[256];
     int t = 0, i, rc;
@@ -1657,6 +1674,7 @@ static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
         ug_modal(v, 1);
         rc = u_ejecutar("f32", ruta);
         ug_modal(v, 0);
+        muestra_sal_f32();
         {
             char nb[12];
             int w = 0, q = 0;
@@ -1681,6 +1699,7 @@ static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
     ug_modal(v, 1);
     rc = u_ejecutar(pos_arg[0], args);
     ug_modal(v, 0);
+    if (!u_strcmp(pos_arg[0], "f32")) muestra_sal_f32();
     {
         char nb[12];
         int w = 0, q = 0;

@@ -39,6 +39,26 @@ static void falla(int cod, int lin) {
     if (!ERR) { ERR = cod; ERRL = lin; }
 }
 
+/* Captura Ring3 para la terminal en ventana (v0.1): sin pipes en la
+   ABI, el hijo modal hereda consola y su u_print no entra en la
+   ventana. Se duplica toda salida propia a /f32sal.tmp; la terminal
+   la vuelca con pon() tras u_ejecutar. Fallo de apertura = solo
+   consola (degradado seguro). */
+#define SAL_TMP "/f32sal.tmp"
+static UFILE *FSAL = 0;
+static void emit(const char *s) {
+    u_print(s);
+    if (FSAL) u_fwrite(s, u_strlen(s), FSAL);
+}
+static void emit_num(int v) {
+    char nb[12];
+    u_itoa(v, nb);
+    emit(nb);
+}
+static void cierra_sal(void) {
+    if (FSAL) { u_fclose(FSAL); FSAL = 0; }
+}
+
 /* ---- arena ---- */
 typedef struct abloq {
     struct abloq *sig;
@@ -1099,21 +1119,21 @@ static const char *emsg(int c) {
 }
 
 static void imp_error(void) {
-    u_print("Error F32-");
-    if (ERR < 100) u_print("0");
-    if (ERR < 10) u_print("0");
-    u_print_num(ERR);
-    u_print(" en ");
-    u_print(ARCHIVO);
+    emit("Error F32-");
+    if (ERR < 100) emit("0");
+    if (ERR < 10) emit("0");
+    emit_num(ERR);
+    emit(" en ");
+    emit(ARCHIVO);
     if (ERRL > 0) {
         char nb[12];
-        u_print(" linea ");
+        emit(" linea ");
         u_itoa(ERRL, nb);
-        u_print(nb);
+        emit(nb);
     }
-    u_print(": ");
-    u_print(emsg(ERR));
-    u_print("\n");
+    emit(": ");
+    emit(emsg(ERR));
+    emit("\n");
 }
 
 /* ---- tablas de simbolos ---- */
@@ -1726,7 +1746,7 @@ int ex_inst(nodo_t *n) {
     }
     if (n->tipo == N_PRINT) {
         if (!n->nh) {
-            u_print("\n");
+            emit("\n");
             return 0;
         }
         {
@@ -1735,13 +1755,13 @@ int ex_inst(nodo_t *n) {
             if (ERR) return -1;
             if (v.tipo == V_INT) {
                 u_itoa(v.num, nb);
-                u_print(nb);
+                emit(nb);
             } else if (v.tipo == V_BOL) {
-                u_print(v.num ? "verdadero" : "falso");
+                emit(v.num ? "verdadero" : "falso");
             } else {
-                u_print(v.txt);
+                emit(v.txt);
             }
-            u_print("\n");
+            emit("\n");
         }
         return 0;
     }
@@ -1825,22 +1845,22 @@ static void vuelca_toks(void) {
     int i;
     for (i = 0; i < NTOK; i++) {
         char nb[12];
-        u_print("L");
+        emit("L");
         u_itoa(TOKS[i].lin, nb);
-        u_print(nb);
-        u_print(" ");
-        u_print(tnom(TOKS[i].tipo));
-        u_print(" ");
+        emit(nb);
+        emit(" ");
+        emit(tnom(TOKS[i].tipo));
+        emit(" ");
         if (TOKS[i].tipo == T_ENT) {
             u_itoa(TOKS[i].ival, nb);
-            u_print(nb);
+            emit(nb);
         } else if (TOKS[i].tipo == T_CAD || TOKS[i].tipo == T_ID) {
-            u_print(TOKS[i].sval);
+            emit(TOKS[i].sval);
         } else {
             u_itoa(TOKS[i].ival, nb);
-            u_print(nb);
+            emit(nb);
         }
-        u_print("\n");
+        emit("\n");
     }
 }
 
@@ -1864,9 +1884,9 @@ static int f32_init(void) {
 
 /* ---- principal ---- */
 static void pon_uso(void) {
-    u_print("uso: f32 programa.f32\n");
-    u_print("     f32 -t programa.f32 (tokens)\n");
-    u_print("     f32 -p programa.f32 (comprueba sin ejecutar)\n");
+    emit("uso: f32 programa.f32\n");
+    emit("     f32 -t programa.f32 (tokens)\n");
+    emit("     f32 -p programa.f32 (comprueba sin ejecutar)\n");
 }
 
 int main(void) {
@@ -1895,6 +1915,10 @@ int main(void) {
         alibera();
         return 2;
     }
+    /* Captura para terminal en ventana: se trunca aqui para que la
+       terminal siempre lea un fichero fresco (aunque el programa
+       falle despues). Si no se puede crear, FSAL=0 y solo consola. */
+    FSAL = u_fopen(SAL_TMP, "w");
     /* Abre ANTES de reservar: abrir (syscall 3/9) reinicia el brk
        del heap Ring3 e invalidaria los malloc previos. Todo
        malloc posterior al ultimo fopen es seguro. */
@@ -1904,11 +1928,13 @@ int main(void) {
             falla(1, 0);
             imp_error();
             alibera();
+            cierra_sal();
             return 1;
         }
         if (f32_init()) {
             u_fclose(fh);
-            u_print("Error F32-090: sin memoria\n");
+            emit("Error F32-090: sin memoria\n");
+            cierra_sal();
             return 2;
         }
         if (carga(fh)) {
@@ -1916,6 +1942,7 @@ int main(void) {
             if (!ERR) falla(1, 0);
             imp_error();
             alibera();
+            cierra_sal();
             return ERR == 2 ? 2 : 1;
         }
         u_fclose(fh);
@@ -1923,16 +1950,19 @@ int main(void) {
     if (parte_lineas()) {
         imp_error();
         alibera();
+        cierra_sal();
         return 1;
     }
     if (lex_todo()) {
         imp_error();
         alibera();
+        cierra_sal();
         return 1;
     }
     if (modo == 1) {
         vuelca_toks();
         alibera();
+        cierra_sal();
         return ERR ? 1 : 0;
     }
     agrupa();
@@ -1941,30 +1971,35 @@ int main(void) {
         if (!ERR) falla(15, 0);
         imp_error();
         alibera();
+        cierra_sal();
         return 1;
     }
     if (semantica(prog)) {
         imp_error();
         alibera();
+        cierra_sal();
         return 1;
     }
     if (modo == 2) {
         char nb[12];
-        u_print("OK: ");
+        emit("OK: ");
         u_itoa(NFUN, nb);
-        u_print(nb);
-        u_print(" funciones, programa valido\n");
+        emit(nb);
+        emit(" funciones, programa valido\n");
         alibera();
+        cierra_sal();
         return 0;
     }
     if (ex_bloque(prog->h[0])) {
         imp_error();
         alibera();
+        cierra_sal();
         return 1;
     }
     alibera();
     u_free(SRC);
     SRC = 0;
+    cierra_sal();
     return 0;
 }
 
