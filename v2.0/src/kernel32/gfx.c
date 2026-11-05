@@ -550,7 +550,10 @@ void g_blit(int x0, int y0, int w, int h, int x1, int y1) {
                 for (int c = 0; c < w; c++) d[c] = s[c];
             }
         } else {
-            for (int c = 0; c < w; c++) d[c] = s[c];
+            /* Misma fila hacia la derecha con solape: de derecha a
+               izquierda (el LTR manchaba toda la fila con el primer
+               pixel: la cursiva del editor pintaba una linea). */
+            for (int c = w - 1; c >= 0; c--) d[c] = s[c];
         }
     }
 }
