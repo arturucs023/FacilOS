@@ -126,12 +126,13 @@ inicio:
     ;   0x10000 = nucleo (se copiara a 0x100000)
     ; v2.2: el catalogo va a 0x30000 (el nucleo crecio y su carga de
     ; 160 sectores llega a 0x23FFF: en 0x20000 lo pisaba).
+    ; F4: hasta 192 sectores (0x28000): sigue sin pisar 0x30000.
     ; Sin interrupciones: los IRQ del BIOS pisan la copia (probado).
     cli
     mov word [p_seg], 0x1000
     mov word [p_off], 0
     mov word [p_lba], 1
-    mov word [p_cnt], 160             ; v2.2: nucleo hasta 160 sectores
+    mov word [p_cnt], 192             ; F4: nucleo hasta 192 sectores
     call leer
     mov word [p_seg], 0x3000
     mov word [p_off], 0

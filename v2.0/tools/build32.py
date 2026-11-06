@@ -115,7 +115,7 @@ wsec(20, rd)
 # disquete (v1.8: probados sin-emulacion, imagen corta y sector-count 0;
 # todos fallan en este BIOS; ver INFORME-v1.8-32.txt). Contenido util
 # ~130 KB; el resto es relleno que el BIOS exige.
-KERN_SECS = 160          # sectores de 512 que lee el cargador (v2.2)
+KERN_SECS = 192          # sectores de 512 que lee el cargador (F4; era 160)
 IMG_SECS = 2880
 img = bytearray(IMG_SECS * 512)
 CAT_LBA = KERN_SECS + 1  # LBA del catalogo (0 = arranque, 1.. = nucleo)
@@ -123,10 +123,10 @@ CAT_LBA = KERN_SECS + 1  # LBA del catalogo (0 = arranque, 1.. = nucleo)
 # (12 B de cabecera + 32 entradas de 32 B); con 512 B solo cabian 15.
 CAT_SECS = 4
 DATOS_LBA = CAT_LBA + CAT_SECS
-# El cargador lee LBAs 1..160 (el nucleo) y despues copia el catalogo de
-# programas + sus datos a 0x20000 en RAM (ver boot32.asm).
+# El cargador lee LBAs 1..KERN_SECS (el nucleo) y despues copia el
+# catalogo de programas + sus datos a 0x20000 en RAM (ver boot32.asm).
 img[512:512 + kb] = (BLD / "kernel32.bin").read_bytes()
-assert kb <= 160 * 512, "nucleo > 160 sectores de 512"
+assert kb <= KERN_SECS * 512, "nucleo > sectores del cargador"
 # El arranque: pay_secs en 496, cat_lba en 498, dat_lba en 500.
 _bs = bytearray((BLD / "boot32.bin").read_bytes())
 struct.pack_into("<HHH", _bs, 496, 0, CAT_LBA, DATOS_LBA)  # pay luego
@@ -271,6 +271,7 @@ _apps3 = [
     ("t1_lib", ["t1_lib.c"], True),
     ("t_red", ["t_red.c"], True),
     ("dhcp", ["dhcp.c"], True),
+    ("dns", ["dns.c"], True),
     ("tutf8", ["tutf8.c"], True),
     ("t2_gfx", ["t2_gfx.c"], True),
     ("editor16", ["editor16.c"], True),
@@ -301,7 +302,7 @@ _fin = IMG_LBA + (_nimg * 512 + 2047) // 2048
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.3-red-f3.iso"   # F3 (F2 intacta en f1)
+out_iso = ISO_DIR / "FacilOS-v2.3-red-f4.iso"   # F4 (F1/F3 intactas)
 _iso = bytes(iso[:_fin * 2048])
 out_iso.write_bytes(_iso)
 print(f"OK {out_iso} {len(_iso)} bytes ({_fin} sectores, "
