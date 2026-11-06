@@ -115,7 +115,7 @@ wsec(20, rd)
 # disquete (v1.8: probados sin-emulacion, imagen corta y sector-count 0;
 # todos fallan en este BIOS; ver INFORME-v1.8-32.txt). Contenido util
 # ~130 KB; el resto es relleno que el BIOS exige.
-KERN_SECS = 192          # sectores de 512 que lee el cargador (F4; era 160)
+KERN_SECS = 224          # sectores de 512 que lee el cargador (F5; era 192)
 IMG_SECS = 2880
 img = bytearray(IMG_SECS * 512)
 CAT_LBA = KERN_SECS + 1  # LBA del catalogo (0 = arranque, 1.. = nucleo)
@@ -302,7 +302,7 @@ _fin = IMG_LBA + (_nimg * 512 + 2047) // 2048
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.3-red-f4.iso"   # F4 (F1/F3 intactas)
+out_iso = ISO_DIR / "FacilOS-v2.3-red-f5.iso"   # F5 (f1/f3/f4 intactas)
 _iso = bytes(iso[:_fin * 2048])
 out_iso.write_bytes(_iso)
 print(f"OK {out_iso} {len(_iso)} bytes ({_fin} sectores, "
