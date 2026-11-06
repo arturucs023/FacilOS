@@ -27,6 +27,12 @@ if HDD != "-":
     args += ["-drive", f"file={HDD},format=raw,if=ide,index=0,media=disk"]
 args += ["-boot", "order=d", "-m", "32", "-display", "none",
          "-serial", f"file:{ser}", "-monitor", f"tcp:127.0.0.1:{PORT},server,nowait"]
+if os.environ.get("QRUN_RED") == "1":
+    # v2.3-red F1: red virtual opcional (user-net + RTL8139). Por
+    # defecto NO hay red: el arranque sin adaptador debe seguir
+    # funcionando. MAC fija para pruebas reproducibles.
+    args += ["-netdev", "user,id=red0",
+             "-device", "rtl8139,netdev=red0,mac=52:54:00:12:34:56"]
 if os.environ.get("QRUN_DEBUG"):
     # Traza de interrupciones y reinicios de QEMU (depuracion del kernel).
     args += ["-d", "int,cpu_reset,guest_errors", "-D",
