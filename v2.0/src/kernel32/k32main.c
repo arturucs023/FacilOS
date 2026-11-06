@@ -15,6 +15,7 @@
 #include "drv.h"
 #include "blk.h"
 #include "ps2.h"
+#include "drv_red.h"
 #include "teclado.h"
 #include "gfx.h"
 #include "fs.h"
@@ -69,6 +70,7 @@ void kmain(void)
     drv_registra("raton", ps2_init);
     drv_registra("pit", pit_drv_init);
     drv_registra("ramfs", ramfs_init);
+    drv_registra("red", red_init);
     drv_init_todos();
     cons_init();
     cdcat_inicia();
