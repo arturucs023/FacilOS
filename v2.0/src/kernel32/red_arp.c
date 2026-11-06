@@ -125,7 +125,6 @@ void red_arp_entrada(const uint8_t *m, int tam) {
     uint32_t spa, tpa;
     uint8_t yo[6];
     int i;
-    if (tam < 42) return;
     hw = (uint16_t)((m[14] << 8) | m[15]);
     pr = (uint16_t)((m[16] << 8) | m[17]);
     hl = m[18];
@@ -180,6 +179,7 @@ int red_arp_resolver(uint32_t ip, int espera_ms, uint8_t *mac) {
     uint8_t yo[6];
     uint8_t pet[42];
     uint32_t fin;
+    int tr;
     if (!red_hay()) return -1;
     if (!mac || !ip) return -2;
     if (espera_ms < 0) espera_ms = 0;
@@ -187,11 +187,11 @@ int red_arp_resolver(uint32_t ip, int espera_ms, uint8_t *mac) {
     if (busca(ip, mac)) return 0;
     if (red_mac(yo)) return -1;
     haz_peticion(pet, yo, red_cfg_ip(), ip);
-    if (red_tx(pet, 42) != 42) return -1;
+    tr = red_tx(pet, 42);
+    if (tr != 42) return -1;
     fin = irq_ticks() + (uint32_t)espera_ms / 10u + 1u;
     for (;;) {
         red_bombea();
-        if (busca(ip, mac)) return 0;
         if ((int32_t)(irq_ticks() - fin) >= 0) return 1;
         proc_actual->modo = 0;
         proc_bloquea_ticks(irq_ticks() + 2u);

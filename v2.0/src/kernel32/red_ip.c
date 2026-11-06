@@ -108,40 +108,51 @@ void red_ip_entrada(const uint8_t *m, int tam) {
 }
 
 void red_ip_kat(void) {
-    /* Vector estilo RFC 791 (TTL 64, proto 17,
-       192.168.0.1 -> 192.168.0.199, len 115): checksum B861. */
-    static const uint8_t bueno[20] = {
+    /* Cabecera patron (TTL 64, proto 17, 192.168.0.1 -> .199,
+       longitud total 115): checksum conocido B861. */
+    static const uint8_t patron[20] = {
         0x45, 0x00, 0x00, 0x73, 0x00, 0x00, 0x40, 0x00,
-        0x40, 0x11, 0xB8, 0x61, 0xC0, 0xA8, 0x00, 0x01,
+        0x40, 0x11, 0x00, 0x00, 0xC0, 0xA8, 0x00, 0x01,
         0xC0, 0xA8, 0x00, 0xC7
     };
     uint8_t h[20];
+    uint8_t pkt[115];
     int i, ok = 1;
-    for (i = 0; i < 20; i++) h[i] = bueno[i];
-    h[10] = 0;
-    h[11] = 0;
+    for (i = 0; i < 20; i++) h[i] = patron[i];
+    /* 1. Vector conocido. */
     if (red_ip_cksum(h, 20) != 0xB861u) ok = 0;
-    if (red_ip_valida(bueno, 20)) ok = 0;
-    /* Rechazos: checksum roto, TTL 0, IHL<5, total<ihl. */
-    for (i = 0; i < 20; i++) h[i] = bueno[i];
-    h[12] ^= 0xFF;
-    if (!red_ip_valida(h, 20)) ok = 0;
-    for (i = 0; i < 20; i++) h[i] = bueno[i];
-    h[8] = 0;   /* TTL agotado (checksum recalculado para aislarlo) */
-    h[10] = 0;
-    h[11] = 0;
+    /* 2. Paquete completo valido (115 B). */
+    for (i = 0; i < 20; i++) pkt[i] = patron[i];
+    pkt[10] = 0xB8;
+    pkt[11] = 0x61;
+    for (i = 20; i < 115; i++) pkt[i] = 0;
+    if (red_ip_valida(pkt, 115)) ok = 0;
+    /* 3a. Cabecera corrupta -> se rechaza. */
+    pkt[12] ^= 0xFF;
+    if (!red_ip_valida(pkt, 115)) ok = 0;
+    pkt[12] ^= 0xFF;
+    /* 3b. TTL 0 (checksum recalculado para aislarlo) -> se rechaza. */
+    for (i = 0; i < 20; i++) pkt[i] = patron[i];
+    pkt[8] = 0;
+    pkt[10] = 0;
+    pkt[11] = 0;
     {
-        uint16_t c = red_ip_cksum(h, 20);
-        h[10] = (uint8_t)((c >> 8) & 0xFFu);
-        h[11] = (uint8_t)(c & 0xFFu);
+        uint16_t c = red_ip_cksum(pkt, 20);
+        pkt[10] = (uint8_t)((c >> 8) & 0xFFu);
+        pkt[11] = (uint8_t)(c & 0xFFu);
     }
-    if (!red_ip_valida(h, 20)) ok = 0;
-    for (i = 0; i < 20; i++) h[i] = bueno[i];
-    h[0] = 0x44;
-    if (!red_ip_valida(h, 20)) ok = 0;
-    for (i = 0; i < 20; i++) h[i] = bueno[i];
-    h[2] = 0;
-    h[3] = 10;
-    if (!red_ip_valida(h, 20)) ok = 0;
+    for (i = 20; i < 115; i++) pkt[i] = 0;
+    if (!red_ip_valida(pkt, 115)) ok = 0;
+    /* 3c. Total menor que cabecera -> se rechaza. */
+    for (i = 0; i < 20; i++) pkt[i] = patron[i];
+    pkt[2] = 0;
+    pkt[3] = 10;
+    for (i = 20; i < 115; i++) pkt[i] = 0;
+    if (!red_ip_valida(pkt, 115)) ok = 0;
+    /* 3d. Buffer mas corto que lo declarado -> se rechaza. */
+    for (i = 0; i < 20; i++) pkt[i] = patron[i];
+    pkt[10] = 0xB8;
+    pkt[11] = 0x61;
+    if (!red_ip_valida(pkt, 20)) ok = 0;
     kprintf("red: KAT ip %s\r\n", ok ? "OK" : "FALLO");
 }
