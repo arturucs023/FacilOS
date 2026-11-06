@@ -200,5 +200,36 @@ int u_red_trama_enviar(const void *marco, int tam);
 /* Recibe trama (sin CRC). >0 tam, 0 espera agotada, -1 sin adaptador,
    -2 parametros invalidos. Espera acotada a 10 s. */
 int u_red_trama_recibir(void *marco, int max, int espera);
+/* F2: configuracion L3 (16 B: ip, mascara, puerta, dns; primer
+   octeto en el byte bajo). */
+typedef struct {
+    unsigned int ip;
+    unsigned int mascara;
+    unsigned int puerta;
+    unsigned int dns;
+} red_cfg_t;
+int u_red_configurar_leer(red_cfg_t *c);      /* op 0 */
+int u_red_fijar(int campo, unsigned int valor); /* 1=ip 2=mask 3=gw 4=dns */
+/* F2: consulta (12 B: ip, mac[6], espera): 0 ok, 1 espera agotada. */
+typedef struct {
+    unsigned int ip;
+    unsigned char mac[6];
+    unsigned short espera;
+} red_consulta_t;
+int u_red_consultar(int tipo, void *ptr);
+/* F2: sonda IP de diagnostico (8 B: ip, ttl, proto, espera). */
+typedef struct {
+    unsigned int ip;
+    unsigned char ttl;
+    unsigned char proto;
+    unsigned short espera;
+} red_sonda_t;
+/* F2: ruta (12 B: dst, mask, gw; gw=0 directa). Devuelve bytes. */
+typedef struct {
+    unsigned int dst;
+    unsigned int mask;
+    unsigned int gw;
+} red_ruta_t;
+int u_red_rutas(void *buf, int max);
 
 #endif

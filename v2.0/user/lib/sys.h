@@ -10,7 +10,8 @@
    v1.7: 25=ejecutar (hijo con estado preservado), 26=terminal (shell),
    27=hay_tecla (sin bloqueo).
    v2.2: 46-49 video/teclado, 50=apagar, 51=reiniciar.
-   v2.3-red: 52=red_interfaz, 53=red_trama_enviar, 54=red_trama_recibir.
+   v2.3-red: 52=red_interfaz, 53=red_trama_enviar, 54=red_trama_recibir,
+   55=red_configurar, 56=red_consultar, 63=red_rutas (57-62 F3-F5).
    leer/escribir usan el offset del fd (buscar lo mueve); escribir
    extiende pero no trunca (usar truncar). */
 
@@ -283,6 +284,18 @@ static inline int sys_red_trama_enviar(const void *marco, int tam) {
 }
 static inline int sys_red_trama_recibir(void *marco, int max, int espera) {
     return sys_llama(54, max, espera, (int)marco);
+}
+/* F2: 55 configura (op 0=leer16B, 1=ip, 2=mask, 3=puerta, 4=dns). */
+static inline int sys_red_configurar(int op, unsigned int valor) {
+    return sys_llama(55, op, (int)valor, 0);
+}
+/* F2: 56 consulta (tipo 0=ARP ptr12B, tipo 2=sonda ptr8B). */
+static inline int sys_red_consultar(int tipo, void *ptr) {
+    return sys_llama(56, tipo, (int)ptr, 0);
+}
+/* F2: 63 rutas (op 0: vuelca hasta max bytes, devuelve bytes). */
+static inline int sys_red_rutas(int op, void *buf, int max) {
+    return sys_llama(63, op, (int)buf, max);
 }
 
 /* v2.2-f32: apagar (50) y reiniciar (51) desde el boton FacilOS.

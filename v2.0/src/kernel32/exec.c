@@ -12,6 +12,9 @@
 #include "ipc.h"
 #include "ps2.h"
 #include "drv_red.h"
+#include "red.h"
+#include "red_arp.h"
+#include "red_ip.h"
 
 /* v1.9: descriptores y heap son POR PROCESO (ver proc.h). El bloque del
    proceso con el que estamos se toma de proc_actual, de modo que la
@@ -1325,8 +1328,130 @@ __attribute__((optimize("O0"))) static void sc_54(regs_t *r, int di)
  }
 
 
+__attribute__((optimize("O0"))) static void sc_55(regs_t *r, int di)
+ {
+        /* v2.3-red F2: configuracion L3 (sin adaptador tambien vale).
+           op 0=leer 16B {ip,mask,gw,dns}; 1=ip 2=mask 3=gw 4=dns.
+           Fijar IP no nula emite anuncio gratuito. */
+        int op = (int)r->ebx;
+        r->eax = (uint32_t)-2;
+        if (op == 0) {
+            red_cfg_t c;
+            if (!ptr_ok(di, r->ecx, 16, 1)) return;
+            red_cfg_leer(&c);
+            if (di >= 0) {
+                if (pag_escribe_usr((unsigned)di, r->ecx, &c, 16))
+                    return;
+            } else {
+                uint8_t *d = (uint8_t *)r->ecx;
+                uint8_t *s = (uint8_t *)&c;
+                for (int i = 0; i < 16; i++) d[i] = s[i];
+            }
+            r->eax = 0;
+            return;
+        }
+        if (op >= 1 && op <= 4) {
+            r->eax = (uint32_t)red_cfg_fijar(op, r->ecx);
+            return;
+        }
+        return;
+ }
+
+
+__attribute__((optimize("O0"))) static void sc_56(regs_t *r, int di)
+ {
+        /* v2.3-red F2: consulta de red.
+           tipo 0 (ARP): ptr12B {ip, mac[6], espera_ms}; 0 ok con MAC,
+           1 espera agotada, -1 sin adaptador, -2 args.
+           tipo 2 (sonda IP de diagnostico): ptr8B {ip,ttl,proto,
+           espera}; 0 enviada, resto error de red_ip_enviar.
+           tipo 1 (DNS) en F4: -2 no implementado. */
+        int tipo = (int)r->ebx;
+        r->eax = (uint32_t)-2;
+        if (tipo == 0) {
+            red_consulta_t q;
+            int k;
+            if (!ptr_ok(di, r->ecx, 12, 1)) return;
+            if (di >= 0) {
+                if (pag_lee_usr((unsigned)di, r->ecx, &q, 12)) return;
+            } else {
+                uint8_t *s = (uint8_t *)r->ecx;
+                uint8_t *d = (uint8_t *)&q;
+                for (int i = 0; i < 12; i++) d[i] = s[i];
+            }
+            if (!q.ip) return;
+            if (q.espera > 10000) q.espera = 10000;
+            k = red_arp_resolver(q.ip, (int)q.espera, q.mac);
+            if (k < 0) { r->eax = (uint32_t)k; return; }
+            r = regs_actual(r);
+            if (di >= 0) {
+                if (pag_escribe_usr((unsigned)di, r->ecx + 4, q.mac, 6))
+                    return;
+            } else {
+                uint8_t *d = (uint8_t *)r->ecx + 4;
+                for (int i = 0; i < 6; i++) d[i] = q.mac[i];
+            }
+            r->eax = (uint32_t)k;
+            return;
+        }
+        if (tipo == 2) {
+            red_sonda_t s;
+            static const uint8_t carga[8] = {
+                'F', '3', '2', 'R', 'E', 'D', 'v', '1'
+            };
+            int k;
+            if (!ptr_ok(di, r->ecx, 8, 0)) return;
+            if (di >= 0) {
+                if (pag_lee_usr((unsigned)di, r->ecx, &s, 8)) return;
+            } else {
+                uint8_t *p = (uint8_t *)r->ecx;
+                uint8_t *d = (uint8_t *)&s;
+                for (int i = 0; i < 8; i++) d[i] = p[i];
+            }
+            if (!s.ip || !s.proto) return;
+            k = red_ip_enviar(s.ip, s.proto, carga, 8,
+                              s.ttl ? s.ttl : 64);
+            r = regs_actual(r);
+            r->eax = (uint32_t)k;
+            return;
+        }
+        return;
+ }
+
+
+__attribute__((optimize("O0"))) static void sc_63(regs_t *r, int di)
+ {
+        /* v2.3-red F2: tabla de rutas (conectada + defecto derivadas
+           de la configuracion). op 0: vuelca hasta max bytes (12 por
+           ruta); devuelve bytes o -2. op 1+ en F6. */
+        int op = (int)r->ebx;
+        uint32_t max = r->ecx;
+        r->eax = (uint32_t)-2;
+        if (op != 0) return;
+        if (max > 96) max = 96;
+        if (!max) { r->eax = 0; return; }
+        if (!ptr_ok(di, r->edx, max, 1)) return;
+        {
+            static uint8_t rutas[96];
+            int n = red_rutas(rutas, (int)max);
+            if (n < 0) { r->eax = (uint32_t)n; return; }
+            if (di >= 0) {
+                if (pag_escribe_usr((unsigned)di, r->edx, rutas,
+                                    (uint32_t)n))
+                    return;
+            } else {
+                uint8_t *d = (uint8_t *)r->edx;
+                for (int i = 0; i < n; i++) d[i] = rutas[i];
+            }
+            r = regs_actual(r);
+            r->eax = (uint32_t)n;
+        }
+        return;
+ }
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 55
+#define SC_N 64
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -1382,6 +1507,10 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [52] = sc_52,
     [53] = sc_53,
     [54] = sc_54,
+    [55] = sc_55,
+    [56] = sc_56,
+    /* 57-62 reservados (F3-F5) */
+    [63] = sc_63,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1439,6 +1568,9 @@ static const char *const sc_nombre[SC_N] = {
     [52] = "red_interfaz",
     [53] = "red_trama_enviar",
     [54] = "red_trama_recibir",
+    [55] = "red_configurar",
+    [56] = "red_consultar",
+    [63] = "red_rutas",
 };
 static uint32_t sc_count[SC_N];
 

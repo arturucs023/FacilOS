@@ -612,6 +612,18 @@ int u_red_trama_enviar(const void *marco, int tam) {
 int u_red_trama_recibir(void *marco, int max, int espera) {
     return sys_red_trama_recibir(marco, max, espera);
 }
+int u_red_configurar_leer(red_cfg_t *c) {
+    return sys_red_configurar(0, (unsigned int)c);
+}
+int u_red_fijar(int campo, unsigned int valor) {
+    return sys_red_configurar(campo, valor);
+}
+int u_red_consultar(int tipo, void *ptr) {
+    return sys_red_consultar(tipo, ptr);
+}
+int u_red_rutas(void *buf, int max) {
+    return sys_red_rutas(0, buf, max);
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {
