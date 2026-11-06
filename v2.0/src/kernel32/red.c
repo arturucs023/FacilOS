@@ -2,6 +2,7 @@
 #include "drv_red.h"
 #include "red_arp.h"
 #include "red_ip.h"
+#include "red_icmp.h"
 #include "libc.h"
 
 /* v2.3-red F2: configuracion, rutas derivadas, deposito crudo y
@@ -28,6 +29,8 @@ void red_nucleo_init(void) {
     red_arp_init();
     for (i = 0; i < TAP_N; i++) tap_len[i] = 0;
     red_ip_kat();
+    red_icmp_init();
+    red_icmp_kat();
 }
 
 int red_cfg_fijar(int campo, uint32_t v) {

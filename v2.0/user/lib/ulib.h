@@ -181,7 +181,7 @@ void u_reiniciar(void);  /* no retorna si el 8042 responde */
 
 /* ---- red propia (syscalls 52-54, v2.3-red F1; sin POSIX) ---- */
 /* Ficha de 32 B (disposicion identica a drv_red.h del nucleo).
-   rsv[0]: entradas ARP en cache (F2). */
+   rsv[0]: ARP en cache; rsv[1]: ICMP ok; rsv[2]: ICMP errores. */
 typedef struct {
     unsigned char mac[6];
     unsigned char presente; /* 1 si hay adaptador activo */

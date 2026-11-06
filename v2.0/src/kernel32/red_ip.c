@@ -1,6 +1,7 @@
 #include "red_ip.h"
 #include "red.h"
 #include "red_arp.h"
+#include "red_icmp.h"
 #include "drv_red.h"
 #include "libc.h"
 
@@ -95,7 +96,8 @@ int red_ip_enviar(uint32_t dst, uint8_t proto,
 }
 
 void red_ip_entrada(const uint8_t *m, int tam) {
-    /* F2: valida y cuenta; el consumo real llega en F3+. */
+    /* F2 valida y cuenta; F3 despacha ICMP (el resto sigue al
+       deposito sin consumidor hasta F4/F5). */
     if (tam < 14 + 20) {
         ip_rx_err++;
         return;
@@ -105,6 +107,7 @@ void red_ip_entrada(const uint8_t *m, int tam) {
         return;
     }
     ip_rx_ok++;
+    if (m[14 + 9] == 1) red_icmp_entrada(m, tam);
 }
 
 void red_ip_kat(void) {
