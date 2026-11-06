@@ -3,6 +3,9 @@
 #include "cpu.h"
 #include "libc.h"
 #include "irq.h"
+#include "red.h"
+#include "red_arp.h"
+#include "red_ip.h"
 
 /* v2.3-red F1: RTL8139 (10EC:8139) por PIO.
  * Diseno: un descriptor Tx reutilizado (1 trama en vuelo),
@@ -111,6 +114,7 @@ int red_init(void) {
     uint32_t bar0, cmd;
     uint8_t *crudo;
     int i;
+    red_nucleo_init();   /* cache ARP, KAT IP: siempre, haya o no NIC */
     kprintf("red: buscando RTL8139 (10EC:8139)...\r\n");
     if (pci_busca(0x10EC, 0x8139, &bus, &dev, &fun)) {
         kprintf("red: sin adaptador (arranque sin red)\r\n");
