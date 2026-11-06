@@ -3,6 +3,7 @@
 #include "red_arp.h"
 #include "red_icmp.h"
 #include "red_udp.h"
+#include "red_tcp.h"
 #include "drv_red.h"
 #include "libc.h"
 
@@ -110,6 +111,7 @@ void red_ip_entrada(const uint8_t *m, int tam) {
     ip_rx_ok++;
     if (m[14 + 9] == 1) red_icmp_entrada(m, tam);
     else if (m[14 + 9] == 17) red_udp_entrada(m, tam);
+    else if (m[14 + 9] == 6) red_tcp_entrada(m, tam);
 }
 
 void red_ip_kat(void) {

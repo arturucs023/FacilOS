@@ -14,5 +14,7 @@ int red_arp_resolver(uint32_t ip, int espera_ms, uint8_t *mac);
 void red_arp_anuncia(void);
 /* Entradas validas en cache (diagnostico). */
 int red_arp_n(void);
+/* Mira la cache sin emitir (no bloquea). 1 con MAC, 0 ausente. */
+int red_arp_mira(uint32_t ip, uint8_t *mac);
 
 #endif

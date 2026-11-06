@@ -4,6 +4,7 @@
 #include "red_ip.h"
 #include "red_icmp.h"
 #include "red_udp.h"
+#include "red_tcp.h"
 #include "libc.h"
 
 /* v2.3-red F2: configuracion, rutas derivadas, deposito crudo y
@@ -34,6 +35,8 @@ void red_nucleo_init(void) {
     red_icmp_kat();
     red_udp_init();
     red_udp_kat();
+    red_tcp_init();
+    red_tcp_kat();
 }
 
 int red_cfg_fijar(int campo, uint32_t v) {

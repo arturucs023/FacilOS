@@ -209,6 +209,11 @@ int red_arp_resolver(uint32_t ip, int espera_ms, uint8_t *mac) {
     }
 }
 
+int red_arp_mira(uint32_t ip, uint8_t *mac) {
+    if (!ip || !mac) return 0;
+    return busca(ip, mac);
+}
+
 void red_arp_anuncia(void) {
     uint8_t yo[6];
     uint8_t pet[42];

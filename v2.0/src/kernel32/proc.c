@@ -2,6 +2,7 @@
 #include "pag.h"
 #include "ipc.h"
 #include "red_udp.h"
+#include "red_tcp.h"
 #include "libc.h"
 #include "cpu.h"
 #include "seg.h"
@@ -231,6 +232,7 @@ void proc_fusiona(void) {
         if (p->reciclable) continue;         /* ya liberado */
         ipc_limpia_proceso(p);            /* descarta mensajes pendientes */
         red_udp_limpia_proceso((uint32_t)p->pid);  /* libera sus ligas */
+        red_tcp_limpia_proceso((uint32_t)p->pid);  /* RST + libera */
         /* Chequeo de destruccion: las paginas de usuario presentes en las
            regiones registradas deben coincidir con los marcos anotados.
            Una diferencia indica fuga (mapeado sin anotar) o residuo. */
