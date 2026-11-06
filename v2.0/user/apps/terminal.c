@@ -1607,7 +1607,7 @@ static void red_pon_num(const char *tit, unsigned int v) {
     int t = 0, q = 0;
     while (tit[q] && t < 50) b[t++] = tit[q++];
     b[t++] = '=';
-    u_utoa(v, nb);
+    u_utoa(v, nb, 10);
     q = 0;
     while (nb[q] && t < 62) b[t++] = nb[q++];
     b[t] = 0;
