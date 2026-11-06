@@ -1425,7 +1425,9 @@ __attribute__((optimize("O0"))) static void sc_57(regs_t *r, int di)
         /* v2.3-red F3: eco ICMP (comprovar_conexion). Entrada 12 B
            {ip,n,espera,ttl}: N ecos (1..10) con espera acotada cada
            uno. Sale 6 B por eco {seq,rtt_ms,ok,ttl}. Devuelve bytes
-           o -1 sin adaptador, -2 args, -3 sin IP configurada. */
+           o -1 sin adaptador, -2 args, -3 sin IP; -4 ARP agotado y
+           -5 fallo Tx se propagan del envio (la terminal los muestra
+           como fallo de comprobacion, no como falta de adaptador). */
         struct {
             uint32_t ip;
             uint16_t n;
@@ -1449,8 +1451,8 @@ __attribute__((optimize("O0"))) static void sc_57(regs_t *r, int di)
         if (!pe.ip || !pe.n || pe.n > 10) return;
         if (pe.espera > 10000) pe.espera = 10000;
         if (pe.espera < 100) pe.espera = 100;
-        if (!red_cfg_ip()) { r->eax = (uint32_t)-3; return; }
         if (!red_hay()) { r->eax = (uint32_t)-1; return; }
+        if (!red_cfg_ip()) { r->eax = (uint32_t)-3; return; }
         if (!ptr_ok(di, r->ecx, pe.n * 6u, 1)) return;
         ident = (uint16_t)((uint32_t)proc_actual->pid * 7919u +
                           irq_ticks());

@@ -139,9 +139,13 @@ int red_icmp_ping(uint32_t dst, uint16_t ident, uint16_t seq,
     pend_t0 = irq_ticks();
     pend_ok = 0;
     pend_rtt = 0;
-    if (red_ip_enviar(dst, 1, msg, n, ttl ? ttl : 64) < 0) {
-        hay_pend = 0;
-        return -1;
+    {
+        int k = red_ip_enviar(dst, 1, msg, n, ttl ? ttl : 64);
+        if (k < 0) {
+            hay_pend = 0;
+            return k;   /* propaga: -1 sin adaptador, -3 sin ruta,
+                           -4 ARP agotado, -5 fallo Tx */
+        }
     }
     fin = irq_ticks() + espera_ms / 10u + 1u;
     for (;;) {
@@ -185,5 +189,15 @@ void red_icmp_kat(void) {
     m[10] ^= 0xFF;
     if (red_ip_cksum(m, 40) == 0) ok = 0;
     m[10] ^= 0xFF;
+    {
+        static uint8_t corto[14 + 20 + 4];
+        uint32_t e0, e1;
+        int i2;
+        for (i2 = 0; i2 < (int)sizeof(corto); i2++) corto[i2] = 0;
+        red_icmp_contadores(0, &e0);
+        red_icmp_entrada(corto, (int)sizeof(corto));
+        red_icmp_contadores(0, &e1);
+        if (e1 != e0 + 1) ok = 0;
+    }
     kprintf("red: KAT icmp %s\r\n", ok ? "OK" : "FALLO");
 }

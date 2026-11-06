@@ -190,11 +190,22 @@ int red_arp_resolver(uint32_t ip, int espera_ms, uint8_t *mac) {
     tr = red_tx(pet, 42);
     if (tr != 42) return -1;
     fin = irq_ticks() + (uint32_t)espera_ms / 10u + 1u;
-    for (;;) {
-        red_bombea();
-        if ((int32_t)(irq_ticks() - fin) >= 0) return 1;
-        proc_actual->modo = 0;
-        proc_bloquea_ticks(irq_ticks() + 2u);
+    {
+        uint32_t ultimo_tx = irq_ticks();
+        for (;;) {
+            uint32_t ahora;
+            red_bombea();
+            if (busca(ip, mac)) return 0;   /* la respuesta ya esta */
+            ahora = irq_ticks();
+            if ((int32_t)(ahora - fin) >= 0) return 1;
+            if ((int32_t)(ahora - ultimo_tx) >= 50) {
+                /* Reintento cada 0,5 s (la primera puede perderse);
+                   espera total sigue acotada por `fin`. */
+                if (red_tx(pet, 42) == 42) ultimo_tx = ahora;
+            }
+            proc_actual->modo = 0;
+            proc_bloquea_ticks(irq_ticks() + 2u);
+        }
     }
 }
 

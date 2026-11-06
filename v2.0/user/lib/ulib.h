@@ -234,7 +234,8 @@ typedef struct {
 int u_red_rutas(void *buf, int max);
 /* F3: comprobar eco ICMP. Entrada 12 B {ip,n,espera,ttl};
    salida 6 B por eco {seq,rtt,ok,ttl}; devuelve bytes o negativo
-   (-1 sin adaptador, -2 args, -3 sin IP configurada). */
+   (-1 sin adaptador, -2 args, -3 sin IP; -4 ARP agotado y -5
+   fallo Tx se propagan del envio). */
 typedef struct {
     unsigned int ip;
     unsigned short n;

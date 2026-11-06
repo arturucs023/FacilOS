@@ -13,7 +13,8 @@ void red_icmp_entrada(const uint8_t *m, int tam);
 
 /* Emite un echo request y espera su reply.
    Devuelve 1 con rtt_ms/ttl si llega, 0 si agota la espera,
-   negativo en error (-1 sin adaptador, -2 args). */
+   negativo en error (-1 sin adaptador, -2 args, -3 sin ruta,
+   -4 ARP agotado, -5 fallo Tx). */
 int red_icmp_ping(uint32_t dst, uint16_t ident, uint16_t seq,
                   uint8_t ttl, uint32_t espera_ms,
                   uint16_t *rtt_ms, uint8_t *pttl);
