@@ -1425,22 +1425,22 @@ __attribute__((optimize("O0"))) static void sc_63(regs_t *r, int di)
            de la configuracion). op 0: vuelca hasta max bytes (12 por
            ruta); devuelve bytes o -2. op 1+ en F6. */
         int op = (int)r->ebx;
-        uint32_t max = r->ecx;
+        uint32_t max = r->edx;
         r->eax = (uint32_t)-2;
         if (op != 0) return;
         if (max > 96) max = 96;
         if (!max) { r->eax = 0; return; }
-        if (!ptr_ok(di, r->edx, max, 1)) return;
+        if (!ptr_ok(di, r->ecx, max, 1)) return;
         {
             static uint8_t rutas[96];
             int n = red_rutas(rutas, (int)max);
             if (n < 0) { r->eax = (uint32_t)n; return; }
             if (di >= 0) {
-                if (pag_escribe_usr((unsigned)di, r->edx, rutas,
+                if (pag_escribe_usr((unsigned)di, r->ecx, rutas,
                                     (uint32_t)n))
                     return;
             } else {
-                uint8_t *d = (uint8_t *)r->edx;
+                uint8_t *d = (uint8_t *)r->ecx;
                 for (int i = 0; i < n; i++) d[i] = rutas[i];
             }
             r = regs_actual(r);
