@@ -628,6 +628,168 @@ int u_red_comprobar(const red_peticion_t *pet, red_respuesta_t *resp,
                     int max) {
     return sys_red_comprobar(pet, resp, max);
 }
+int u_red_udp_ligar(int puerto) {
+    return sys_red_udp_ligar(puerto);
+}
+int u_red_udp_enviar(const red_udp_envio_t *e, const void *datos,
+                     int len) {
+    return sys_red_udp_enviar(e, datos, len);
+}
+int u_red_udp_recibir(const red_udp_peticion_t *pet, void *buf,
+                      int max) {
+    return sys_red_udp_recibir(pet, buf, max);
+}
+
+/* ---- DNS A/IN (v2.3-red F4; sin sockets) ---- */
+
+static int dns_es_ldh(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '-';
+}
+
+/* Arma consulta A/IN con RD. Devuelve long o negativo (-1 args,
+   -2 dominio invalido, -3 sin sitio). */
+int u_dns_armar(const char *dom, unsigned short xid,
+                unsigned char *sal, int max) {
+    int l, i = 0, ini = 0, t = 12;
+    if (!dom || !sal || max < 12 + 1 + 4 + 4) return -1;
+    l = u_strlen(dom);
+    if (l < 1 || l > 253) return -2;
+    if (dom[l - 1] == '.') l--;   /* punto final opcional */
+    if (!l) return -2;
+    while (i <= l) {
+        if (i == l || dom[i] == '.') {
+            int n = i - ini, k;
+            if (n < 1 || n > 63 || t + 1 + n + 5 > max) return -2;
+            sal[t++] = (unsigned char)n;
+            for (k = 0; k < n; k++) {
+                if (!dns_es_ldh(dom[ini + k])) return -2;
+                sal[t++] = (unsigned char)dom[ini + k];
+            }
+            ini = i + 1;
+        }
+        i++;
+    }
+    if (t + 5 > max) return -3;
+    sal[t++] = 0;
+    sal[t++] = 0;
+    sal[t++] = 1;   /* A */
+    sal[t++] = 0;
+    sal[t++] = 1;   /* IN */
+    sal[0] = (unsigned char)((xid >> 8) & 0xFFu);
+    sal[1] = (unsigned char)(xid & 0xFFu);
+    sal[2] = 0x01;  /* RD */
+    sal[3] = 0;
+    sal[4] = 0;
+    sal[5] = 1;    /* QDCOUNT */
+    sal[6] = 0;
+    sal[7] = 0;
+    sal[8] = 0;
+    sal[9] = 0;
+    sal[10] = 0;
+    sal[11] = 0;
+    return t;
+}
+
+/* Salta un nombre (etiquetas o punteros) con validacion estricta.
+   Devuelve 0 y el offset siguiente en *sig, o -1. */
+static int dns_salta(const unsigned char *m, int n, int o, int *sig) {
+    int saltos = 0, fin = -1;
+    for (;;) {
+        unsigned char c;
+        if (o < 0 || o >= n) return -1;
+        c = m[o];
+        if ((c & 0xC0) == 0xC0) {
+            int d;
+            if (o + 1 >= n) return -1;
+            d = ((c & 0x3Fu) << 8) | m[o + 1];
+            if (d >= n) return -1;
+            if (fin < 0) fin = o + 2;
+            o = d;
+            if (++saltos > 16) return -1;
+            continue;
+        }
+        if (c & 0xC0) return -1;
+        if (!c) {
+            if (sig) *sig = (fin >= 0 ? fin : o + 1);
+            return 0;
+        }
+        if (c > 63 || o + 1 + c > n) return -1;
+        o += 1 + c;
+    }
+}
+
+/* Lee respuesta DNS. Compara xid y la pregunta con la enviada
+   (preg/npreg). Extrae hasta maxips A en ips[] con ttls[].
+   *rcode = codigo (0..5, -1 si ni cabecera). Devuelve #A o
+   negativo (-1 malformada, -2 no es nuestra, -4 truncada TC). */
+int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
+               const unsigned char *preg, int npreg,
+               unsigned int *ips, unsigned int *ttls, int maxips,
+               int *rcode) {
+    int band, qd, an, ns, ar, o, qfin, i, hall = 0;
+    if (rcode) *rcode = -1;
+    if (!m || n < 12 || !preg || npreg < 12 + 1 + 4 || !ips ||
+        maxips < 1)
+        return -1;
+    if (((m[0] << 8) | m[1]) != xid) return -2;
+    band = (m[2] << 8) | m[3];
+    if (!(band & 0x8000)) return -1;     /* debe ser respuesta */
+    if ((band & 0x7800)) return -1;      /* opcode 0 */
+    if (rcode) *rcode = band & 15;
+    if (band & 0x0200) return -4;        /* truncada (sin TCP) */
+    qd = (m[4] << 8) | m[5];
+    an = (m[6] << 8) | m[7];
+    ns = (m[8] << 8) | m[9];
+    ar = (m[10] << 8) | m[11];
+    if (qd != 1) return -1;
+    if (dns_salta(m, n, 12, &qfin)) return -1;
+    if (qfin + 4 > n) return -1;
+    /* La pregunta debe ser eco exacto de la enviada (nombre+tipo+clase). */
+    if (qfin + 4 - 12 != npreg - 12) return -2;
+    {
+        int k;
+        for (k = 0; k + 12 < npreg; k++)
+            if (m[12 + k] != preg[12 + k]) return -2;
+    }
+    o = qfin + 4;
+    for (i = 0; i < an; i++) {
+        int tipo, clase, rdlen;
+        unsigned int ttl;
+        if (dns_salta(m, n, o, &o)) return -1;
+        if (o + 10 > n) return -1;
+        tipo = (m[o] << 8) | m[o + 1];
+        clase = (m[o + 2] << 8) | m[o + 3];
+        ttl = ((unsigned int)m[o + 4] << 24) |
+              ((unsigned int)m[o + 5] << 16) |
+              ((unsigned int)m[o + 6] << 8) | m[o + 7];
+        rdlen = (m[o + 8] << 8) | m[o + 9];
+        o += 10;
+        if (o + rdlen > n) return -1;
+        if (tipo == 1 && clase == 1 && rdlen == 4) {
+            if (hall < maxips) {
+                ips[hall] = (unsigned int)m[o] |
+                            ((unsigned int)m[o + 1] << 8) |
+                            ((unsigned int)m[o + 2] << 16) |
+                            ((unsigned int)m[o + 3] << 24);
+                if (ttls) ttls[hall] = ttl;
+                hall++;
+            }
+        }
+        o += rdlen;
+    }
+    for (i = 0; i < ns + ar; i++) {
+        int rdlen;
+        if (dns_salta(m, n, o, &o)) return -1;
+        if (o + 10 > n) return -1;
+        rdlen = (m[o + 8] << 8) | m[o + 9];
+        o += 10;
+        if (o + rdlen > n) return -1;
+        o += rdlen;
+    }
+    if (o > n) return -1;
+    return hall;
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {

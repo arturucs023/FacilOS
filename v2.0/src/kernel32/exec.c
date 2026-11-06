@@ -16,6 +16,7 @@
 #include "red_arp.h"
 #include "red_ip.h"
 #include "red_icmp.h"
+#include "red_udp.h"
 
 /* v1.9: descriptores y heap son POR PROCESO (ver proc.h). El bloque del
    proceso con el que estamos se toma de proc_actual, de modo que la
@@ -1284,9 +1285,12 @@ __attribute__((optimize("O0"))) static void sc_53(regs_t *r, int di)
 
 __attribute__((optimize("O0"))) static void sc_54(regs_t *r, int di)
  {
-        /* v2.3-red F1: recibe trama (ebx=max, ecx=espera ms, edx=buf).
+        /* v2.3-red F4: recibe trama (ebx=max, ecx=espera ms, edx=buf).
            Devuelve tam>0, 0 si agota la espera, -1 sin adaptador,
-           -2 parametros invalidos. Espera acotada a 10 s. */
+           -2 parametros invalidos. Espera acotada a 10 s.
+           Desde F4 bombea primero (el nucleo procesa ARP/ICMP/UDP)
+           y sirve del deposito tap: los lectores crudos ya no roban
+           tramas a la pila ni entre si. Mismo contrato que F1. */
         static uint8_t tmp[1518];
         uint32_t max = r->ebx, esp = r->ecx;
         uint32_t fin;
@@ -1298,9 +1302,11 @@ __attribute__((optimize("O0"))) static void sc_54(regs_t *r, int di)
         }
         if (!ptr_ok(di, r->edx, max, 1)) return;
         if (esp > 10000) esp = 10000;
+        if (!red_hay()) { r->eax = (uint32_t)-1; return; }
         fin = irq_ticks() + esp / 10u + 1u;
         for (;;) {
-            k = red_rx(tmp, 1518);
+            red_bombea();
+            k = red_saca_crudo(tmp, 1518);
             if (k < 0) { r->eax = (uint32_t)k; return; }
             if (k > 0) {
                 if ((uint32_t)k > max) k = (int)max;
@@ -1487,6 +1493,139 @@ __attribute__((optimize("O0"))) static void sc_57(regs_t *r, int di)
  }
 
 
+__attribute__((optimize("O0"))) static void sc_58(regs_t *r, int di)
+ {
+        /* v2.3-red F4: liga puerto UDP (ebx=puerto, 0=efimero).
+           Devuelve el puerto o negativo (-1 sin adaptador, -2 args,
+           -6 en uso por otro proceso o tabla llena con pendientes).
+           Idempotente para el propio proceso. */
+        uint32_t p = r->ebx;
+        int k;
+        r->eax = (uint32_t)-2;
+        (void)di;
+        if (p > 65535) return;
+        if (!red_hay()) { r->eax = (uint32_t)-1; return; }
+        if (!proc_actual) return;
+        k = red_udp_ligar((uint16_t)p, (uint32_t)proc_actual->pid);
+        r->eax = (uint32_t)k;
+        return;
+ }
+
+
+__attribute__((optimize("O0"))) static void sc_59(regs_t *r, int di)
+ {
+        /* v2.3-red F4: envia datagrama UDP. Entrada 8 B {ip,dpuerto,
+           spuerto} en ebx, datos en ecx, len en edx (0..1472).
+           Devuelve len o negativo (-1 sin adaptador, -2 args, -3 sin
+           ruta, -4 ARP agotado, -5 fallo Tx). sport 0 = sin ligar. */
+        struct {
+            uint32_t ip;
+            uint16_t dport;
+            uint16_t sport;
+        } e;
+        static uint8_t tmp[UDP_TX_MAX];
+        uint32_t len = r->edx;
+        int k;
+        r->eax = (uint32_t)-2;
+        if (!ptr_ok(di, r->ebx, 8, 0)) return;
+        if (di >= 0) {
+            if (pag_lee_usr((unsigned)di, r->ebx, (void *)&e, 8))
+                return;
+        } else {
+            uint8_t *s = (uint8_t *)r->ebx;
+            uint8_t *d = (uint8_t *)&e;
+            for (int i = 0; i < 8; i++) d[i] = s[i];
+        }
+        if (!e.ip || !e.dport || len > UDP_TX_MAX) return;
+        if (len && !ptr_ok(di, r->ecx, len, 0)) return;
+        if (!red_hay()) { r->eax = (uint32_t)-1; return; }
+        if (len) {
+            if (di >= 0) {
+                uint32_t h = 0;
+                while (h < len) {
+                    uint32_t t = len - h;
+                    uint8_t parte[64];
+                    if (t > 64) t = 64;
+                    if (pag_lee_usr((unsigned)di, r->ecx + h, parte, t))
+                        return;
+                    for (uint32_t i = 0; i < t; i++)
+                        tmp[h + i] = parte[i];
+                    h += t;
+                }
+            } else {
+                uint8_t *s = (uint8_t *)r->ecx;
+                for (uint32_t i = 0; i < len; i++) tmp[i] = s[i];
+            }
+        }
+        k = red_udp_enviar(e.ip, e.dport, e.sport, tmp, (int)len);
+        r->eax = (uint32_t)k;
+        return;
+ }
+
+
+__attribute__((optimize("O0"))) static void sc_60(regs_t *r, int di)
+ {
+        /* v2.3-red F4: recibe datagrama UDP. Entrada 4 B
+           {puerto,espera} en ebx; salida en ecx {src:4,sport:2,
+           len:2}+datos, max en edx (>=8). Devuelve bytes (>0),
+           0 si agota la espera, -1 sin adaptador, -2 args o puerto
+           sin ligar, -6 liga de otro proceso. Espera acotada. */
+        struct {
+            uint16_t puerto;
+            uint16_t espera;
+        } pe;
+        static uint8_t tmp[8 + UDP_COLA_DATOS];
+        uint32_t max = r->edx, fin;
+        uint32_t pid;
+        int k;
+        r->eax = (uint32_t)-2;
+        if (!ptr_ok(di, r->ebx, 4, 0)) return;
+        if (di >= 0) {
+            if (pag_lee_usr((unsigned)di, r->ebx, (void *)&pe, 4))
+                return;
+        } else {
+            uint8_t *s = (uint8_t *)r->ebx;
+            uint8_t *d = (uint8_t *)&pe;
+            for (int i = 0; i < 4; i++) d[i] = s[i];
+        }
+        if (!pe.puerto || max < 8) return;
+        if (!ptr_ok(di, r->ecx, max, 1)) return;
+        if (pe.espera > 10000) pe.espera = 10000;
+        if (!red_hay()) { r->eax = (uint32_t)-1; return; }
+        if (!proc_actual) return;
+        pid = (uint32_t)proc_actual->pid;
+        fin = irq_ticks() + pe.espera / 10u + 1u;
+        for (;;) {
+            int copia;
+            red_bombea();
+            k = red_udp_sacar(pe.puerto, pid, 0, 0, tmp,
+                              (int)sizeof(tmp));
+            if (k < 0) { r->eax = (uint32_t)k; return; }
+            if (k > 0) {
+                copia = k > (int)max ? (int)max : k;
+                r = regs_actual(r);
+                if (di >= 0) {
+                    if (pag_escribe_usr((unsigned)di, r->ecx, tmp,
+                                        (uint32_t)copia))
+                        return;
+                } else {
+                    uint8_t *d = (uint8_t *)r->ecx;
+                    for (int i = 0; i < copia; i++) d[i] = tmp[i];
+                }
+                r->eax = (uint32_t)copia;
+                return;
+            }
+            if ((int32_t)(irq_ticks() - fin) >= 0) {
+                r->eax = 0;
+                return;
+            }
+            proc_actual->modo = 0;
+            proc_bloquea_ticks(irq_ticks() + 2u);
+            r = regs_actual(r);
+        }
+ }
+
+
 __attribute__((optimize("O0"))) static void sc_63(regs_t *r, int di)
  {
         /* v2.3-red F2: tabla de rutas (conectada + defecto derivadas
@@ -1578,7 +1717,10 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [55] = sc_55,
     [56] = sc_56,
     [57] = sc_57,
-    /* 58-62 reservados (F4-F5) */
+    [58] = sc_58,
+    [59] = sc_59,
+    [60] = sc_60,
+    /* 61-62 reservados (F5) */
     [63] = sc_63,
 };
 static const char *const sc_nombre[SC_N] = {
@@ -1640,6 +1782,9 @@ static const char *const sc_nombre[SC_N] = {
     [55] = "red_configurar",
     [56] = "red_consultar",
     [57] = "red_comprobar",
+    [58] = "red_udp_ligar",
+    [59] = "red_udp_enviar",
+    [60] = "red_udp_recibir",
     [63] = "red_rutas",
 };
 static uint32_t sc_count[SC_N];

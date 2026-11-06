@@ -11,7 +11,8 @@
    27=hay_tecla (sin bloqueo).
    v2.2: 46-49 video/teclado, 50=apagar, 51=reiniciar.
    v2.3-red: 52=red_interfaz, 53/54=trama cruda, 55=configurar,
-   56=consultar, 57=comprobar, 63=rutas (58-62 F4-F5).
+   56=consultar, 57=comprobar, 58-60=UDP (ligar/enviar/recibir),
+   63=rutas (61-62 F5).
    leer/escribir usan el offset del fd (buscar lo mueve); escribir
    extiende pero no trunca (usar truncar). */
 
@@ -301,6 +302,24 @@ static inline int sys_red_rutas(int op, void *buf, int max) {
    por eco {seq,rtt_ms,ok,ttl}; devuelve bytes o negativo. */
 static inline int sys_red_comprobar(const void *pet, void *resp, int max) {
     return sys_llama(57, (int)pet, (int)resp, max);
+}
+/* F4: 58 ligar puerto UDP (0=efimero). Devuelve puerto o negativo
+   (-1 sin adaptador, -2 args, -6 en uso o tabla llena). */
+static inline int sys_red_udp_ligar(int puerto) {
+    return sys_llama(58, puerto, 0, 0);
+}
+/* F4: 59 enviar datagrama. e 8 B {ip,dpuerto,spuerto}, datos len
+   (0..1472). Devuelve len o negativo (IP: -1/-2/-3/-4/-5). */
+static inline int sys_red_udp_enviar(const void *e, const void *datos,
+                                     int len) {
+    return sys_llama(59, (int)e, (int)datos, len);
+}
+/* F4: 60 recibir datagrama. pet 4 B {puerto,espera}; sale
+   {src:4,sport:2,len:2}+datos. Devuelve bytes, 0 espera, -1 sin
+   adaptador, -2 args/sin ligar, -6 de otro proceso. */
+static inline int sys_red_udp_recibir(const void *pet, void *buf,
+                                      int max) {
+    return sys_llama(60, (int)pet, (int)buf, max);
 }
 
 /* v2.2-f32: apagar (50) y reiniciar (51) desde el boton FacilOS.

@@ -181,7 +181,8 @@ void u_reiniciar(void);  /* no retorna si el 8042 responde */
 
 /* ---- red propia (syscalls 52-54, v2.3-red F1; sin POSIX) ---- */
 /* Ficha de 32 B (disposicion identica a drv_red.h del nucleo).
-   rsv[0]: ARP en cache; rsv[1]: ICMP ok; rsv[2]: ICMP errores. */
+   rsv[0]: ARP en cache; rsv[1]: ICMP ok; rsv[2]: ICMP errores;
+   rsv[3]: UDP recibidos (F4). */
 typedef struct {
     unsigned char mac[6];
     unsigned char presente; /* 1 si hay adaptador activo */
@@ -252,5 +253,30 @@ typedef struct {
 } red_respuesta_t;
 int u_red_comprobar(const red_peticion_t *pet, red_respuesta_t *resp,
                     int max);
+/* F4: UDP propio (sin sockets). Entrada envio 8 B {ip,dpuerto,
+   spuerto}; salida recepcion {src:4,sport:2,len:2}+datos. */
+typedef struct {
+    unsigned int ip;
+    unsigned short dpuerto;
+    unsigned short spuerto;
+} red_udp_envio_t;
+typedef struct {
+    unsigned short puerto;
+    unsigned short espera;
+} red_udp_peticion_t;
+int u_red_udp_ligar(int puerto);
+int u_red_udp_enviar(const red_udp_envio_t *e, const void *datos,
+                     int len);
+int u_red_udp_recibir(const red_udp_peticion_t *pet, void *buf,
+                      int max);
+/* F4: DNS A/IN. Arma consulta; devuelve long (>=12) o negativo
+   (-1 args, -2 dominio invalido, -3 sin sitio). Con error, la
+   salida puede quedar parcial: solo vale si devuelve long. */
+int u_dns_armar(const char *dom, unsigned short xid,
+                unsigned char *sal, int max);
+int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
+               const unsigned char *preg, int npreg,
+               unsigned int *ips, unsigned int *ttls, int maxips,
+               int *rcode);
 
 #endif
