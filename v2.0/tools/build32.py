@@ -269,6 +269,7 @@ _apps3 = [
     ("aislamiento32", ["aislamiento32.c"], True),
     ("aisla32", ["aisla32.c"], True),
     ("t1_lib", ["t1_lib.c"], True),
+    ("t_red", ["t_red.c"], True),
     ("tutf8", ["tutf8.c"], True),
     ("t2_gfx", ["t2_gfx.c"], True),
     ("editor16", ["editor16.c"], True),

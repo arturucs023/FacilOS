@@ -194,7 +194,7 @@ int red_info(red_if_t *f) {
 }
 
 int red_tx(const uint8_t *marco, int tam) {
-    int i;
+    int i, orig = tam;
     if (!presente) return -1;
     if (!marco || tam < 14 || tam > 1514) return -2;
     /* Espera a descriptor libre (1 trama en vuelo en F1). */
@@ -203,6 +203,8 @@ int red_tx(const uint8_t *marco, int tam) {
         return -3;
     }
     for (i = 0; i < tam; i++) tx_buf[i] = marco[i];
+    /* La 8139 no rellena sola: minimo 60 B en el cable (+ CRC). */
+    while (tam < 60) tx_buf[tam++] = 0;
     outl_b(R_TSAD0, (uint32_t)tx_buf);
     outl_b(R_TSD0, (uint32_t)tam);
     /* Espera a fin de transmision. */
@@ -211,7 +213,7 @@ int red_tx(const uint8_t *marco, int tam) {
         return -3;
     }
     isr_limpia();
-    return tam;
+    return orig;
 }
 
 /* Lee 'n' bytes del anillo con vuelta. */
