@@ -1315,7 +1315,12 @@ __attribute__((optimize("O0"))) static void sc_54(regs_t *r, int di)
                 r->eax = 0;
                 return;
             }
-            hlt();
+            if (di < 0) { r->eax = 0; return; }
+            /* Espera por rodajas (~20 ms): bloquea el proceso, no
+               la CPU (hlt colgaria: IF=0 en syscall). */
+            proc_actual->modo = 0;
+            proc_bloquea_ticks(irq_ticks() + 2u);
+            r = regs_actual(r);
         }
  }
 

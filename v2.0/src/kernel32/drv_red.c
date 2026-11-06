@@ -68,14 +68,16 @@ static void outb_b(int off, uint8_t v) {
     outb((uint16_t)(iob + off), v);
 }
 
-/* Espera acotada (ms) a que (reg & mascara) == 0. 0 ok, -1 espera. */
-static int espera_cero(int off, uint32_t mascara, int ms) {
-    uint32_t fin = irq_ticks() + (uint32_t)(ms + 9) / 10u + 1u;
-    for (;;) {
+/* Espera acotada a que (reg & mascara) == 0. Solo sondea hardware
+   (progresa sin interrupciones); acotada por ITERACIONES porque los
+   ticks estan congelados dentro de una syscall (IF=0). 0 ok, -1 no. */
+static int espera_cero(int off, uint32_t mascara) {
+    unsigned i;
+    for (i = 0; i < 1000000u; i++) {
         if (!(inl_b(off) & mascara)) return 0;
-        if ((int32_t)(irq_ticks() - fin) >= 0) return -1;
-        hlt();
+        if ((i & 255u) == 0) pause_cpu();
     }
+    return -1;
 }
 
 static void isr_limpia(void) {
@@ -133,7 +135,7 @@ int red_init(void) {
     /* Encendido y reset con espera acotada. */
     outb_b(R_CONFIG1, 0x00);
     outb_b(R_CR, CR_RST);
-    if (espera_cero(R_CR, CR_RST, 200)) {
+    if (espera_cero(R_CR, CR_RST)) {
         kprintf("red: reset sin respuesta\r\n");
         presente = 0;
         return 0;
@@ -198,7 +200,7 @@ int red_tx(const uint8_t *marco, int tam) {
     if (!presente) return -1;
     if (!marco || tam < 14 || tam > 1514) return -2;
     /* Espera a descriptor libre (1 trama en vuelo en F1). */
-    if (espera_cero(R_TSD0, TSD_OWN, 500)) {
+    if (espera_cero(R_TSD0, TSD_OWN)) {
         c_tx_err++;
         return -3;
     }
@@ -208,7 +210,7 @@ int red_tx(const uint8_t *marco, int tam) {
     outl_b(R_TSAD0, (uint32_t)tx_buf);
     outl_b(R_TSD0, (uint32_t)tam);
     /* Espera a fin de transmision. */
-    if (espera_cero(R_TSD0, TSD_OWN, 500)) {
+    if (espera_cero(R_TSD0, TSD_OWN)) {
         c_tx_err++;
         return -3;
     }
