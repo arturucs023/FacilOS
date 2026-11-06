@@ -352,6 +352,10 @@ static const cmd_t CMDS[] = {
       "Consulta la tabla de rutas.",
       "Muestra destino, mascara y puerta de cada ruta.",
       "mostrar_rutas", "mostrar_rutas", 0, 0, 0, 0 },
+    { "comprovar_conexion", "sistema",
+      "Comprueba conectividad mediante eco.",
+      "Envia ecos y muestra respuestas (seq, ttl, tiempo).",
+      "comprovar_conexion [-c N] <ip>", "comprovar_conexion -c 4 10.0.2.2", 1, 3, 0, 0 },
     { "salir", "sistema",
       "Cierra la terminal.",
       "Cierra esta ventana de terminal.",
@@ -1858,6 +1862,155 @@ static void op_mostrar_rutas(const cmd_t *c) {
     }
 }
 
+static void op_comprovar_conexion(const cmd_t *c) {
+    red_peticion_t pet;
+    unsigned char resp[60];
+    red_cfg_t cfg;
+    unsigned int ip = 0;
+    int i, n = 4, r;
+    (void)c;
+    /* Sintaxis: comprovar_conexion [-c N] <ip> (F3: solo IPv4). */
+    if (npos >= 1 && !u_strcmp(pos_arg[0], "-c")) {
+        if (npos != 3) {
+            perr(10, "Uso: comprovar_conexion [-c N] <ip>.");
+            return;
+        }
+        n = u_atoi(pos_arg[1]);
+        if (n < 1 || n > 10) {
+            perr(10, "N debe estar entre 1 y 10.");
+            return;
+        }
+        if (!lee_ip(pos_arg[2], &ip)) {
+            perr(10, "IP invalida (usa a.b.c.d).");
+            return;
+        }
+    } else if (npos == 1) {
+        if (!lee_ip(pos_arg[0], &ip)) {
+            perr(10, "IP invalida (usa a.b.c.d). Nombres en F4.");
+            return;
+        }
+    } else {
+        perr(10, "Uso: comprovar_conexion [-c N] <ip>.");
+        return;
+    }
+    for (i = 0; i < 16; i++) ((unsigned char *)&cfg)[i] = 0;
+    if (u_red_configurar_leer(&cfg) || !cfg.ip) {
+        perr(10, "Sin IP: configura una IP o DHCP primero.");
+        return;
+    }
+    pet.ip = ip;
+    pet.n = (unsigned short)n;
+    pet.espera = 1000;
+    pet.ttl = 0;
+    pet.res = 0;
+    pet.res2 = 0;
+    for (i = 0; i < 60; i++) resp[i] = 0;
+    r = u_red_comprobar(&pet, (red_respuesta_t *)resp,
+                        (int)sizeof(resp));
+    if (r < 0) {
+        if (r == -1) perr(33, "Red no disponible: sin adaptador.");
+        else if (r == -3) perr(33, "Sin IP configurada.");
+        else perr(33, "No se pudo comprobar.");
+        return;
+    }
+    {
+        int ok = 0, k;
+        for (k = 0; k + 6 <= r; k += 6) {
+            unsigned int seq = ((unsigned int)resp[k] << 8) | resp[k + 1];
+            unsigned int ms = ((unsigned int)resp[k + 2] << 8) | resp[k + 3];
+            if (resp[k + 4]) {
+                char b[80];
+                int t = 0, q = 0;
+                const char *s = "respuesta de ";
+                unsigned int v = ip;
+                int o;
+                while (s[q] && t < 60) b[t++] = s[q++];
+                for (o = 0; o < 4; o++) {
+                    char nb[12];
+                    int w = 0;
+                    u_utoa((v >> (o * 8)) & 0xFFu, nb, 10);
+                    while (nb[w] && t < 60) b[t++] = nb[w++];
+                    if (o < 3) b[t++] = '.';
+                }
+                b[t++] = ':';
+                b[t++] = ' ';
+                b[t] = 0;
+                pon(b);
+                {
+                    char b3[64];
+                    int t3 = 0;
+                    char nb[12];
+                    int w3 = 0;
+                    const char *s3 = "seq=";
+                    while (s3[w3] && t3 < 50) b3[t3++] = s3[w3++];
+                    u_utoa(seq, nb, 10);
+                    w3 = 0;
+                    while (nb[w3] && t3 < 50) b3[t3++] = nb[w3++];
+                    {
+                        const char *s4 = "  ttl=";
+                        int w4 = 0;
+                        while (s4[w4] && t3 < 50) b3[t3++] = s4[w4++];
+                    }
+                    u_utoa(resp[k + 5], nb, 10);
+                    w3 = 0;
+                    while (nb[w3] && t3 < 50) b3[t3++] = nb[w3++];
+                    {
+                        const char *s4 = "  tiempo=";
+                        int w4 = 0;
+                        while (s4[w4] && t3 < 50) b3[t3++] = s4[w4++];
+                    }
+                    u_utoa(ms, nb, 10);
+                    w3 = 0;
+                    while (nb[w3] && t3 < 50) b3[t3++] = nb[w3++];
+                    {
+                        const char *s5 = " ms";
+                        int w5 = 0;
+                        while (s5[w5] && t3 < 50) b3[t3++] = s5[w5++];
+                    }
+                    b3[t3] = 0;
+                    pon(b3);
+                }
+                ok++;
+            } else {
+                char b[48];
+                int t = 0, q = 0;
+                const char *s = "sin respuesta (seq=";
+                char nb[12];
+                int w = 0;
+                while (s[q] && t < 40) b[t++] = s[q++];
+                u_utoa(seq, nb, 10);
+                while (nb[w] && t < 40) b[t++] = nb[w++];
+                b[t++] = ')';
+                b[t] = 0;
+                pon(b);
+            }
+        }
+        {
+            char b[48];
+            int t = 0;
+            char nb[12];
+            int w = 0;
+            u_utoa((unsigned int)ok, nb, 10);
+            while (nb[w] && t < 40) b[t++] = nb[w++];
+            {
+                const char *s = " de ";
+                int q = 0;
+                while (s[q] && t < 40) b[t++] = s[q++];
+            }
+            u_utoa((unsigned int)n, nb, 10);
+            w = 0;
+            while (nb[w] && t < 40) b[t++] = nb[w++];
+            {
+                const char *s = " respuestas.";
+                int q = 0;
+                while (s[q] && t < 40) b[t++] = s[q++];
+            }
+            b[t] = 0;
+            pon(b);
+        }
+    }
+}
+
 static int termina_en_f32(const char *r) {
     int l = u_strlen(r);
     if (l < 4) return 0;
@@ -2820,6 +2973,8 @@ static void ejecuta(ug_win_t *v, const char *ln) {
         op_configurar_ip(&CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_rutas")) {
         op_mostrar_rutas(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "comprovar_conexion")) {
+        op_comprovar_conexion(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {
         ug_cierra(v);
     }
