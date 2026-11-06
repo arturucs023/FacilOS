@@ -1,5 +1,5 @@
-#ifndef F32_RED_H
-#define F32_RED_H
+#ifndef F32_DRV_RED_H
+#define F32_DRV_RED_H
 #include <stdint.h>
 
 /* v2.3-red F1: adaptador Ethernet (RTL8139) + E/S cruda de tramas.
@@ -18,7 +18,7 @@ typedef struct {
     uint32_t tx_ok;
     uint32_t rx_err;
     uint32_t tx_err;
-    uint8_t rsv[4];
+    uint8_t rsv[4];   /* rsv[0]: entradas ARP en cache (F2) */
 } red_if_t; /* 32 B */
 
 /* Inicializa PCI+RTL8139. Siempre 0 (arranque sin red si no hay

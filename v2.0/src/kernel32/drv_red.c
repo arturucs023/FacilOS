@@ -55,7 +55,8 @@ static uint8_t irq_lin = 0;
 static uint8_t *rx_anillo = 0;   /* 16K alineado a 8K */
 static int rx_pos = 0;           /* desplazamiento de lectura */
 
-static uint8_t tx_buf[TX_MAX];
+static uint8_t tx_buf[4][TX_MAX];   /* un bufer por descriptor */
+static int tx_prox = 0;             /* round-robin TSD0..TSD3 */
 
 static uint32_t c_rx_ok = 0, c_tx_ok = 0, c_rx_err = 0, c_tx_err = 0;
 static int tx_ocupado = 0;   /* F1: una trama en vuelo como maximo */
@@ -162,10 +163,6 @@ int red_init(void) {
     outw_b(R_IMR, (uint16_t)(INT_ROK | INT_RER | INT_TOK | INT_TER));
     isr_limpia();
     outb_b(R_CR, (uint8_t)(CR_RE | CR_TE));
-    kprintf("red dbg CR=%x RCR=%x TSD0=%x ISR=%x CFG1=%x\n",
-            (uint32_t)inb((uint16_t)(iob + R_CR)),
-            inl_b(R_RCR), inl_b(R_TSD0), (uint32_t)inw_b(R_ISR),
-            (uint32_t)inb((uint16_t)(iob + R_CONFIG1)));
     presente = 1;
     kprintf("red: rtl8139 io=");
     kprintf("%x", iob);
@@ -202,12 +199,15 @@ int red_info(red_if_t *f) {
     f->tx_ok = c_tx_ok;
     f->rx_err = c_rx_err;
     f->tx_err = c_tx_err;
-    for (i = 0; i < 4; i++) f->rsv[i] = 0;
+    f->rsv[0] = (uint8_t)(red_arp_n() & 0xFFu);
+    f->rsv[1] = 0;
+    f->rsv[2] = 0;
+    f->rsv[3] = 0;
     return presente ? 0 : -1;
 }
 
 int red_tx(const uint8_t *marco, int tam) {
-    int i, orig = tam;
+    int i, orig = tam, d;
     unsigned k;
     uint16_t s;
     if (!presente) return -1;
@@ -231,14 +231,17 @@ int red_tx(const uint8_t *marco, int tam) {
             return -3;
         }
     }
-    for (i = 0; i < tam; i++) tx_buf[i] = marco[i];
+    d = tx_prox;
+    tx_prox = (tx_prox + 1) & 3;
+    for (i = 0; i < tam; i++) tx_buf[d][i] = marco[i];
     /* La 8139 no rellena sola: minimo 60 B en el cable (+ CRC). */
-    while (tam < 60) tx_buf[tam++] = 0;
+    while (tam < 60) tx_buf[d][tam++] = 0;
     s = inw_b(R_ISR);
     if (s & (INT_TOK | INT_TER))
         outw_b(R_ISR, (uint16_t)(s & (INT_TOK | INT_TER)));
-    outl_b(R_TSAD0, (uint32_t)tx_buf);
-    outl_b(R_TSD0, (uint32_t)tam);
+    outl_b((int)(R_TSAD0 + d * 4), (uint32_t)tx_buf[d]);
+    /* Entrega sin OWN: la NIC transmite al escribir TSD. */
+    outl_b((int)(R_TSD0 + d * 4), (uint32_t)tam);
     tx_ocupado = 1;
     for (k = 0; k < 2000000u; k++) {
         s = inw_b(R_ISR);
