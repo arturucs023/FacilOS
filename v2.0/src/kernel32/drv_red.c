@@ -55,6 +55,7 @@ static int rx_pos = 0;           /* desplazamiento de lectura */
 static uint8_t tx_buf[TX_MAX];
 
 static uint32_t c_rx_ok = 0, c_tx_ok = 0, c_rx_err = 0, c_tx_err = 0;
+static int tx_ocupado = 0;   /* F1: una trama en vuelo como maximo */
 
 static uint16_t inw_b(int off) { return inw((uint16_t)(iob + off)); }
 static void outw_b(int off, uint16_t v) {
@@ -83,10 +84,12 @@ static int espera_cero(int off, uint32_t mascara) {
 static void isr_limpia(void) {
     uint16_t s = inw_b(R_ISR);
     if (s) {
-        outw_b(R_ISR, s);
+        /* Limpieza SELECTIVA: solo los bits atendidos aqui. Limpiar
+           ROK/TOK ajenos haria perder el aviso al otro sondeo
+           (Tx y Rx comparten ISR). */
+        uint16_t q = (uint16_t)(s & (INT_TOK | INT_TER));
+        if (q) outw_b(R_ISR, q);
         if (s & INT_TOK) c_tx_ok++;
-        if (s & INT_ROK) { /* se cuenta al extraer */ }
-        if (s & (INT_RER | INT_TER)) { /* se cuenta donde toca */ }
     }
 }
 
@@ -155,6 +158,10 @@ int red_init(void) {
     outw_b(R_IMR, (uint16_t)(INT_ROK | INT_RER | INT_TOK | INT_TER));
     isr_limpia();
     outb_b(R_CR, (uint8_t)(CR_RE | CR_TE));
+    kprintf("red dbg CR=%x RCR=%x TSD0=%x ISR=%x CFG1=%x\n",
+            (uint32_t)inb((uint16_t)(iob + R_CR)),
+            inl_b(R_RCR), inl_b(R_TSD0), (uint32_t)inw_b(R_ISR),
+            (uint32_t)inb((uint16_t)(iob + R_CONFIG1)));
     presente = 1;
     kprintf("red: rtl8139 io=");
     kprintf("%x", iob);
@@ -197,25 +204,53 @@ int red_info(red_if_t *f) {
 
 int red_tx(const uint8_t *marco, int tam) {
     int i, orig = tam;
+    unsigned k;
+    uint16_t s;
     if (!presente) return -1;
     if (!marco || tam < 14 || tam > 1514) return -2;
-    /* Espera a descriptor libre (1 trama en vuelo en F1). */
-    if (espera_cero(R_TSD0, TSD_OWN)) {
-        c_tx_err++;
-        return -3;
+    /* F1: una trama en vuelo (flag propio, no el bit OWN: la 8139
+       sale de reset con OWN=1 y solo TOK confirma el envio). */
+    if (tx_ocupado) {
+        for (k = 0; k < 1000000u; k++) {
+            s = inw_b(R_ISR);
+            if (s & (INT_TOK | INT_TER)) break;
+            if ((k & 255u) == 0) pause_cpu();
+        }
+        s = inw_b(R_ISR);
+        if (s & (INT_TOK | INT_TER)) {
+            outw_b(R_ISR, (uint16_t)(s & (INT_TOK | INT_TER)));
+            if (s & INT_TOK) c_tx_ok++;
+            tx_ocupado = 0;
+        } else {
+            c_tx_err++;
+            tx_ocupado = 0;
+            return -3;
+        }
     }
     for (i = 0; i < tam; i++) tx_buf[i] = marco[i];
     /* La 8139 no rellena sola: minimo 60 B en el cable (+ CRC). */
     while (tam < 60) tx_buf[tam++] = 0;
+    s = inw_b(R_ISR);
+    if (s & (INT_TOK | INT_TER))
+        outw_b(R_ISR, (uint16_t)(s & (INT_TOK | INT_TER)));
     outl_b(R_TSAD0, (uint32_t)tx_buf);
     outl_b(R_TSD0, (uint32_t)tam);
-    /* Espera a fin de transmision. */
-    if (espera_cero(R_TSD0, TSD_OWN)) {
-        c_tx_err++;
-        return -3;
+    tx_ocupado = 1;
+    for (k = 0; k < 2000000u; k++) {
+        s = inw_b(R_ISR);
+        if (s & (INT_TOK | INT_TER)) break;
+        if ((k & 255u) == 0) pause_cpu();
     }
-    isr_limpia();
-    return orig;
+    s = inw_b(R_ISR);
+    if (s & (INT_TOK | INT_TER))
+        outw_b(R_ISR, (uint16_t)(s & (INT_TOK | INT_TER)));
+    tx_ocupado = 0;
+    if (s & INT_TOK) {
+        c_tx_ok++;
+        return orig;
+    }
+    c_tx_err++;
+    return -3;
 }
 
 /* Lee 'n' bytes del anillo con vuelta. */
@@ -232,7 +267,8 @@ int red_rx(uint8_t *marco, int max) {
     if (!presente) return -1;
     if (!marco || max <= 0) return -2;
     s = inw_b(R_ISR);
-    if (s) outw_b(R_ISR, s);
+    if (s & INT_RER) outw_b(R_ISR, INT_RER);   /* solo RER: TOK/ROK
+        los consume quien los atiende (Tx y anillo) */
     if (s & INT_RER) {
         rx_repara();
         return 0;
