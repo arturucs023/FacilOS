@@ -344,6 +344,14 @@ static const cmd_t CMDS[] = {
       "Informacion del adaptador de red.",
       "Muestra adaptador, estado, direccion MAC y estadisticas de tramas.",
       "mostrar_interfaz", "mostrar_interfaz", 0, 0, 0, 0 },
+    { "configurar_ip", "sistema",
+      "Configuracion manual de IPv4.",
+      "Muestra o fija IP, mascara, puerta de enlace y DNS.",
+      "configurar_ip [ip | mascara|puerta|dns <ip>]", "configurar_ip mascara 255.255.255.0", 0, 2, 0, 0 },
+    { "mostrar_rutas", "sistema",
+      "Consulta la tabla de rutas.",
+      "Muestra destino, mascara y puerta de cada ruta.",
+      "mostrar_rutas", "mostrar_rutas", 0, 0, 0, 0 },
     { "salir", "sistema",
       "Cierra la terminal.",
       "Cierra esta ventana de terminal.",
@@ -365,6 +373,8 @@ static int pop_construye(void);
 static void pop_abre_uno(void);
 static void pop_aplica(void);
 static void op_ruta(const cmd_t *c);
+static void pon_ip(const char *tit, unsigned int v);
+static int lee_ip(const char *s, unsigned int *v);
 
 /* ---- parser (v2.2): comillas, posicionales y nombre=valor ---- */
 
@@ -1651,6 +1661,22 @@ static void op_mostrar_interfaz(const cmd_t *c) {
     red_pon_num("Tramas recibidas", f.rx_ok);
     red_pon_num("Errores envio", f.tx_err);
     red_pon_num("Errores recepcion", f.rx_err);
+    {
+        red_cfg_t c0;
+        int i;
+        for (i = 0; i < 16; i++) ((unsigned char *)&c0)[i] = 0;
+        if (!u_red_configurar_leer(&c0) &&
+            (c0.ip || c0.mascara || c0.puerta || c0.dns)) {
+            pon_ip("IP", c0.ip);
+            pon_ip("Mascara", c0.mascara);
+            pon_ip("Puerta", c0.puerta);
+            pon_ip("DNS", c0.dns);
+        } else {
+            pon("IPv4 sin configurar.");
+        }
+    }
+    pon("TTL: 64");
+    red_pon_num("Entradas ARP en cache", (unsigned int)f.rsv[0]);
 }
 
 static void op_red(const cmd_t *c) {
@@ -1671,6 +1697,165 @@ static void op_red(const cmd_t *c) {
         return;
     }
     op_mostrar_interfaz(c);
+}
+
+/* ---- IPv4 manual (F2): parsea a.b.c.d a u32 (byte bajo = a). */
+static int lee_ip(const char *s, unsigned int *v) {
+    unsigned int b[4];
+    int i, q = 0;
+    for (i = 0; i < 4; i++) {
+        unsigned int n = 0;
+        int dig = 0;
+        while (s[q] >= '0' && s[q] <= '9') {
+            n = n * 10 + (unsigned int)(s[q] - '0');
+            if (n > 255) return 0;
+            q++;
+            dig = 1;
+        }
+        if (!dig) return 0;
+        b[i] = n;
+        if (i < 3) {
+            if (s[q] != '.') return 0;
+            q++;
+        }
+    }
+    if (s[q]) return 0;
+    *v = b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24);
+    return 1;
+}
+
+static void pon_ip(const char *tit, unsigned int v) {
+    char b[64];
+    int t = 0, q = 0, i;
+    while (tit[q] && t < 40) b[t++] = tit[q++];
+    b[t++] = ':';
+    b[t++] = ' ';
+    for (i = 0; i < 4; i++) {
+        unsigned int o = (v >> (i * 8)) & 0xFFu;
+        char nb[12];
+        int k = 0;
+        u_utoa(o, nb, 10);
+        while (nb[k] && t < 60) b[t++] = nb[k++];
+        if (i < 3) b[t++] = '.';
+    }
+    b[t] = 0;
+    pon(b);
+}
+
+static void op_configurar_ip(const cmd_t *c) {
+    red_cfg_t c0;
+    int i;
+    (void)c;
+    for (i = 0; i < 16; i++) ((unsigned char *)&c0)[i] = 0;
+    if (npos == 0) {
+        if (u_red_configurar_leer(&c0)) {
+            perr(10, "No se pudo leer la configuracion.");
+            return;
+        }
+        if (!c0.ip && !c0.mascara && !c0.puerta && !c0.dns)
+            pon("IPv4 sin configurar.");
+        else {
+            pon_ip("IP", c0.ip);
+            pon_ip("Mascara", c0.mascara);
+            pon_ip("Puerta", c0.puerta);
+            pon_ip("DNS", c0.dns);
+        }
+        return;
+    }
+    if (npos == 1) {
+        unsigned int v;
+        if (!lee_ip(pos_arg[0], &v)) {
+            perr(10, "IP invalida (usa a.b.c.d).");
+            return;
+        }
+        if (u_red_fijar(1, v)) perr(33, "No se pudo fijar la IP.");
+        else pon("IP fijada.");
+        return;
+    }
+    if (npos == 2) {
+        unsigned int v;
+        int campo = 0;
+        if (!u_strcmp(pos_arg[0], "mascara")) campo = 2;
+        else if (!u_strcmp(pos_arg[0], "puerta")) campo = 3;
+        else if (!u_strcmp(pos_arg[0], "dns")) campo = 4;
+        else {
+            perr(10, "Uso: configurar_ip [mascara|puerta|dns] <ip>.");
+            return;
+        }
+        if (!lee_ip(pos_arg[1], &v)) {
+            perr(10, "IP invalida (usa a.b.c.d).");
+            return;
+        }
+        if (u_red_fijar(campo, v)) perr(33, "No se pudo fijar.");
+        else pon("Valor fijado.");
+        return;
+    }
+    perr(10, "Uso: configurar_ip [ip] | [mascara|puerta|dns] <ip>.");
+}
+
+static void op_mostrar_rutas(const cmd_t *c) {
+    unsigned char rutas[96];
+    int n, i;
+    (void)c;
+    for (i = 0; i < 96; i++) rutas[i] = 0;
+    n = u_red_rutas(rutas, 96);
+    if (n < 0) {
+        perr(33, "No se pudo leer la tabla de rutas.");
+        return;
+    }
+    if (!n) {
+        pon("Sin rutas: configura una IP.");
+        return;
+    }
+    pon("Destino          Mascara          Puerta");
+    for (i = 0; i + 12 <= n; i += 12) {
+        char b[72];
+        int t = 0, k, o;
+        unsigned int v;
+        v = (unsigned int)rutas[i] |
+            ((unsigned int)rutas[i + 1] << 8) |
+            ((unsigned int)rutas[i + 2] << 16) |
+            ((unsigned int)rutas[i + 3] << 24);
+        for (o = 0; o < 4; o++) {
+            char nb[12];
+            int q2 = 0;
+            u_utoa((v >> (o * 8)) & 0xFFu, nb, 10);
+            while (nb[q2] && t < 16) b[t++] = nb[q2++];
+            b[t++] = o < 3 ? '.' : ' ';
+        }
+        while (t < 18) b[t++] = ' ';
+        v = (unsigned int)rutas[i + 4] |
+            ((unsigned int)rutas[i + 5] << 8) |
+            ((unsigned int)rutas[i + 6] << 16) |
+            ((unsigned int)rutas[i + 7] << 24);
+        for (o = 0; o < 4; o++) {
+            char nb[12];
+            int q2 = 0;
+            u_utoa((v >> (o * 8)) & 0xFFu, nb, 10);
+            while (nb[q2] && t < 36) b[t++] = nb[q2++];
+            b[t++] = o < 3 ? '.' : ' ';
+        }
+        while (t < 38) b[t++] = ' ';
+        v = (unsigned int)rutas[i + 8] |
+            ((unsigned int)rutas[i + 9] << 8) |
+            ((unsigned int)rutas[i + 10] << 16) |
+            ((unsigned int)rutas[i + 11] << 24);
+        if (!v) {
+            const char *s = "directa";
+            while (*s && t < 60) b[t++] = *s++;
+        } else {
+            for (o = 0; o < 4; o++) {
+                char nb[12];
+                int q2 = 0;
+                u_utoa((v >> (o * 8)) & 0xFFu, nb, 10);
+                while (nb[q2] && t < 60) b[t++] = nb[q2++];
+                if (o < 3) b[t++] = '.';
+            }
+        }
+        b[t] = 0;
+        pon(b);
+        (void)k;
+    }
 }
 
 static int termina_en_f32(const char *r) {
@@ -2631,6 +2816,10 @@ static void ejecuta(ug_win_t *v, const char *ln) {
         op_red(&CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_interfaz")) {
         op_mostrar_interfaz(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "configurar_ip")) {
+        op_configurar_ip(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "mostrar_rutas")) {
+        op_mostrar_rutas(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {
         ug_cierra(v);
     }
