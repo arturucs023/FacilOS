@@ -360,6 +360,14 @@ static const cmd_t CMDS[] = {
       "Configuracion automatica por DHCP.",
       "Obtiene IP, mascara, puerta y DNS del servidor (renovar y liberar disponibles).",
       "configurar_dhcp [renovar|liberar]", "configurar_dhcp", 0, 1, 0, 0 },
+    { "consultar_dns", "sistema",
+      "Resuelve un nombre de dominio a IPv4.",
+      "Pregunta al servidor DNS (tipo A) y muestra IP, TTL y tiempo.",
+      "consultar_dns <dominio>", "consultar_dns example.com", 1, 1, 0, 0 },
+    { "mostrar_dns", "sistema",
+      "Muestra el servidor DNS configurado.",
+      "Indica el servidor (DHCP o manual) y la ausencia de cache.",
+      "mostrar_dns", "mostrar_dns", 0, 0, 0, 0 },
     { "salir", "sistema",
       "Cierra la terminal.",
       "Cierra esta ventana de terminal.",
@@ -1689,6 +1697,7 @@ static void op_mostrar_interfaz(const cmd_t *c) {
     red_pon_num("Entradas ARP en cache", (unsigned int)f.rsv[0]);
     red_pon_num("ICMP ok", (unsigned int)f.rsv[1]);
     red_pon_num("ICMP errores", (unsigned int)f.rsv[2]);
+    red_pon_num("UDP recibidos", (unsigned int)f.rsv[3]);
 }
 
 static void op_red(const cmd_t *c) {
@@ -2060,6 +2069,54 @@ static void op_configurar_dhcp(const cmd_t *c) {
     if (rc == 0) pon("DHCP aplicado correctamente.");
     else if (rc < -100) perr(33, "No se pudo lanzar (nombre o formato).");
     else perr(33, "DHCP sin respuesta (revisa la red).");
+}
+
+static void op_consultar_dns(const cmd_t *c) {
+    char args[256];
+    int t = 0, i, rc;
+    char rb[32];
+    (void)c;
+    if (npos != 1) {
+        perr(10, "Uso: consultar_dns <dominio>.");
+        return;
+    }
+    for (i = 0; pos_arg[0][i] && t < 254; i++) args[t++] = pos_arg[0][i];
+    args[t] = 0;
+    ug_modal(v_term, 1);
+    rc = u_ejecutar("dns", args);
+    ug_modal(v_term, 0);
+    muestra_sal_fich("/dnssal.txt");
+    {
+        char nb[12];
+        int w = 0, q = 0;
+        rb[w++] = 'r';
+        rb[w++] = 'c';
+        rb[w++] = '=';
+        u_itoa(rc, nb);
+        while (nb[q] && w < 30) rb[w++] = nb[q++];
+        rb[w] = 0;
+    }
+    pon(rb);
+    if (rc == 0) pon("DNS resuelta correctamente.");
+    else if (rc == 1) perr(33, "DNS sin respuesta (revisa la red).");
+    else if (rc == 3) perr(33, "DNS: el nombre no existe (NXDOMAIN).");
+    else if (rc == 4) perr(33, "DNS: error del servidor o sin registros.");
+    else if (rc < -100) perr(33, "No se pudo lanzar (nombre o formato).");
+    else perr(33, "DNS no disponible (revisa red y servidor DNS).");
+}
+
+static void op_mostrar_dns(const cmd_t *c) {
+    red_cfg_t cfg;
+    int i;
+    (void)c;
+    for (i = 0; i < 16; i++) ((unsigned char *)&cfg)[i] = 0;
+    if (u_red_configurar_leer(&cfg)) {
+        perr(33, "No se pudo leer la configuracion.");
+        return;
+    }
+    if (cfg.dns) pon_ip("Servidor DNS", cfg.dns);
+    else pon("Sin servidor DNS (DHCP o configurar_ip dns).");
+    pon("Sin cache en F4: cada consulta pregunta al servidor.");
 }
 
 static int termina_en_f32(const char *r) {
@@ -3030,6 +3087,10 @@ static void ejecuta(ug_win_t *v, const char *ln) {
         op_comprovar_conexion(&CMDS[id]);
     } else if (!u_strcmp(cmd, "configurar_dhcp")) {
         op_configurar_dhcp(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "consultar_dns")) {
+        op_consultar_dns(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "mostrar_dns")) {
+        op_mostrar_dns(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {
         ug_cierra(v);
     }
