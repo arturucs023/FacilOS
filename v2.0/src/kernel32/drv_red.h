@@ -19,7 +19,7 @@ typedef struct {
     uint32_t rx_err;
     uint32_t tx_err;
     uint8_t rsv[4];   /* rsv[0]: ARP en cache; rsv[1]: ICMP ok;
-                         rsv[2]: ICMP errores (F3) */
+                         rsv[2]: ICMP errores; rsv[3]: UDP recibidos */
 } red_if_t; /* 32 B */
 
 /* Inicializa PCI+RTL8139. Siempre 0 (arranque sin red si no hay

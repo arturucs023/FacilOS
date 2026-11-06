@@ -7,6 +7,7 @@
 #include "red_arp.h"
 #include "red_ip.h"
 #include "red_icmp.h"
+#include "red_udp.h"
 
 /* v2.3-red F1: RTL8139 (10EC:8139) por PIO.
  * Diseno: un descriptor Tx reutilizado (1 trama en vuelo),
@@ -206,7 +207,8 @@ int red_info(red_if_t *f) {
         f->rsv[0] = (uint8_t)(red_arp_n() & 0xFFu);
         f->rsv[1] = (uint8_t)(ok & 0xFFu);
         f->rsv[2] = (uint8_t)(err & 0xFFu);
-        f->rsv[3] = 0;
+        red_udp_contadores(&ok, 0);
+        f->rsv[3] = (uint8_t)(ok & 0xFFu);
     }
     return presente ? 0 : -1;
 }
