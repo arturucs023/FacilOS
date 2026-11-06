@@ -10,7 +10,8 @@
   La MAC destino sale de la cache ARP (`red_arp_resolver`).
 - Validacion (`red_ip_valida`): version, IHL, longitud total
   dentro del marco, checksum == 0, TTL != 0. La entrada cuenta
-  validas/invalidas; en F2 no hay consumidor (llega en F3+).
+  validas/invalidas; en F3 el consumidor es ICMP (el resto sigue
+  al deposito sin consumidor hasta F4/F5).
 - KAT al arrancar (`red: KAT ip OK`): vector RFC 791
   (checksum B861) + rechazos (cabecera corrupta, TTL 0 con
   checksum recalculado, total < IHL, marco corto).

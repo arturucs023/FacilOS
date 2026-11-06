@@ -11,6 +11,8 @@ Sin sockets POSIX, sin pila prestada. Capas con nombres FacilOS:
   difusion (APM|AB); el descarte fino es de F2+.
 - L3+ (ARP/IPv4/DHCP/ICMP/UDP/TCP) vivira en el nucleo en su fase;
   servicios (DHCP/DNS/HTTP) como apps Ring3 sobre la API propia.
+  F3: ICMP (eco) en el nucleo, DHCP como app Ring3 sobre trama
+  cruda; ARP corregido (reinspeccion de cache + reintentos).
 - API `red_*` (syscalls 52-63, ver `API-FACILOS32.md`): F1 solo
   52/53/54. Toda espera acotada; ningun bloqueo indefinido.
   No hay pipes: la recepcion es por sondeo con espera maxima.
