@@ -1,4 +1,4 @@
-# Pruebas (QEMU; F3 en `FacilOS-v2.3-red-f3.iso`, F1/F2 en `...-f1.iso`)
+# Pruebas (QEMU; F4 en `FacilOS-v2.3-red-f4.iso`, F1 en `...-f1.iso`, F3 en `...-f3.iso`)
 
 Red virtual: `-netdev user,id=red0 -device rtl8139,netdev=red0,
 mac=52:54:00:12:34:56` (puerta 10.0.2.2, DNS 10.0.2.3). Sin la
@@ -49,3 +49,31 @@ F3 (esta fase, todo en la ISO de entrega salvo f1 intacta):
   con reintento cada 0,5 s (espera total acotada) y `red_icmp_ping`
   propaga -3/-4/-5 en vez de colapsar a -1. Verificado: el ping en
   ventana fallaba (TER-0033) antes del arreglo y pasa despues.
+
+F4 (esta fase, todo en la ISO de entrega salvo f1/f3 intactas):
+- KAT al arrancar: `red: KAT udp OK` con y sin adaptador
+  (checksum valido/cero/incorrecto, longitudes, FIFO, cola
+  llena, desalojo con/sin pendientes, titularidad, efimero).
+- UDP vivo en `t_red` (53 pruebas 0 fallos en total): efimero,
+  idempotencia, envio y recepcion de consulta DNS real a
+  10.0.2.3:53 con validacion (origen, puerto, QR, parseo A),
+  desalojo de liga vacia, puerto sin receptor (-2), envio largo
+  y sin puerto (-2). Sin adaptador: ligar/enviar/recibir -1.
+- `consultar_dns example.com` y `google.com`: respuestas reales
+  (IP, TTL y tiempo; p. ej. google 216.58.205.46 ttl 131 20 ms);
+  NXDOMAIN con nombre inventado (rc=3); timeout contra
+  10.0.2.2:53 sin servicio (rc=1, 3x3 s acotados); `mostrar_dns`
+  y `red estado` con "UDP recibidos" (capturas en ventana).
+- Integracion: `comprovar_conexion -c 2` a la IP resuelta de
+  google: 2 de 2 respuestas (20/40 ms). Resolucion y eco externo
+  verificados por separado; la conectividad externa depende de
+  SLIRP (aqui responde, queda registrado, no se asume).
+- F1+F2+F3 intactas tras centralizar el bombeo: `t_red` 53/0
+  incluye ARP/IP/ICMP; DHCP obtener+renovar+liberar y eco a la
+  puerta re-ejecutados en la ISO F4.
+- Regresion v2.2 en la misma ISO: t1_lib 258/0, tutf8 26/0,
+  mem32 15/0. `funcion.f32`: interprete y syscalls que usa
+  identicos desde v2.2 (sin cambios F3/F4); repaso dedicado
+  pendiente (no hay `.f32` en la ISO).
+- Basales de contadores (KAT): ICMP errores=1, UDP recibidos=10
+  nada mas arrancar; las pruebas miran deltas.
