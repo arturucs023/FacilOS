@@ -356,6 +356,10 @@ static const cmd_t CMDS[] = {
       "Comprueba conectividad mediante eco.",
       "Envia ecos y muestra respuestas (seq, ttl, tiempo).",
       "comprovar_conexion [-c N] <ip>", "comprovar_conexion -c 4 10.0.2.2", 1, 3, 0, 0 },
+    { "configurar_dhcp", "sistema",
+      "Configuracion automatica por DHCP.",
+      "Obtiene IP, mascara, puerta y DNS del servidor (renovar y liberar disponibles).",
+      "configurar_dhcp [renovar|liberar]", "configurar_dhcp", 0, 1, 0, 0 },
     { "salir", "sistema",
       "Cierra la terminal.",
       "Cierra esta ventana de terminal.",
@@ -379,6 +383,8 @@ static void pop_aplica(void);
 static void op_ruta(const cmd_t *c);
 static void pon_ip(const char *tit, unsigned int v);
 static int lee_ip(const char *s, unsigned int *v);
+static ug_win_t *v_term = 0;   /* ventana actual (para modales) */
+static void muestra_sal_fich(const char *ruta);
 
 /* ---- parser (v2.2): comillas, posicionales y nombre=valor ---- */
 
@@ -1681,6 +1687,8 @@ static void op_mostrar_interfaz(const cmd_t *c) {
     }
     pon("TTL: 64");
     red_pon_num("Entradas ARP en cache", (unsigned int)f.rsv[0]);
+    red_pon_num("ICMP ok", (unsigned int)f.rsv[1]);
+    red_pon_num("ICMP errores", (unsigned int)f.rsv[2]);
 }
 
 static void op_red(const cmd_t *c) {
@@ -2011,6 +2019,49 @@ static void op_comprovar_conexion(const cmd_t *c) {
     }
 }
 
+static void op_configurar_dhcp(const cmd_t *c) {
+    char args[32];
+    int t = 0, rc;
+    char rb[32];
+    (void)c;
+    if (npos > 1) {
+        perr(10, "Uso: configurar_dhcp [renovar|liberar].");
+        return;
+    }
+    if (npos == 1) {
+        if (u_strcmp(pos_arg[0], "renovar") &&
+            u_strcmp(pos_arg[0], "liberar")) {
+            perr(10, "Uso: configurar_dhcp [renovar|liberar].");
+            return;
+        }
+        while (pos_arg[0][t] && t < 30) {
+            args[t] = pos_arg[0][t];
+            t++;
+        }
+        args[t] = 0;
+    } else {
+        args[0] = 0;
+    }
+    ug_modal(v_term, 1);
+    rc = u_ejecutar("dhcp", args);
+    ug_modal(v_term, 0);
+    muestra_sal_fich("/dhcsal.txt");
+    {
+        char nb[12];
+        int w = 0, q = 0;
+        rb[w++] = 'r';
+        rb[w++] = 'c';
+        rb[w++] = '=';
+        u_itoa(rc, nb);
+        while (nb[q] && w < 30) rb[w++] = nb[q++];
+        rb[w] = 0;
+    }
+    pon(rb);
+    if (rc == 0) pon("DHCP aplicado correctamente.");
+    else if (rc < -100) perr(33, "No se pudo lanzar (nombre o formato).");
+    else perr(33, "DHCP sin respuesta (revisa la red).");
+}
+
 static int termina_en_f32(const char *r) {
     int l = u_strlen(r);
     if (l < 4) return 0;
@@ -2029,11 +2080,12 @@ static int tiene_punto(const char *r) {
     return 0;
 }
 
-/* Captura Ring3 v0.1 (sin pipes en ABI): f32 duplica su salida a
-   /f32sal.tmp; la terminal la vuelca en la ventana tras el hijo.
-   Sin este volcado, en escritorio solo se veria rc=N. */
-static void muestra_sal_f32(void) {
-    UFILE *f = u_fopen("/f32sal.tmp", "r");
+/* Captura Ring3 (sin pipes en ABI): el hijo modal duplica su
+   salida a un fichero temporal; la terminal la vuelca en la
+   ventana tras el hijo. Sin este volcado, en escritorio solo se
+   veria rc=N. */
+static void muestra_sal_fich(const char *ruta) {
+    UFILE *f = u_fopen(ruta, "r");
     char buf[513];
     int n, total = 0;
     if (!f) return;
@@ -2043,7 +2095,7 @@ static void muestra_sal_f32(void) {
         total += n;
     }
     u_fclose(f);
-    u_remove("/f32sal.tmp");
+    u_remove(ruta);
 }
 
 static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
@@ -2092,7 +2144,7 @@ static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
         ug_modal(v, 1);
         rc = u_ejecutar("f32", ruta);
         ug_modal(v, 0);
-        muestra_sal_f32();
+        muestra_sal_fich("/f32sal.tmp");
         {
             char nb[12];
             int w = 0, q = 0;
@@ -2117,7 +2169,7 @@ static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
     ug_modal(v, 1);
     rc = u_ejecutar(pos_arg[0], args);
     ug_modal(v, 0);
-    if (!u_strcmp(pos_arg[0], "f32")) muestra_sal_f32();
+    if (!u_strcmp(pos_arg[0], "f32")) muestra_sal_fich("/f32sal.tmp");
     {
         char nb[12];
         int w = 0, q = 0;
@@ -2832,6 +2884,7 @@ static void ejecuta(ug_win_t *v, const char *ln) {
     int id, bad = 0, mal = 0, motivo = 0;
     char cmd[32];
     int i = 0;
+    v_term = v;
     while (ln[i] == ' ') i++;
     {
         int j = 0;
@@ -2975,6 +3028,8 @@ static void ejecuta(ug_win_t *v, const char *ln) {
         op_mostrar_rutas(&CMDS[id]);
     } else if (!u_strcmp(cmd, "comprovar_conexion")) {
         op_comprovar_conexion(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "configurar_dhcp")) {
+        op_configurar_dhcp(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {
         ug_cierra(v);
     }

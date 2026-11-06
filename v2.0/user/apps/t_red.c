@@ -63,6 +63,18 @@ int main(void) {
             q.espera = 100;
             ok(u_red_consultar(0, &q) == -1, "cons-sin-adaptador");
         }
+        {
+            red_peticion_t p;
+            unsigned char rb[6];
+            p.ip = 10 | (0 << 8) | (2 << 16) | (2 << 24);
+            p.n = 1;
+            p.espera = 100;
+            p.ttl = 0;
+            p.res = 0;
+            p.res2 = 0;
+            ok(u_red_comprobar(&p, (red_respuesta_t *)rb, 6) == -1,
+               "ping-sin-adaptador");
+        }
         u_printf("t_red: %d pruebas %d fallos\n", pruebas, fallos);
         return fallos ? 1 : 0;
     }
@@ -194,6 +206,39 @@ int main(void) {
                     veo_def = 1;
             }
             ok(veo_con && veo_def, "rutas-contenido");
+        }
+        {
+            red_peticion_t pet;
+            unsigned char resp[12];
+            int k, r, ok2 = 0;
+            pet.ip = 10 | (0 << 8) | (2 << 16) | (2 << 24);
+            pet.n = 2;
+            pet.espera = 1000;
+            pet.ttl = 0;
+            pet.res = 0;
+            pet.res2 = 0;
+            for (k = 0; k < 12; k++) resp[k] = 0;
+            r = u_red_comprobar(&pet, (red_respuesta_t *)resp, 12);
+            ok(r == 12, "eco-2-respuestas");
+            for (k = 0; k + 6 <= r && r > 0; k += 6) {
+                unsigned int seq = ((unsigned int)resp[k] << 8) | resp[k + 1];
+                if (resp[k + 4] && seq == (unsigned int)(k / 6 + 1)) ok2++;
+            }
+            ok(ok2 == 2, "eco-seq-ok");
+        }
+        {
+            red_peticion_t pet;
+            unsigned char resp[6];
+            int r;
+            pet.ip = 192 | (168 << 8) | (99 << 16) | (99 << 24);
+            pet.n = 1;
+            pet.espera = 1000;
+            pet.ttl = 0;
+            pet.res = 0;
+            pet.res2 = 0;
+            resp[0] = 0;
+            r = u_red_comprobar(&pet, (red_respuesta_t *)resp, 6);
+            ok(r == 6 && resp[4] == 0, "eco-timeout-limpio");
         }
     }
     u_print("t_red: contadores tras prueba:\n");
