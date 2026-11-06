@@ -232,5 +232,24 @@ typedef struct {
     unsigned int gw;
 } red_ruta_t;
 int u_red_rutas(void *buf, int max);
+/* F3: comprobar eco ICMP. Entrada 12 B {ip,n,espera,ttl};
+   salida 6 B por eco {seq,rtt,ok,ttl}; devuelve bytes o negativo
+   (-1 sin adaptador, -2 args, -3 sin IP configurada). */
+typedef struct {
+    unsigned int ip;
+    unsigned short n;
+    unsigned short espera;
+    unsigned char ttl;
+    unsigned char res;
+    unsigned short res2;
+} red_peticion_t;
+typedef struct {
+    unsigned short seq;
+    unsigned short rtt;
+    unsigned char ok;
+    unsigned char ttl;
+} red_respuesta_t;
+int u_red_comprobar(const red_peticion_t *pet, red_respuesta_t *resp,
+                    int max);
 
 #endif

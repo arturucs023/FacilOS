@@ -15,6 +15,7 @@
 #include "red.h"
 #include "red_arp.h"
 #include "red_ip.h"
+#include "red_icmp.h"
 
 /* v1.9: descriptores y heap son POR PROCESO (ver proc.h). El bloque del
    proceso con el que estamos se toma de proc_actual, de modo que la
@@ -1419,6 +1420,71 @@ __attribute__((optimize("O0"))) static void sc_56(regs_t *r, int di)
  }
 
 
+__attribute__((optimize("O0"))) static void sc_57(regs_t *r, int di)
+ {
+        /* v2.3-red F3: eco ICMP (comprovar_conexion). Entrada 12 B
+           {ip,n,espera,ttl}: N ecos (1..10) con espera acotada cada
+           uno. Sale 6 B por eco {seq,rtt_ms,ok,ttl}. Devuelve bytes
+           o -1 sin adaptador, -2 args, -3 sin IP configurada. */
+        struct {
+            uint32_t ip;
+            uint16_t n;
+            uint16_t espera;
+            uint8_t ttl;
+            uint8_t res;
+            uint16_t res2;
+        } pe;
+        uint16_t ident;
+        int i, n;
+        r->eax = (uint32_t)-2;
+        if (!ptr_ok(di, r->ebx, 12, 0)) return;
+        if (di >= 0) {
+            if (pag_lee_usr((unsigned)di, r->ebx, (void *)&pe, 12))
+                return;
+        } else {
+            uint8_t *s = (uint8_t *)r->ebx;
+            uint8_t *d = (uint8_t *)&pe;
+            for (int k = 0; k < 12; k++) d[k] = s[k];
+        }
+        if (!pe.ip || !pe.n || pe.n > 10) return;
+        if (pe.espera > 10000) pe.espera = 10000;
+        if (pe.espera < 100) pe.espera = 100;
+        if (!red_cfg_ip()) { r->eax = (uint32_t)-3; return; }
+        if (!red_hay()) { r->eax = (uint32_t)-1; return; }
+        if (!ptr_ok(di, r->ecx, pe.n * 6u, 1)) return;
+        ident = (uint16_t)((uint32_t)proc_actual->pid * 7919u +
+                          irq_ticks());
+        n = 0;
+        for (i = 1; i <= (int)pe.n; i++) {
+            uint8_t sal[6];
+            uint16_t rtt = 0;
+            uint8_t ttl = 0;
+            int k = red_icmp_ping(pe.ip, ident, (uint16_t)i,
+                                  pe.ttl ? pe.ttl : 64,
+                                  pe.espera, &rtt, &ttl);
+            r = regs_actual(r);
+            if (k < 0) { r->eax = (uint32_t)k; return; }
+            sal[0] = (uint8_t)((i >> 8) & 0xFFu);
+            sal[1] = (uint8_t)(i & 0xFFu);
+            sal[2] = (uint8_t)((rtt >> 8) & 0xFFu);
+            sal[3] = (uint8_t)(rtt & 0xFFu);
+            sal[4] = (uint8_t)(k ? 1 : 0);
+            sal[5] = ttl;
+            if (di >= 0) {
+                if (pag_escribe_usr((unsigned)di,
+                                    r->ecx + (uint32_t)n, sal, 6))
+                    return;
+            } else {
+                uint8_t *d = (uint8_t *)r->ecx + n;
+                for (int j = 0; j < 6; j++) d[j] = sal[j];
+            }
+            n += 6;
+        }
+        r->eax = (uint32_t)n;
+        return;
+ }
+
+
 __attribute__((optimize("O0"))) static void sc_63(regs_t *r, int di)
  {
         /* v2.3-red F2: tabla de rutas (conectada + defecto derivadas
@@ -1509,7 +1575,8 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [54] = sc_54,
     [55] = sc_55,
     [56] = sc_56,
-    /* 57-62 reservados (F3-F5) */
+    [57] = sc_57,
+    /* 58-62 reservados (F4-F5) */
     [63] = sc_63,
 };
 static const char *const sc_nombre[SC_N] = {
@@ -1570,6 +1637,7 @@ static const char *const sc_nombre[SC_N] = {
     [54] = "red_trama_recibir",
     [55] = "red_configurar",
     [56] = "red_consultar",
+    [57] = "red_comprobar",
     [63] = "red_rutas",
 };
 static uint32_t sc_count[SC_N];

@@ -624,6 +624,10 @@ int u_red_consultar(int tipo, void *ptr) {
 int u_red_rutas(void *buf, int max) {
     return sys_red_rutas(0, buf, max);
 }
+int u_red_comprobar(const red_peticion_t *pet, red_respuesta_t *resp,
+                    int max) {
+    return sys_red_comprobar(pet, resp, max);
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {
