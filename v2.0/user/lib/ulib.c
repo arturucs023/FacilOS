@@ -602,6 +602,16 @@ void u_apagar(void) {
 void u_reiniciar(void) {
     sys_reiniciar();
 }
+/* ---- red propia (v2.3-red F1) ---- */
+int u_red_interfaz(red_if_t *f) {
+    return sys_red_interfaz(f);
+}
+int u_red_trama_enviar(const void *marco, int tam) {
+    return sys_red_trama_enviar(marco, tam);
+}
+int u_red_trama_recibir(void *marco, int max, int espera) {
+    return sys_red_trama_recibir(marco, max, espera);
+}
 
 const char *u_estado_nombre(int e) {
     switch (e) {

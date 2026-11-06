@@ -179,4 +179,26 @@ int u_teclado_mod(void);  /* bit0 Shift, bit1 Ctrl, bit2 AltGr, bit3 Caps */
 void u_apagar(void);     /* no retorna si hay ACPI */
 void u_reiniciar(void);  /* no retorna si el 8042 responde */
 
+/* ---- red propia (syscalls 52-54, v2.3-red F1; sin POSIX) ---- */
+/* Ficha de 32 B (disposicion identica a drv_red.h del nucleo). */
+typedef struct {
+    unsigned char mac[6];
+    unsigned char presente; /* 1 si hay adaptador activo */
+    unsigned char irq;      /* linea PCI (informativa) */
+    unsigned short io_base; /* base PIO */
+    unsigned short mtu;     /* 1500 */
+    unsigned int rx_ok;
+    unsigned int tx_ok;
+    unsigned int rx_err;
+    unsigned int tx_err;
+    unsigned char rsv[4];
+} red_if_t;
+int u_red_interfaz(red_if_t *f);  /* 0 ok, -1 sin adaptador */
+/* Envia trama Ethernet completa (14+carga, sin CRC). Tam 14..1514.
+   Devuelve tam o -1 sin adaptador, -2 tam invalido, -3 agotada. */
+int u_red_trama_enviar(const void *marco, int tam);
+/* Recibe trama (sin CRC). >0 tam, 0 espera agotada, -1 sin adaptador,
+   -2 parametros invalidos. Espera acotada a 10 s. */
+int u_red_trama_recibir(void *marco, int max, int espera);
+
 #endif

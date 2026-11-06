@@ -9,6 +9,8 @@
    20=sprite, 21=sprite_t, 22=blit, 23=leer_pixel, 24=truncar.
    v1.7: 25=ejecutar (hijo con estado preservado), 26=terminal (shell),
    27=hay_tecla (sin bloqueo).
+   v2.2: 46-49 video/teclado, 50=apagar, 51=reiniciar.
+   v2.3-red: 52=red_interfaz, 53=red_trama_enviar, 54=red_trama_recibir.
    leer/escribir usan el offset del fd (buscar lo mueve); escribir
    extiende pero no trunca (usar truncar). */
 
@@ -265,6 +267,22 @@ static inline int sys_teclado_dist(int op, int val) {
    bit3 BloqMay). Solo lectura. */
 static inline int sys_teclado_mod(void) {
     return sys_llama(49, 0, 0, 0);
+}
+
+/* v2.3-red F1: red Ethernet propia (sin POSIX).
+   52 red_interfaz(ficha32B), 53 red_trama_enviar(tam,marco),
+   54 red_trama_recibir(max,espera_ms,marco).
+   Enviar/recibir devuelven tam>=0; -1 sin adaptador; enviar: -2 tam
+   invalido, -3 espera agotada; recibir: 0 espera agotada, -2
+   parametros invalidos. Espera siempre acotada. */
+static inline int sys_red_interfaz(void *ficha) {
+    return sys_llama(52, (int)ficha, 0, 0);
+}
+static inline int sys_red_trama_enviar(const void *marco, int tam) {
+    return sys_llama(53, tam, (int)marco, 0);
+}
+static inline int sys_red_trama_recibir(void *marco, int max, int espera) {
+    return sys_llama(54, max, espera, (int)marco);
 }
 
 /* v2.2-f32: apagar (50) y reiniciar (51) desde el boton FacilOS.
