@@ -336,6 +336,14 @@ static const cmd_t CMDS[] = {
       "Ejecuta un programa o un script .f32.",
       "Lanza un programa F32X con sus argumentos. Si el nombre termina en .f32 (o existe con esa extension), lo ejecuta con el interprete F32 Lang.",
       "ejecutar <programa> [args]", "ejecutar hola.f32", 1, 4, 0, 0 },
+    { "red", "sistema",
+      "Informacion y administracion general de la red.",
+      "Muestra el estado de la red propia (adaptador, MAC, contadores). Sin adaptador indica arranque sin red.",
+      "red [estado]", "red", 0, 1, 0, 0 },
+    { "mostrar_interfaz", "sistema",
+      "Informacion del adaptador de red.",
+      "Muestra adaptador, estado, direccion MAC y estadisticas de tramas.",
+      "mostrar_interfaz", "mostrar_interfaz", 0, 0, 0, 0 },
     { "salir", "sistema",
       "Cierra la terminal.",
       "Cierra esta ventana de terminal.",
@@ -1593,6 +1601,78 @@ static void op_eco(const cmd_t *c) {
     pon(b);
 }
 
+/* ---- red propia (v2.3-red F1) ---- */
+static void red_pon_num(const char *tit, unsigned int v) {
+    char b[64], nb[12];
+    int t = 0, q = 0;
+    while (tit[q] && t < 50) b[t++] = tit[q++];
+    b[t++] = '=';
+    u_utoa(v, nb);
+    q = 0;
+    while (nb[q] && t < 62) b[t++] = nb[q++];
+    b[t] = 0;
+    pon(b);
+}
+
+static void op_mostrar_interfaz(const cmd_t *c) {
+    red_if_t f;
+    int i, rc;
+    (void)c;
+    for (i = 0; i < 32; i++) ((unsigned char *)&f)[i] = 0;
+    rc = u_red_interfaz(&f);
+    if (rc || !f.presente) {
+        pon("Red no disponible: sin adaptador.");
+        pon("Arranque sin red (conecta una RTL8139).");
+        return;
+    }
+    pon("Adaptador Ethernet (RTL8139).");
+    pon("Estado: activo.");
+    {
+        char b[32];
+        int t = 0, i;
+        b[t++] = 'M';
+        b[t++] = 'A';
+        b[t++] = 'C';
+        b[t++] = ':';
+        b[t++] = ' ';
+        for (i = 0; i < 6 && t < 28; i++) {
+            unsigned char v = f.mac[i];
+            unsigned char hi = (unsigned char)(v >> 4);
+            unsigned char lo = (unsigned char)(v & 15);
+            b[t++] = hi < 10 ? (char)('0' + hi) : (char)('A' + hi - 10);
+            b[t++] = lo < 10 ? (char)('0' + lo) : (char)('A' + lo - 10);
+            if (i < 5) b[t++] = ':';
+        }
+        b[t] = 0;
+        pon(b);
+    }
+    red_pon_num("MTU", f.mtu);
+    red_pon_num("Tramas enviadas", f.tx_ok);
+    red_pon_num("Tramas recibidas", f.rx_ok);
+    red_pon_num("Errores envio", f.tx_err);
+    red_pon_num("Errores recepcion", f.rx_err);
+}
+
+static void op_red(const cmd_t *c) {
+    (void)c;
+    if (npos > 0 && u_strcmp(pos_arg[0], "estado")) {
+        perr(10, "Uso: red [estado].");
+        return;
+    }
+    if (npos == 0) {
+        red_if_t f;
+        int i;
+        for (i = 0; i < 32; i++) ((unsigned char *)&f)[i] = 0;
+        if (u_red_interfaz(&f) || !f.presente) {
+            pon("Red: sin adaptador.");
+            return;
+        }
+        pon("Red: adaptador activo.");
+        return;
+    }
+    op_mostrar_interfaz(c);
+}
+
 static int termina_en_f32(const char *r) {
     int l = u_strlen(r);
     if (l < 4) return 0;
@@ -2547,6 +2627,10 @@ static void ejecuta(ug_win_t *v, const char *ln) {
         op_eco(&CMDS[id]);
     } else if (!u_strcmp(cmd, "ejecutar")) {
         op_ejecutar(v, &CMDS[id]);
+    } else if (!u_strcmp(cmd, "red")) {
+        op_red(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "mostrar_interfaz")) {
+        op_mostrar_interfaz(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {
         ug_cierra(v);
     }
