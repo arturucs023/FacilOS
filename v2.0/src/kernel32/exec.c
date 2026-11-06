@@ -11,6 +11,7 @@
 #include "pag.h"
 #include "ipc.h"
 #include "ps2.h"
+#include "drv_red.h"
 
 /* v1.9: descriptores y heap son POR PROCESO (ver proc.h). El bloque del
    proceso con el que estamos se toma de proc_actual, de modo que la
@@ -1223,8 +1224,104 @@ __attribute__((optimize("O0"))) static void sc_51(regs_t *r, int di)
 }
 
 
+__attribute__((optimize("O0"))) static void sc_52(regs_t *r, int di)
+ {
+        /* v2.3-red F1: ficha del adaptador (32 B en ebx). 0 ok,
+           -1 sin adaptador. */
+        red_if_t f;
+        r->eax = (uint32_t)-1;
+        if (!ptr_ok(di, r->ebx, 32, 1)) return;
+        if (red_info(&f)) return;
+        if (di >= 0) {
+            if (pag_escribe_usr((unsigned)di, r->ebx, &f, 32))
+                return;
+        } else {
+            uint8_t *d = (uint8_t *)r->ebx;
+            uint8_t *s = (uint8_t *)&f;
+            for (int i = 0; i < 32; i++) d[i] = s[i];
+        }
+        r->eax = 0;
+        return;
+ }
+
+
+__attribute__((optimize("O0"))) static void sc_53(regs_t *r, int di)
+ {
+        /* v2.3-red F1: transmite trama Ethernet completa (ebx=tam).
+           Devuelve tam o -1 sin adaptador, -2 tam invalido,
+           -3 espera agotada. */
+        static uint8_t tmp[1518];
+        const uint8_t *src = (const uint8_t *)r->ecx;
+        uint32_t n = r->ebx;
+        int k;
+        r->eax = (uint32_t)-1;
+        if (n < 14 || n > 1514) { r->eax = (uint32_t)-2; return; }
+        if (!ptr_ok(di, r->ecx, n, 0)) return;
+        if (di >= 0) {
+            /* Copia por partes (evita rachas largas con IF=0). */
+            uint32_t h = 0;
+            while (h < n) {
+                uint32_t t = n - h;
+                uint8_t parte[64];
+                if (t > 64) t = 64;
+                if (pag_lee_usr((unsigned)di, r->ecx + h, parte, t))
+                    return;
+                for (uint32_t i = 0; i < t; i++) tmp[h + i] = parte[i];
+                h += t;
+            }
+        } else {
+            for (uint32_t i = 0; i < n; i++) tmp[i] = src[i];
+        }
+        k = red_tx(tmp, (int)n);
+        r->eax = (uint32_t)k;
+        return;
+ }
+
+
+__attribute__((optimize("O0"))) static void sc_54(regs_t *r, int di)
+ {
+        /* v2.3-red F1: recibe trama (ebx=max, ecx=espera ms, edx=buf).
+           Devuelve tam>0, 0 si agota la espera, -1 sin adaptador,
+           -2 parametros invalidos. Espera acotada a 10 s. */
+        static uint8_t tmp[1518];
+        uint32_t max = r->ebx, esp = r->ecx;
+        uint32_t fin;
+        int k;
+        r->eax = (uint32_t)-1;
+        if ((int32_t)max <= 0 || max > 1518) {
+            r->eax = (uint32_t)-2;
+            return;
+        }
+        if (!ptr_ok(di, r->edx, max, 1)) return;
+        if (esp > 10000) esp = 10000;
+        fin = irq_ticks() + esp / 10u + 1u;
+        for (;;) {
+            k = red_rx(tmp, 1518);
+            if (k < 0) { r->eax = (uint32_t)k; return; }
+            if (k > 0) {
+                if ((uint32_t)k > max) k = (int)max;
+                if (di >= 0) {
+                    if (pag_escribe_usr((unsigned)di, r->edx, tmp,
+                                        (uint32_t)k))
+                        return;
+                } else {
+                    uint8_t *d = (uint8_t *)r->edx;
+                    for (int i = 0; i < k; i++) d[i] = tmp[i];
+                }
+                r->eax = (uint32_t)k;
+                return;
+            }
+            if ((int32_t)(irq_ticks() - fin) >= 0) {
+                r->eax = 0;
+                return;
+            }
+            hlt();
+        }
+ }
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 52
+#define SC_N 55
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -1277,6 +1374,9 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [49] = sc_49,
     [50] = sc_50,
     [51] = sc_51,
+    [52] = sc_52,
+    [53] = sc_53,
+    [54] = sc_54,
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -1331,6 +1431,9 @@ static const char *const sc_nombre[SC_N] = {
     [49] = "teclado_mod",
     [50] = "apagar",
     [51] = "reiniciar",
+    [52] = "red_interfaz",
+    [53] = "red_trama_enviar",
+    [54] = "red_trama_recibir",
 };
 static uint32_t sc_count[SC_N];
 
