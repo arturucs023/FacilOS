@@ -300,7 +300,7 @@ _fin = IMG_LBA + (_nimg * 512 + 2047) // 2048
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.2-terminal.iso"   # v2.2 (v2.1 intacta)
+out_iso = ISO_DIR / "FacilOS-v2.3-red-f1.iso"   # v2.3-red F1 (v2.2 intacta)
 _iso = bytes(iso[:_fin * 2048])
 out_iso.write_bytes(_iso)
 print(f"OK {out_iso} {len(_iso)} bytes ({_fin} sectores, "
