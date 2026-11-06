@@ -17,6 +17,7 @@
 #include "red_ip.h"
 #include "red_icmp.h"
 #include "red_udp.h"
+#include "red_tcp.h"
 
 /* v1.9: descriptores y heap son POR PROCESO (ver proc.h). El bloque del
    proceso con el que estamos se toma de proc_actual, de modo que la
@@ -1626,6 +1627,164 @@ __attribute__((optimize("O0"))) static void sc_60(regs_t *r, int di)
  }
 
 
+__attribute__((optimize("O0"))) static void sc_61(regs_t *r, int di)
+ {
+        /* v2.3-red F5: TCP (op en ebx, multiplexada como 55/56).
+           0 abrir {ip:4,puerto:2,local:2} -> id | neg (acotado).
+           1 escuchar {puerto:2} -> id | neg.
+           2 aceptar {id:4,espera:2} -> hijo, 0 espera, neg.
+           3 enviar {id:4}+buf+len -> len | neg (<=536).
+           4 recibir {id:4,espera:2}+buf+max -> B, 0 espera,
+              -12 fin remoto, neg.
+           5 cerrar {id:4} -> 0 | neg (ordendo, acotado).
+           6 abortar {id:4} -> 0 (RST + libera).
+           7 estado {id:4} -> estado 1..6 | neg.
+           Negativos: -1 sin adaptador, -2 args, -3 sin ruta,
+           -4 ARP, -5 Tx, -6 en uso/tabla, -7 conexion, -8 estado,
+           -9 abortada. Toda espera acotada. */
+        int op = (int)r->ebx;
+        uint32_t pid;
+        static uint8_t tmp[64];
+        r->eax = (uint32_t)-2;
+        if (op < 0 || op > 7) return;
+        if (!red_hay()) { r->eax = (uint32_t)-1; return; }
+        if (!proc_actual) return;
+        pid = (uint32_t)proc_actual->pid;
+        if (op == 0) {
+            struct {
+                uint32_t ip;
+                uint16_t puerto;
+                uint16_t local;
+            } a;
+            int k;
+            if (!ptr_ok(di, r->ecx, 8, 0)) return;
+            if (di >= 0) {
+                if (pag_lee_usr((unsigned)di, r->ecx, (void *)&a, 8))
+                    return;
+            } else {
+                uint8_t *s = (uint8_t *)r->ecx;
+                uint8_t *d = (uint8_t *)&a;
+                for (int i = 0; i < 8; i++) d[i] = s[i];
+            }
+            k = red_tcp_abrir(a.ip, a.puerto, a.local, pid);
+            r = regs_actual(r);
+            r->eax = (uint32_t)k;
+            return;
+        }
+        if (op == 1) {
+            uint8_t b[2];
+            int k;
+            if (!ptr_ok(di, r->ecx, 2, 0)) return;
+            if (di >= 0) {
+                if (pag_lee_usr((unsigned)di, r->ecx, b, 2)) return;
+            } else {
+                uint8_t *s = (uint8_t *)r->ecx;
+                b[0] = s[0];
+                b[1] = s[1];
+            }
+            k = red_tcp_escuchar((uint16_t)((b[0] << 8) | b[1]),
+                                 pid);
+            r = regs_actual(r);
+            r->eax = (uint32_t)k;
+            return;
+        }
+        if (op == 2 || op == 4 || op == 5 || op == 6 || op == 7) {
+            struct {
+                uint32_t id;
+                uint16_t espera;
+                uint16_t res;
+            } a;
+            int k;
+            if (!ptr_ok(di, r->ecx, 8, 0)) return;
+            if (di >= 0) {
+                if (pag_lee_usr((unsigned)di, r->ecx, (void *)&a, 8))
+                    return;
+            } else {
+                uint8_t *s = (uint8_t *)r->ecx;
+                uint8_t *d = (uint8_t *)&a;
+                for (int i = 0; i < 8; i++) d[i] = s[i];
+            }
+            if (op == 2) {
+                k = red_tcp_aceptar((int)a.id, pid, a.espera);
+            } else if (op == 5) {
+                k = red_tcp_cerrar((int)a.id, pid);
+            } else if (op == 6) {
+                k = red_tcp_abortar((int)a.id, pid);
+            } else if (op == 7) {
+                k = red_tcp_estado((int)a.id, pid);
+            } else {
+                uint32_t max = r->esi;
+                uint32_t n = 0;
+                if (max < 1 || max > 2048) return;
+                if (!ptr_ok(di, r->edx, max, 1)) return;
+                if (a.espera > 10000) a.espera = 10000;
+                while (n < max) {
+                    uint32_t t = max - n;
+                    if (t > 64) t = 64;
+                    k = red_tcp_recibir((int)a.id, pid, tmp, t,
+                                        n ? 0 : a.espera);
+                    r = regs_actual(r);
+                    if (k < 0) {
+                        r->eax = (uint32_t)(n ? (int)n : k);
+                        return;
+                    }
+                    if (k == 0) break;
+                    if (di >= 0) {
+                        if (pag_escribe_usr((unsigned)di,
+                                            r->edx + n, tmp,
+                                            (uint32_t)k))
+                            return;
+                    } else {
+                        uint8_t *d = (uint8_t *)r->edx + n;
+                        for (int i = 0; i < k; i++) d[i] = tmp[i];
+                    }
+                    n += (uint32_t)k;
+                    if (k < (int)t) break;
+                    r = regs_actual(r);
+                }
+                r->eax = n;
+                return;
+            }
+            r = regs_actual(r);
+            r->eax = (uint32_t)k;
+            return;
+        }
+        /* op 3: enviar (id en ecx[0..3], datos en edx, len en esi). */
+        {
+            uint8_t b[4];
+            uint32_t len = r->esi, h = 0;
+            int k;
+            if (!ptr_ok(di, r->ecx, 4, 0)) return;
+            if (di >= 0) {
+                if (pag_lee_usr((unsigned)di, r->ecx, b, 4)) return;
+            } else {
+                uint8_t *s = (uint8_t *)r->ecx;
+                for (int i = 0; i < 4; i++) b[i] = s[i];
+            }
+            if (!len || len > TCP_MSS) return;
+            if (!ptr_ok(di, r->edx, len, 0)) return;
+            k = (int)(((uint32_t)b[0]) | ((uint32_t)b[1] << 8) |
+                      ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24));
+            /* Envio en un tramo (<=536): via nucleo con espera. */
+            {
+                static uint8_t sbuf[TCP_MSS];
+                if (di >= 0) {
+                    if (pag_lee_usr((unsigned)di, r->edx, sbuf, len))
+                        return;
+                } else {
+                    uint8_t *s = (uint8_t *)r->edx;
+                    for (uint32_t i = 0; i < len; i++)
+                        sbuf[i] = s[i];
+                }
+                k = red_tcp_enviar(k, pid, sbuf, (int)len);
+                r = regs_actual(r);
+                r->eax = (uint32_t)k;
+                return;
+            }
+        }
+ }
+
+
 __attribute__((optimize("O0"))) static void sc_63(regs_t *r, int di)
  {
         /* v2.3-red F2: tabla de rutas (conectada + defecto derivadas
@@ -1717,10 +1876,12 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [55] = sc_55,
     [56] = sc_56,
     [57] = sc_57,
+    /* 58-60 F4: UDP (ligar/enviar/recibir) */
     [58] = sc_58,
     [59] = sc_59,
     [60] = sc_60,
-    /* 61-62 reservados (F5) */
+    [61] = sc_61,   /* F5: TCP multiplexado (op 0..7) */
+    /* 62 reservada */
     [63] = sc_63,
 };
 static const char *const sc_nombre[SC_N] = {
@@ -1785,6 +1946,7 @@ static const char *const sc_nombre[SC_N] = {
     [58] = "red_udp_ligar",
     [59] = "red_udp_enviar",
     [60] = "red_udp_recibir",
+    [61] = "red_tcp",
     [63] = "red_rutas",
 };
 static uint32_t sc_count[SC_N];

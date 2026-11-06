@@ -269,6 +269,34 @@ int u_red_udp_enviar(const red_udp_envio_t *e, const void *datos,
                      int len);
 int u_red_udp_recibir(const red_udp_peticion_t *pet, void *buf,
                       int max);
+/* F5: TCP propio (ops de la 61; structs de tamano fijo). Estados
+   1 escucha .. 6 fin remoto; errores -1..-9, -12 fin remoto. */
+typedef struct {
+    unsigned int ip;
+    unsigned short puerto;
+    unsigned short local;
+} red_tcp_abre_t;
+typedef struct {
+    unsigned short puerto;
+    unsigned short res;
+} red_tcp_escucha_t;
+typedef struct {
+    unsigned int id;
+    unsigned short espera;
+    unsigned short res;
+} red_tcp_acepta_t;
+typedef struct {
+    unsigned int id;
+} red_tcp_id_t;
+int u_tcp_abrir(unsigned int ip, unsigned short puerto,
+                unsigned short local);
+int u_tcp_escuchar(unsigned short puerto);
+int u_tcp_aceptar(int id, unsigned short espera);
+int u_tcp_enviar(int id, const void *datos, int len);
+int u_tcp_recibir(int id, void *buf, int max, unsigned short espera);
+int u_tcp_cerrar(int id);
+int u_tcp_abortar(int id);
+int u_tcp_estado(int id);
 /* F4: DNS A/IN. Arma consulta; devuelve long (>=12) o negativo
    (-1 args, -2 dominio invalido, -3 sin sitio). Con error, la
    salida puede quedar parcial: solo vale si devuelve long. */

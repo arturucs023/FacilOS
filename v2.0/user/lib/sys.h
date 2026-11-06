@@ -12,7 +12,7 @@
    v2.2: 46-49 video/teclado, 50=apagar, 51=reiniciar.
    v2.3-red: 52=red_interfaz, 53/54=trama cruda, 55=configurar,
    56=consultar, 57=comprobar, 58-60=UDP (ligar/enviar/recibir),
-   63=rutas (61-62 F5).
+   61=tcp multiplexado (op 0..7), 63=rutas (62 F6).
    leer/escribir usan el offset del fd (buscar lo mueve); escribir
    extiende pero no trunca (usar truncar). */
 
@@ -320,6 +320,12 @@ static inline int sys_red_udp_enviar(const void *e, const void *datos,
 static inline int sys_red_udp_recibir(const void *pet, void *buf,
                                       int max) {
     return sys_llama(60, (int)pet, (int)buf, max);
+}
+/* F5: 61 TCP multiplexado (op 0..7). ebx=op, ecx=ptr, edx=buf,
+   esi=len/max. Ver red_tcp.h para ops y errores. */
+static inline int sys_red_tcp(int op, const void *ptr,
+                              void *buf, int len) {
+    return sys_llama5(61, op, (int)ptr, (int)buf, len, 0);
 }
 
 /* v2.2-f32: apagar (50) y reiniciar (51) desde el boton FacilOS.

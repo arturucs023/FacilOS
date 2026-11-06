@@ -640,6 +640,56 @@ int u_red_udp_recibir(const red_udp_peticion_t *pet, void *buf,
     return sys_red_udp_recibir(pet, buf, max);
 }
 
+/* ---- TCP propio (v2.3-red F5; syscall 61 op-multiplexada) ---- */
+int u_tcp_abrir(unsigned int ip, unsigned short puerto,
+                unsigned short local) {
+    red_tcp_abre_t a;
+    a.ip = ip;
+    a.puerto = puerto;
+    a.local = local;
+    return sys_red_tcp(0, &a, 0, 0);
+}
+int u_tcp_escuchar(unsigned short puerto) {
+    red_tcp_escucha_t e;
+    e.puerto = puerto;
+    e.res = 0;
+    return sys_red_tcp(1, &e, 0, 0);
+}
+int u_tcp_aceptar(int id, unsigned short espera) {
+    red_tcp_acepta_t a;
+    a.id = (unsigned int)id;
+    a.espera = espera;
+    a.res = 0;
+    return sys_red_tcp(2, &a, 0, 0);
+}
+int u_tcp_enviar(int id, const void *datos, int len) {
+    red_tcp_id_t q;
+    q.id = (unsigned int)id;
+    return sys_red_tcp(3, &q, (void *)datos, len);
+}
+int u_tcp_recibir(int id, void *buf, int max, unsigned short espera) {
+    red_tcp_acepta_t a;
+    a.id = (unsigned int)id;
+    a.espera = espera;
+    a.res = 0;
+    return sys_red_tcp(4, &a, buf, max);
+}
+int u_tcp_cerrar(int id) {
+    red_tcp_id_t q;
+    q.id = (unsigned int)id;
+    return sys_red_tcp(5, &q, 0, 0);
+}
+int u_tcp_abortar(int id) {
+    red_tcp_id_t q;
+    q.id = (unsigned int)id;
+    return sys_red_tcp(6, &q, 0, 0);
+}
+int u_tcp_estado(int id) {
+    red_tcp_id_t q;
+    q.id = (unsigned int)id;
+    return sys_red_tcp(7, &q, 0, 0);
+}
+
 /* ---- DNS A/IN (v2.3-red F4; sin sockets) ---- */
 
 static int dns_es_ldh(char c) {
