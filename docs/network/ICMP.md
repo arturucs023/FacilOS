@@ -1,7 +1,7 @@
 # ICMP (v2.3-red F3)
 
 `src/kernel32/red_icmp.{h,c}`. Solo eco (request/reply); sin mensajes
-de error ni reenvio (eso es F6 con `trazar_ruta`).
+de error ni reenvio (`trazar_ruta` esta reservado, no implementado).
 
 - `red_icmp_entrada`: valida longitud minima (14+20+8) y checksum;
   cuenta errores. Las respuestas casan con la unica espera pendiente

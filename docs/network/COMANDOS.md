@@ -15,10 +15,14 @@
   defecto) con seq, TTL y tiempo; `sin respuesta` si agota la
   espera; requiere IP configurada.
 - `consultar_dns <dominio>` -> resuelve a IPv4 (tipo A) y muestra
-  dominio, servidor, IP, tipo, TTL y tiempo; NXDOMAIN, error del
-  servidor o timeout con mensaje propio (rc 1/3/4).
-- `mostrar_dns` -> servidor DNS configurado (DHCP o manual) y
-  aviso de ausencia de cache en F4.
+  dominio, IP, TTL, origen (cache/red), transporte (UDP/TCP),
+  tiempo y cadena CNAME si la hay; guarda el detalle en
+  `/dnssal.txt` (servidor, tipo, origen, transporte, cadena).
+  NXDOMAIN, error del servidor o timeout con mensaje propio
+  (rc 1/3/4).
+- `mostrar_dns` -> servidor DNS configurado y resumen de la
+  cache F6-D (32 entradas por proceso, TTL tope 1 dia,
+  CNAME hasta 8 saltos, TCP si TC=1).
 - Sin adaptador: `red`/`mostrar_interfaz` informan
   `sin adaptador`; `configurar_ip`/`mostrar_rutas` funcionan igual
   (la configuracion no exige hardware); `configurar_dhcp`,

@@ -270,7 +270,11 @@ int u_red_udp_enviar(const red_udp_envio_t *e, const void *datos,
 int u_red_udp_recibir(const red_udp_peticion_t *pet, void *buf,
                       int max);
 /* F5: TCP propio (ops de la 61; structs de tamano fijo). Estados
-   1 escucha .. 6 fin remoto; errores -1..-9, -12 fin remoto. */
+   1 escucha .. 6 fin remoto; errores -1..-9, -12 fin remoto.
+   F6-C: -8 tambien es ventana del par cerrada o insuficiente
+   al enviar (reintentar mas tarde, sin bloquear); -6 tambien
+   es tupla protegida durante la gracia tras cierre (reintentar
+   pasados unos segundos; ver TCP.md, no es TIME_WAIT). */
 typedef struct {
     unsigned int ip;
     unsigned short puerto;

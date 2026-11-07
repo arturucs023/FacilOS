@@ -26,7 +26,7 @@ A/IN al servidor de la configuracion (DHCP de F3 o manual con
   tiempo (ms, resolucion 10 ms) y tipo.
 - Cache F6-D (por proceso, en `ulib`, 32 entradas,
   ~5.6 KB fijos): clave nombre+servidor+puerto; TTL con tope
-  de 1 dia (0 = no cacheable); sustitucion primera libre,
+  de 86400 segundos (1 dia); TTL 0 = no cacheable; sustitucion primera libre,
   luego caducada, luego round-robin; sin negativos
   (evaluado: sin SOA no hay TTL negativo fiable). Cambiar el
   DNS deja las entradas antiguas inaccesibles (miss natural).
