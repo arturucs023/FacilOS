@@ -364,6 +364,10 @@ static const cmd_t CMDS[] = {
       "Resuelve un nombre de dominio a IPv4.",
       "Pregunta al servidor DNS (tipo A) y muestra IP, TTL y tiempo.",
       "consultar_dns <dominio>", "consultar_dns example.com", 1, 1, 0, 0 },
+    { "http", "sistema",
+      "Trae una pagina web (HTTP/1.0, solo GET).",
+      "Descarga por HTTP/1.0 y muestra codigo, cabeceras y cuerpo.",
+      "http <url>", "http http://example.com/", 1, 1, 0, 0 },
     { "mostrar_dns", "sistema",
       "Muestra el servidor DNS configurado.",
       "Indica el servidor (DHCP o manual) y la ausencia de cache.",
@@ -2105,6 +2109,41 @@ static void op_consultar_dns(const cmd_t *c) {
     else perr(33, "DNS no disponible (revisa red y servidor DNS).");
 }
 
+static void op_http(const cmd_t *c) {
+    char args[256];
+    int t = 0, i, rc;
+    char rb[32];
+    (void)c;
+    if (npos != 1) {
+        perr(10, "Uso: http <url>.");
+        return;
+    }
+    for (i = 0; pos_arg[0][i] && t < 254; i++) args[t++] = pos_arg[0][i];
+    args[t] = 0;
+    ug_modal(v_term, 1);
+    rc = u_ejecutar("http", args);
+    ug_modal(v_term, 0);
+    muestra_sal_fich("/httpsal.txt");
+    {
+        char nb[12];
+        int w = 0, q = 0;
+        rb[w++] = 'r';
+        rb[w++] = 'c';
+        rb[w++] = '=';
+        u_itoa(rc, nb);
+        while (nb[q] && w < 30) rb[w++] = nb[q++];
+        rb[w] = 0;
+    }
+    pon(rb);
+    if (rc == 0) pon("HTTP traido correctamente.");
+    else if (rc == 1) perr(33, "HTTP sin respuesta (revisa la red).");
+    else if (rc == 2) perr(33, "HTTP: URL invalida (solo http://).");
+    else if (rc == 3) perr(33, "HTTP: el nombre no existe (NXDOMAIN).");
+    else if (rc == 4) perr(33, "HTTP: respuesta no valida o no soportada.");
+    else if (rc < -100) perr(33, "No se pudo lanzar (nombre o formato).");
+    else perr(33, "HTTP no disponible (revisa la red).");
+}
+
 static void op_mostrar_dns(const cmd_t *c) {
     red_cfg_t cfg;
     int i;
@@ -3091,6 +3130,8 @@ static void ejecuta(ug_win_t *v, const char *ln) {
         op_configurar_dhcp(&CMDS[id]);
     } else if (!u_strcmp(cmd, "consultar_dns")) {
         op_consultar_dns(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "http")) {
+        op_http(&CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_dns")) {
         op_mostrar_dns(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {

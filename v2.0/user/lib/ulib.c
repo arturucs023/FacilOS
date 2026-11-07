@@ -1403,3 +1403,737 @@ const char *u_estado_nombre(int e) {
     default: return "?";
     }
 }
+
+/* ---- F7-B: HTTP/1.0 Ring3 (sin sockets; GET + Connection: close) ----
+   Parser incremental y reutilizable (patron del codec DNS F6-D).
+   La app llama u_http_res_inicia() una vez, u_http_res_datos()
+   por cada trozo recibido y u_http_res_fin() al ver EOF (-12).
+   Todo acotado: sin malloc, sin recursion, sin esperas propias
+   (los timeouts los pone quien llama). */
+
+static unsigned char http_hbuf[U_HTTP_MAX_SEC];
+static int http_hlen;
+static char http_pet[U_HTTP_MAX_LIN * 4];
+
+/* Adelantada: u_http_pide la usa para validar extra. */
+static int http_cab_ok(const unsigned char *l, int n, char *nom,
+                       char *val, int *es_te);
+
+static int http_es_dig(char c) {
+    return c >= '0' && c <= '9';
+}
+
+static int http_es_host(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '-' || c == '.';
+}
+
+static unsigned int http_ahora(void) {
+    int t = u_ticks();
+    return t < 0 ? 0u : (unsigned int)t;
+}
+
+static int http_iguales(const char *a, const char *b) {
+    int i = 0;
+    for (;;) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return (int)ca - (int)cb;
+        if (!ca) return 0;
+        i++;
+    }
+}
+
+/* Decimal estricto sin espacios; tope 4294967295. 0 ok, -1 mal. */
+static int http_num(const char *s, unsigned int *v) {
+    int i = 0;
+    unsigned int n = 0;
+    if (!s[0]) return -1;
+    while (s[i]) {
+        unsigned int d;
+        if (s[i] < '0' || s[i] > '9') return -1;
+        d = (unsigned int)(s[i] - '0');
+        if (n > 429496729u || (n == 429496729u && d > 5u))
+            return -1;
+        n = n * 10u + d;
+        i++;
+    }
+    if (v) *v = n;
+    return 0;
+}
+
+/* IPv4 punteada estricta (sin ceros a la izquierda salvo "0").
+   u32 LE: primer octeto en el byte bajo (como red_cfg_t). */
+static int http_ip(const char *s, unsigned int *ip) {
+    int i = 0, k;
+    unsigned int v = 0;
+    for (k = 0; k < 4; k++) {
+        int n = 0, d = 0, ini;
+        if (k && s[i++] != '.') return -1;
+        ini = i;
+        while (s[i] >= '0' && s[i] <= '9') {
+            n = n * 10 + (s[i] - '0');
+            d++;
+            i++;
+            if (n > 255 || d > 3) return -1;
+        }
+        if (!d) return -1;
+        if (d > 1 && s[ini] == '0') return -1;
+        v |= (unsigned int)n << (k * 8);
+    }
+    if (s[i]) return -1;
+    if (ip) *ip = v;
+    return 0;
+}
+
+int u_http_url(const char *url, u_http_url_t *u) {
+    int i = 0, h = 0, k, soloip = 1, puntos = 0;
+    if (!url || !u) return -1;
+    while (url[i]) {
+        unsigned char c = (unsigned char)url[i];
+        if (c < 32 || c == 127 || c == ' ') return -5;
+        i++;
+        if (i > U_HTTP_MAX_URL) return -5;
+    }
+    if (i < 7) return -2;
+    {
+        const char *esq = "http://";
+        for (k = 0; k < 7; k++) {
+            char a = url[k];
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (a != esq[k]) return -2;
+        }
+    }
+    i = 7;
+    while (url[i] && url[i] != '/' && url[i] != ':') {
+        if (!http_es_host(url[i])) return -3;
+        if (h + 1 >= (int)sizeof(u->host)) return -5;
+        {
+            char c = url[i];
+            u->host[h++] = (c >= 'A' && c <= 'Z') ? (char)(c + 32)
+                                                  : c;
+        }
+        i++;
+    }
+    if (!h) return -3;
+    u->host[h] = 0;
+    if (u->host[0] == '.' || u->host[0] == '-' ||
+        u->host[h - 1] == '.' || u->host[h - 1] == '-') return -3;
+    for (k = 0; k < h; k++) {
+        char c = u->host[k];
+        if (c == '.') {
+            puntos++;
+            if (k + 1 < h && u->host[k + 1] == '.') return -3;
+        } else if (c < '0' || c > '9') soloip = 0;
+    }
+    u->es_ip = 0;
+    u->ip = 0;
+    if (soloip && puntos) {
+        if (http_ip(u->host, &u->ip)) return -3;
+        u->es_ip = 1;
+    }
+    u->puerto = 80;
+    if (url[i] == ':') {
+        unsigned int po = 0;
+        int nd = 0;
+        i++;
+        while (url[i] >= '0' && url[i] <= '9') {
+            po = po * 10u + (unsigned int)(url[i] - '0');
+            if (po > 65535u) return -4;
+            nd++;
+            i++;
+            if (nd > 5) return -4;
+        }
+        if (!nd || !po || po > 65535u) return -4;
+        u->puerto = (unsigned short)po;
+    }
+    {
+        int r = 0;
+        if (!url[i]) {
+            u->ruta[0] = '/';
+            u->ruta[1] = 0;
+        } else {
+            if (url[i] != '/') return -5;
+            while (url[i] && url[i] != '#') {
+                if (r + 1 >= (int)sizeof(u->ruta)) return -5;
+                u->ruta[r++] = url[i++];
+            }
+            u->ruta[r] = 0;
+        }
+    }
+    return 0;
+}
+
+static int http_pon(char *sal, int smax, int *t, const char *s) {
+    int k = 0;
+    while (s[k]) {
+        if (*t + 1 >= smax) return -1;
+        sal[(*t)++] = s[k++];
+    }
+    return 0;
+}
+
+int u_http_pide(const u_http_url_t *u, const char *extra, char *sal,
+                int smax) {
+    int t = 0, k;
+    if (!u || !sal || smax <= 0) return -1;
+    if (!u->host[0] || !u->puerto || u->ruta[0] != '/') return -2;
+    if (http_pon(sal, smax, &t, "GET ")) return -3;
+    for (k = 0; u->ruta[k]; k++) {
+        if (t + 1 >= smax) return -3;
+        sal[t++] = u->ruta[k];
+    }
+    if (http_pon(sal, smax, &t, " HTTP/1.0\r\nHost: ")) return -3;
+    for (k = 0; u->host[k]; k++) {
+        if (t + 1 >= smax) return -3;
+        sal[t++] = u->host[k];
+    }
+    if (u->puerto != 80) {
+        int v = u->puerto, q = 0;
+        char tmp[8];
+        if (t + 1 >= smax) return -3;
+        sal[t++] = ':';
+        if (!v) tmp[q++] = '0';
+        while (v && q < 7) {
+            tmp[q++] = (char)('0' + v % 10);
+            v /= 10;
+        }
+        while (q > 0) {
+            q--;
+            if (t + 1 >= smax) return -3;
+            sal[t++] = tmp[q];
+        }
+    }
+    if (http_pon(sal, smax, &t, "\r\nConnection: close\r\n"
+                                "User-Agent: FacilOS32-HTTP/0.1\r\n"
+                                "Accept: */*\r\n"))
+        return -3;
+    if (extra && extra[0]) {
+        /* Cabeceras adicionales validadas (sin framing/control). */
+        int o = 0, nl = 0;
+        char nm[U_HTTP_NOM], vl[U_HTTP_VAL];
+        while (extra[o]) {
+            int eol = -1, j, te = 0;
+            for (j = o; extra[j]; j++) {
+                if (extra[j] == '\r' && extra[j + 1] == '\n') {
+                    eol = j;
+                    break;
+                }
+                if (extra[j] == '\n') return -2;
+            }
+            if (eol < 0) return -2;
+            if (eol - o == 0) break;
+            if (eol - o > U_HTTP_MAX_LIN) return -2;
+            {
+                unsigned char ln[U_HTTP_MAX_LIN + 2];
+                for (j = 0; j < eol - o; j++)
+                    ln[j] = (unsigned char)extra[o + j];
+                if (http_cab_ok(ln, eol - o, nm, vl, &te))
+                    return -2;
+                if (!http_iguales(nm, "host") ||
+                    !http_iguales(nm, "connection") ||
+                    !http_iguales(nm, "content-length") ||
+                    !http_iguales(nm, "transfer-encoding"))
+                    return -2;
+            }
+            nl++;
+            if (nl > 8) return -2;
+            for (j = o; j < eol + 2; j++) {
+                if (t + 1 >= smax) return -3;
+                sal[t++] = extra[j];
+            }
+            o = eol + 2;
+        }
+    }
+    if (http_pon(sal, smax, &t, "\r\n")) return -3;
+    if (t > U_HTTP_MAX_LIN * 4) return -3;
+    if (t >= smax) return -3;
+    sal[t] = 0;
+    return t;
+}
+
+/* Valida "Nombre: valor". 0 ok; -1 malformada. */
+static int http_cab_ok(const unsigned char *l, int n, char *nom,
+                       char *val, int *es_te) {
+    int i, cpos = -1, v0, v1;
+    for (i = 0; i < n; i++) {
+        unsigned char c = l[i];
+        if (c == ':') {
+            cpos = i;
+            break;
+        }
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '-'))
+            return -1;
+    }
+    if (cpos <= 0 || cpos >= U_HTTP_NOM) return -1;
+    for (i = 0; i < cpos; i++) nom[i] = (char)l[i];
+    nom[cpos] = 0;
+    v0 = cpos + 1;
+    while (v0 < n && (l[v0] == ' ' || l[v0] == '\t')) v0++;
+    v1 = n;
+    while (v1 > v0 && (l[v1 - 1] == ' ' || l[v1 - 1] == '\t')) v1--;
+    if (v1 - v0 >= U_HTTP_VAL) return -1;
+    for (i = v0; i < v1; i++) {
+        if (l[i] < 32 || l[i] > 126) return -1;
+        val[i - v0] = (char)l[i];
+    }
+    val[v1 - v0] = 0;
+    *es_te = http_iguales(nom, "transfer-encoding") == 0;
+    return 0;
+}
+
+static int http_linea_estado(u_http_res_t *r, const unsigned char *l,
+                             int n) {
+    int i = 0, k, may = 0, men = 0, nd = 0, code = 0;
+    if (n < 12) return -1;
+    if (l[0] != 'H' || l[1] != 'T' || l[2] != 'T' || l[3] != 'P' ||
+        l[4] != '/')
+        return -1;
+    i = 5;
+    while (i < n && l[i] >= '0' && l[i] <= '9') {
+        may = may * 10 + (l[i] - '0');
+        if (may > 99) return -1;
+        nd++;
+        i++;
+    }
+    if (!nd || i >= n || l[i] != '.') return -1;
+    i++;
+    nd = 0;
+    while (i < n && l[i] >= '0' && l[i] <= '9') {
+        men = men * 10 + (l[i] - '0');
+        if (men > 99) return -1;
+        nd++;
+        i++;
+    }
+    if (!nd) return -1;
+    if (!(may == 1 && (men == 0 || men == 1))) return -1;
+    r->version[0] = 'H';
+    r->version[1] = 'T';
+    r->version[2] = 'T';
+    r->version[3] = 'P';
+    r->version[4] = '/';
+    r->version[5] = (char)('0' + may);
+    r->version[6] = '.';
+    r->version[7] = (char)('0' + men);
+    r->version[8] = 0;
+    if (i >= n || l[i] != ' ') return -1;
+    while (i < n && l[i] == ' ') i++;
+    if (i + 2 >= n) return -1;
+    if (!http_es_dig((char)l[i]) || !http_es_dig((char)l[i + 1]) ||
+        !http_es_dig((char)l[i + 2]))
+        return -1;
+    code = (l[i] - '0') * 100 + (l[i + 1] - '0') * 10 +
+           (l[i + 2] - '0');
+    if (code < 100 || code > 599) return -1;
+    r->codigo = code;
+    i += 3;
+    if (i < n && l[i] != ' ') return -1;
+    if (i < n) i++;
+    for (k = i; k < n; k++)
+        if (l[k] < 32 || l[k] > 126) return -1;
+    if (n - i >= (int)sizeof(r->motivo)) return -1;
+    for (k = i; k < n; k++) r->motivo[k - i] = (char)l[k];
+    r->motivo[n - i] = 0;
+    return 0;
+}
+
+static int http_cab_guarda(u_http_res_t *r, const char *nom,
+                           const char *val) {
+    int k;
+    if (r->ncab >= U_HTTP_MAX_CAB) return -1;
+    if (!http_iguales(nom, "content-length")) {
+        unsigned int v;
+        if (http_num(val, &v)) return -1;
+        if (r->tiene_cl) {
+            if (v != r->content_length) return -1;
+        } else {
+            r->content_length = v;
+            r->tiene_cl = 1;
+        }
+    }
+    if (!http_iguales(nom, "transfer-encoding")) r->chunked = 1;
+    for (k = 0; nom[k] && k + 1 < U_HTTP_NOM; k++)
+        r->hnom[r->ncab][k] = nom[k];
+    r->hnom[r->ncab][k] = 0;
+    for (k = 0; val[k] && k + 1 < U_HTTP_VAL; k++)
+        r->hval[r->ncab][k] = val[k];
+    r->hval[r->ncab][k] = 0;
+    r->ncab++;
+    return 0;
+}
+
+static int http_cabeceras(u_http_res_t *r, int fin, int capcuerpo) {
+    int o = 0, eol = -1, i;
+    char nom[U_HTTP_NOM], val[U_HTTP_VAL];
+    for (i = 0; i + 1 < fin; i++) {
+        if (http_hbuf[i] == '\r' && http_hbuf[i + 1] == '\n') {
+            eol = i;
+            break;
+        }
+    }
+    if (eol < 0 || eol > U_HTTP_MAX_LIN) return -1;
+    if (http_linea_estado(r, http_hbuf, eol)) return -1;
+    o = eol + 2;
+    while (o < fin) {
+        int e2 = -1, te = 0;
+        for (i = o; i + 1 < fin; i++) {
+            if (http_hbuf[i] == '\r' && http_hbuf[i + 1] == '\n') {
+                e2 = i;
+                break;
+            }
+        }
+        if (e2 < 0) return -1;
+        if (e2 == o) {
+            o += 2;
+            break;
+        }
+        if (http_hbuf[o] == ' ' || http_hbuf[o] == '\t') return -1;
+        if (e2 - o > U_HTTP_MAX_LIN) return -1;
+        if (http_cab_ok(http_hbuf + o, e2 - o, nom, val, &te))
+            return -1;
+        if (te) r->chunked = 1;
+        if (http_cab_guarda(r, nom, val)) return -1;
+        o = e2 + 2;
+    }
+    if (r->chunked) {
+        r->err = -7;
+        return -1;
+    }
+    if (r->tiene_cl && r->content_length > (unsigned int)capcuerpo) {
+        r->err = -8;
+        return -1;
+    }
+    if ((r->codigo >= 100 && r->codigo < 200) || r->codigo == 204 ||
+        r->codigo == 304) {
+        r->estado = U_HTTP_ST_OK;
+        return 1;
+    }
+    if (r->tiene_cl && r->content_length == 0) {
+        r->estado = U_HTTP_ST_OK;
+        return 1;
+    }
+    r->estado = U_HTTP_ST_CUERPO;
+    return 0;
+}
+
+void u_http_res_inicia(u_http_res_t *r) {
+    int i, j;
+    if (!r) return;
+    r->estado = U_HTTP_ST_LINEA;
+    r->err = 0;
+    r->codigo = 0;
+    r->version[0] = 0;
+    r->motivo[0] = 0;
+    r->ncab = 0;
+    for (i = 0; i < U_HTTP_MAX_CAB; i++) {
+        r->hnom[i][0] = 0;
+        r->hval[i][0] = 0;
+    }
+    r->content_length = 0;
+    r->tiene_cl = 0;
+    r->chunked = 0;
+    r->cuerpo_n = 0;
+    r->cuerpo_esp = 0;
+    r->ip = 0;
+    r->puerto = 0;
+    http_hlen = 0;
+    for (j = 0; j < (int)sizeof(http_hbuf); j++) http_hbuf[j] = 0;
+}
+
+int u_http_res_datos(u_http_res_t *r, const unsigned char *d, int n,
+                     unsigned char *cuerpo, int capcuerpo, int *nbody) {
+    int o = 0, p, i;
+    if (!r || !d || n < 0 || !cuerpo || !nbody) {
+        if (r) {
+            r->estado = U_HTTP_ST_ERR;
+            r->err = -6;
+        }
+        return -1;
+    }
+    if (capcuerpo < 1) capcuerpo = 1;
+    if (capcuerpo > U_HTTP_MAX_CPO) capcuerpo = U_HTTP_MAX_CPO;
+    *nbody = (int)r->cuerpo_n;
+    if (r->estado == U_HTTP_ST_OK) {
+        if (n > 0) {
+            r->estado = U_HTTP_ST_ERR;
+            r->err = -8;
+            return -1;
+        }
+        return 1;
+    }
+    if (r->estado == U_HTTP_ST_ERR) return -1;
+    if (r->estado == U_HTTP_ST_LINEA || r->estado == U_HTTP_ST_CAB) {
+        /* Búfer solo de cabeceras: se consume d[] hasta ver
+           CRLFCRLF; el resto de d[] es cuerpo y no se copia a
+           http_hbuf (evita falsos -6 y el desfase o=p cuando las
+           cabeceras venían divididas). El fin, si aparece ahora,
+           termina justo en el último byte consumido. */
+        o = 0;
+        p = -1;
+        for (i = 0; i < n; i++) {
+            if (http_hlen >= U_HTTP_MAX_SEC) {
+                r->estado = U_HTTP_ST_ERR;
+                r->err = -6;
+                return -1;
+            }
+            http_hbuf[http_hlen++] = d[i];
+            if (http_hlen >= 4 &&
+                http_hbuf[http_hlen - 4] == '\r' &&
+                http_hbuf[http_hlen - 3] == '\n' &&
+                http_hbuf[http_hlen - 2] == '\r' &&
+                http_hbuf[http_hlen - 1] == '\n') {
+                p = http_hlen;
+                o = i + 1;
+                break;
+            }
+        }
+        if (p < 0) {
+            if (http_hlen >= U_HTTP_MAX_SEC) {
+                r->estado = U_HTTP_ST_ERR;
+                r->err = -6;
+                return -1;
+            }
+            for (i = 0; i + 1 < http_hlen; i++) {
+                if (http_hbuf[i] == '\r' &&
+                    http_hbuf[i + 1] == '\n') {
+                    r->estado = U_HTTP_ST_CAB;
+                    break;
+                }
+            }
+            return 0;
+        }
+        if (http_cabeceras(r, p, capcuerpo) < 0) {
+            r->estado = U_HTTP_ST_ERR;
+            if (!r->err) r->err = -6;
+            return -1;
+        }
+        if (r->estado == U_HTTP_ST_OK) {
+            if (o < n) {
+                r->estado = U_HTTP_ST_ERR;
+                r->err = -8;
+                return -1;
+            }
+            return 1;
+        }
+        if (r->estado == U_HTTP_ST_CUERPO && r->tiene_cl &&
+            r->cuerpo_n >= r->content_length) {
+            if (o < n) {
+                r->estado = U_HTTP_ST_ERR;
+                r->err = -8;
+                return -1;
+            }
+            r->estado = U_HTTP_ST_OK;
+            return 1;
+        }
+    }
+    while (o < n) {
+        if (r->tiene_cl) {
+            unsigned int need = r->content_length - r->cuerpo_n;
+            unsigned int rest = (unsigned int)(n - o);
+            if (rest > need) {
+                r->estado = U_HTTP_ST_ERR;
+                r->err = -8;
+                return -1;
+            }
+            if (r->cuerpo_n + rest > (unsigned int)capcuerpo) {
+                r->estado = U_HTTP_ST_ERR;
+                r->err = -8;
+                return -1;
+            }
+            for (i = 0; (unsigned int)i < rest; i++)
+                cuerpo[*nbody + i] = d[o + i];
+            *nbody += (int)rest;
+            r->cuerpo_n += rest;
+            o = n;
+            if (r->cuerpo_n == r->content_length) {
+                r->estado = U_HTTP_ST_OK;
+                return 1;
+            }
+            return 0;
+        } else {
+            int rest = n - o;
+            if ((unsigned int)(*nbody + rest) > (unsigned int)capcuerpo) {
+                r->estado = U_HTTP_ST_ERR;
+                r->err = -8;
+                return -1;
+            }
+            for (i = 0; i < rest; i++) cuerpo[*nbody + i] = d[o + i];
+            *nbody += rest;
+            r->cuerpo_n += (unsigned int)rest;
+            o = n;
+            return 0;
+        }
+    }
+    if (r->estado == U_HTTP_ST_OK) return 1;
+    return 0;
+}
+
+int u_http_res_fin(u_http_res_t *r) {
+    int era_cuerpo;
+    if (!r) return -1;
+    if (r->estado == U_HTTP_ST_OK) return 1;
+    era_cuerpo = (r->estado == U_HTTP_ST_CUERPO);
+    r->estado = U_HTTP_ST_ERR;
+    r->err = era_cuerpo ? -8 : -6;
+    if (era_cuerpo && !r->tiene_cl) {
+        r->estado = U_HTTP_ST_OK;
+        r->err = 0;
+        return 1;
+    }
+    return -1;
+}
+
+int u_http_cabecera(const u_http_res_t *r, const char *nombre,
+                    char *sal, int smax) {
+    int i, k;
+    if (!r || !nombre || !sal || smax <= 0) return -1;
+    for (i = 0; i < r->ncab; i++) {
+        int j = 0, ig = 1;
+        while (nombre[j] && r->hnom[i][j]) {
+            char a = nombre[j], b = r->hnom[i][j];
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (b >= 'A' && b <= 'Z') b += 32;
+            if (a != b) {
+                ig = 0;
+                break;
+            }
+            j++;
+        }
+        if (ig && !nombre[j] && !r->hnom[i][j]) {
+            int t = 0;
+            while (r->hval[i][t]) t++;
+            for (k = 0; k < t && k + 1 < smax; k++)
+                sal[k] = r->hval[i][k];
+            sal[k] = 0;
+            return t;
+        }
+    }
+    return -1;
+}
+
+int u_http_trae(const char *url, u_http_res_t *r, unsigned char *cuerpo,
+                int capcuerpo, unsigned int espera_ms) {
+    u_http_url_t u;
+    unsigned int ip, fin;
+    int id, k, nbody = 0;
+    if (!url || !r || !cuerpo || capcuerpo < 1) return -1;
+    if (capcuerpo > U_HTTP_MAX_CPO) capcuerpo = U_HTTP_MAX_CPO;
+    if (u_http_url(url, &u)) return -2;
+    if (!espera_ms) espera_ms = 60000;
+    if (espera_ms > 120000) espera_ms = 120000;
+    fin = http_ahora() + espera_ms / 10u;
+    u_http_res_inicia(r);
+    r->puerto = u.puerto;
+    if (u.es_ip) {
+        ip = u.ip;
+    } else {
+        u_dns_res_t dr;
+        unsigned int rest, tmo;
+        int kd;
+        if ((int)(http_ahora() - fin) >= 0) return -5;
+        rest = (unsigned int)((int)(fin - http_ahora()));
+        tmo = rest * 10u;
+        if (tmo > 30000) tmo = 30000;
+        if (tmo < 100) tmo = 100;
+        kd = u_dns_resuelve3(u.host, 0, 0, &dr, tmo);
+        if (kd == -3) return -3;
+        if (kd == -5) return -5;
+        if (kd) return -4;
+        ip = dr.ip;
+    }
+    r->ip = ip;
+    if ((int)(http_ahora() - fin) >= 0) return -5;
+    id = u_tcp_abrir(ip, u.puerto, 0);
+    if (id <= 0) return -5;
+    {
+        int npet, env = 0;
+        npet = u_http_pide(&u, 0, http_pet, (int)sizeof(http_pet));
+        if (npet < 0) {
+            u_tcp_abortar(id);
+            return -2;
+        }
+        while (env < npet) {
+            int trozo = npet - env, w;
+            if (trozo > 536) trozo = 536;
+            if ((int)(http_ahora() - fin) >= 0) {
+                u_tcp_abortar(id);
+                return -5;
+            }
+            w = u_tcp_enviar(id, http_pet + env, trozo);
+            if (w > 0) {
+                if (w != trozo) {
+                    u_tcp_abortar(id);
+                    return -5;
+                }
+                env += w;
+                continue;
+            }
+            if (w == -8) {
+                u_dormir(100);
+                continue;
+            }
+            u_tcp_abortar(id);
+            return -5;
+        }
+    }
+    for (;;) {
+        unsigned char tb[2048];
+        unsigned int rest;
+        int rr, q, espera;
+        if ((int)(http_ahora() - fin) >= 0) {
+            u_tcp_abortar(id);
+            return -5;
+        }
+        rest = (unsigned int)((int)(fin - http_ahora())) * 10u;
+        espera = rest > 5000 ? 5000 : (rest ? (int)rest : 1);
+        rr = u_tcp_recibir(id, tb, (int)sizeof(tb),
+                           (unsigned short)espera);
+        if (rr > 0) {
+            q = u_http_res_datos(r, tb, rr, cuerpo, capcuerpo,
+                                 &nbody);
+            if (q > 0) break;
+            if (q < 0) {
+                u_tcp_abortar(id);
+                if (r->err == -7) return -7;
+                if (r->err == -8) return -8;
+                return -6;
+            }
+            continue;
+        }
+        if (!rr) continue;
+        if (rr == -12) {
+            q = u_http_res_fin(r);
+            if (q > 0) break;
+            u_tcp_abortar(id);
+            if (r->err == -6) return -6;
+            return -8;
+        }
+        u_tcp_abortar(id);
+        return -5;
+    }
+    {
+        unsigned char tb[64];
+        int rr2;
+        if ((int)(http_ahora() - fin) >= 0) {
+            /* Respuesta completa y valida: cierre ordenado aunque
+               se agote el tiempo global. */
+            (void)u_tcp_cerrar(id);
+            return 0;
+        }
+        rr2 = u_tcp_recibir(id, tb, (int)sizeof(tb), 500);
+        if (rr2 > 0) {
+            u_tcp_abortar(id);
+            return -8;
+        }
+        if (rr2 == -12) {
+            (void)u_tcp_cerrar(id);
+            return 0;
+        }
+        /* Servidor con la conexion retenida (p. ej. 204 que tarda):
+           FIN ordenado en vez de RST y exito igual. */
+        (void)u_tcp_cerrar(id);
+        return 0;
+    }
+}

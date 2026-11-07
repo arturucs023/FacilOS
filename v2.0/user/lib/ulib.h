@@ -350,5 +350,80 @@ void u_dns_cache_limpiar(void);
 int u_dns_cache_n(void);
 int u_dns_cache_viva(unsigned int ins, unsigned int ttl,
                      unsigned int ahora);
+/* F7-B: HTTP/1.0 Ring3 (sin sockets; sobre TCP 61 + DNS).
+   Solo GET con Connection: close. Parser incremental y
+   reutilizable (patron del codec DNS F6-D). */
+#define U_HTTP_MAX_URL 512     /* URL completa */
+#define U_HTTP_MAX_SEC 8192    /* seccion de cabeceras */
+#define U_HTTP_MAX_LIN 512     /* linea de estado/cabecera */
+#define U_HTTP_MAX_CAB 32      /* cabeceras por respuesta */
+#define U_HTTP_MAX_CPO 65536   /* cuerpo acumulado */
+#define U_HTTP_NOM 64          /* nombre de cabecera */
+#define U_HTTP_VAL 256         /* valor de cabecera */
+#define U_HTTP_ST_LINEA 0      /* esperando linea de estado */
+#define U_HTTP_ST_CAB 1        /* leyendo cabeceras */
+#define U_HTTP_ST_CUERPO 2     /* leyendo cuerpo */
+#define U_HTTP_ST_OK 3         /* mensaje completo */
+#define U_HTTP_ST_ERR -1       /* error (ver r->err) */
+typedef struct {
+    int estado;                /* U_HTTP_ST_* */
+    int err;                   /* 0 ok; neg: ver u_http_trae */
+    int codigo;                /* 100..599, 0 si aun no hay linea */
+    char version[16];          /* p. ej. "HTTP/1.0" */
+    char motivo[64];           /* frase, puede ser "" */
+    unsigned int ip; /* IPv4 del servidor (red) */
+    unsigned short puerto; /* puerto usado */
+    char hnom[U_HTTP_MAX_CAB][U_HTTP_NOM];
+    char hval[U_HTTP_MAX_CAB][U_HTTP_VAL];
+    int ncab;
+    unsigned int content_length;
+    int tiene_cl;              /* 1 si hubo Content-Length valido */
+    int chunked;               /* 1 si vino Transfer-Encoding */
+    unsigned int cuerpo_n;     /* bytes de cuerpo aceptados */
+    unsigned int cuerpo_esp;   /* bytes esperados (CL) o 0 si cierre */
+} u_http_res_t;
+typedef struct {
+    char host[256];            /* minusculas, sin punto final */
+    unsigned short puerto;     /* 1..65535, 80 por defecto */
+    char ruta[256];            /* empieza por '/', con ?consulta */
+    unsigned int ip;           /* si es IPv4 literal */
+    int es_ip;                 /* 1 si host era IPv4 literal */
+} u_http_url_t;
+/* Parsea URL http://. 0 ok; -1 args, -2 esquema, -3 host,
+   -4 puerto, -5 largo. Solo http (nunca https). */
+int u_http_url(const char *url, u_http_url_t *u);
+/* Construye peticion GET en sal (cabe Host/Connection/User-Agent).
+   Devuelve long o negativo (-1 args, -2 url, -3 sin sitio). */
+int u_http_pide(const u_http_url_t *u, const char *ruta_extra,
+                char *sal, int smax);
+/* Parser incremental. u_http_res_inicia() una vez; despues
+   u_http_res_datos() por cada trozo (el tope de cuerpo se toma
+   de capcuerpo; el cuerpo se acumula en cuerpo[0..capcuerpo),
+   *nbody avanza) y u_http_res_fin() al recibir EOF (-12).
+   Devuelven 1 completo, 0 falta mas, -1 error (r->err detalla:
+   -6 malformada (incl. CL no numerico o duplicado
+   incoherente), -7 Transfer-Encoding, -8 sobre tope/
+   excedente/truncada). Nunca acepta silenciosamente
+   respuestas malformadas. */
+void u_http_res_inicia(u_http_res_t *r);
+int u_http_res_datos(u_http_res_t *r, const unsigned char *d, int n,
+                     unsigned char *cuerpo, int capcuerpo, int *nbody);
+int u_http_res_fin(u_http_res_t *r);
+/* Busca cabecera (insensible a mayusculas), primera aparicion.
+   Devuelve long del valor o -1 si no existe. */
+int u_http_cabecera(const u_http_res_t *r, const char *nombre,
+                    char *sal, int smax);
+/* Trae una URL completa (DNS + TCP + HTTP + cierre).
+   cuerpo[0..capcuerpo) recibe el cuerpo (capcuerpo<=65536).
+   espera_ms 0=60000, tope 120000. Devuelve:
+   0 ok (respuesta completa y valida, cualquier codigo),
+   -1 args, -2 URL invalida, -3 NXDOMAIN, -4 DNS (rcode/otro),
+   -5 timeout/red (DNS/TCP/cierre), -6 respuesta malformada,
+   -7 Transfer-Encoding no soportado, -8 cuerpo truncado,
+   excedente o sobre tope. r->codigo/motivo/version/cabeceras
+   quedan rellenos si hubo linea de estado valida. */
+int u_http_trae(const char *url, u_http_res_t *r,
+                unsigned char *cuerpo, int capcuerpo,
+                unsigned int espera_ms);
 
 #endif

@@ -127,6 +127,14 @@ DATOS_LBA = CAT_LBA + CAT_SECS
 # catalogo de programas + sus datos a 0x20000 en RAM (ver boot32.asm).
 img[512:512 + kb] = (BLD / "kernel32.bin").read_bytes()
 assert kb <= KERN_SECS * 512, "nucleo > sectores del cargador"
+# F7-B: rutina de copia alta (tras el hueco VGA) en el sector de
+# relleno LBA 224 del area del nucleo (0x1000:0xBE00).
+assert kb <= 223 * 512, "nucleo invade el sector de copyalta"
+run([NASM, "-f", "bin", str(BASE / "tools" / "copyalta.asm"),
+     "-o", str(BLD / "copyalta.bin")])
+_cp = (BLD / "copyalta.bin").read_bytes()
+assert len(_cp) <= 512, "copyalta no cabe en un sector"
+img[224 * 512:225 * 512] = bytes(_cp) + bytes(512 - len(_cp))
 # El arranque: pay_secs en 496, cat_lba en 498, dat_lba en 500.
 _bs = bytearray((BLD / "boot32.bin").read_bytes())
 struct.pack_into("<HHH", _bs, 496, 0, CAT_LBA, DATOS_LBA)  # pay luego
@@ -272,6 +280,7 @@ _apps3 = [
     ("t_red", ["t_red.c"], True),
     ("dhcp", ["dhcp.c"], True),
     ("dns", ["dns.c"], True),
+    ("http", ["http.c"], True),
     ("tutf8", ["tutf8.c"], True),
     ("t2_gfx", ["t2_gfx.c"], True),
     ("editor16", ["editor16.c"], True),
@@ -289,6 +298,10 @@ for _nom, _fs, _u, *_g in _apps3:
 # ---- escribir la ISO con el catalogo (todo dentro del CD) ----
 _todos = _programas + [a[0] for a in _apps3]
 _fin_img = cdcat_build(_todos)
+# F7-B: la cola del catalogo a partir del LBA 1121 (tras el hueco
+# VGA) vive en 0x300000 (256 KB reservados en pag.c:reserva_fijas).
+_cola = (_fin_img - 1121) * 512
+assert _cola <= 0x40000 - 8192, "cola del catalogo > 248K"
 # El arranque copia desde CAT_LBA hasta el final de los datos: eso son
 # (_fin_img - CAT_LBA) sectores de 512. Se lo parcheamos ahora.
 struct.pack_into("<H", img, 496, _fin_img - CAT_LBA)
@@ -302,7 +315,7 @@ _fin = IMG_LBA + (_nimg * 512 + 2047) // 2048
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.3-red-f5.iso"   # F5 (f1/f3/f4 intactas)
+out_iso = ISO_DIR / "FacilOS-v2.3-red-f7b.iso"   # F7-B (f5 intacta)
 _iso = bytes(iso[:_fin * 2048])
 out_iso.write_bytes(_iso)
 print(f"OK {out_iso} {len(_iso)} bytes ({_fin} sectores, "

@@ -132,6 +132,7 @@ static void reserva_fijas(void) {
     reserva(0x480000, 0x640000);   /* pilas de anillo 0 + pool del FS */
     reserva(0x800000, 0xD00000);   /* heap del kernel, dorso, tablas */
     reserva(0xE00000, 0xF00000);   /* pilas de anillo 0 de los procesos */
+    reserva(0x1000000, 0x1040000);   /* F7-B: cola alta del catalogo ISO */
 }
 
 /* Dorso grande (pantalla completa a 1920x1080x32): bloque contiguo alto
@@ -466,11 +467,13 @@ void pag_inicia(void) {
     /* Identidad del nucleo: 0-4 MB, 4-8 MB, 8-13 MB y el LFB. Todo
        supervisor: ningun proceso puede escribir ahi. */
     uint32_t sup = PAG_PRESENTE | PAG_ESCRITURA;
-    /* 0-2 MB (nucleo), 4.75-6.25 MB (pilas de anillo 0 y pool del FS),
-       8-13 MB (heap, dorso, tablas). El resto NO se mapea: 2-4 MB y
-       4-4.75 MB son para los procesos, y sin mapear aqui no hay aliasing
-       entre un marco de usuario y la identidad del nucleo. */
+    /* 0-2 MB (nucleo), 16-16.25 MB (cola alta del catalogo ISO),
+       4.75-6.25 MB (pilas de anillo 0 y pool del FS),
+       8-13 MB (heap, dorso, tablas). El resto NO se mapea: 2-3 MB y
+       2-4.75 MB son para los procesos, y sin mapear aqui no hay
+       aliasing entre un marco de usuario y la identidad del nucleo. */
     mapea_rango(0, 0x000000, 0x200000, sup);
+    mapea_rango(0, 0x1000000, 0x1040000, sup); /* F7-B: visible al nucleo */
     mapea_rango(0, 0x480000, 0x640000, sup);
     mapea_rango(0, 0x800000, 0xD00000, sup);
     mapea_rango(0, 0xE00000, 0xF00000, sup);

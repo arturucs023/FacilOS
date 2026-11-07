@@ -1,4 +1,4 @@
-# Comandos de red (castellano; F1+F2+F3+F4 implementados)
+# Comandos de red (castellano; F1+F2+F3+F4+F7-B implementados)
 
 - `red` -> una linea de estado. `red estado` -> detalle completo
   (adaptador, MAC, MTU, contadores, IP, mascara, puerta, DNS,
@@ -23,6 +23,14 @@
 - `mostrar_dns` -> servidor DNS configurado y resumen de la
   cache F6-D (32 entradas por proceso, TTL tope 1 dia,
   CNAME hasta 8 saltos, TCP si TC=1).
+- `http <url>` -> trae una pagina por HTTP/1.0 (solo GET,
+  `http://dominio[:puerto][/ruta]` o IPv4 literal) y muestra
+  IP, puerto, version, codigo, motivo, cabeceras clave,
+  tamano y cuerpo (binario: aviso sin volcar) y tiempo;
+  guarda el detalle en `/httpsal.txt` (URL, IP, estado,
+  tamano, tiempo, cuerpo). Sin redirecciones automaticas.
+  rc 0 ok; 1 sin respuesta; 2 URL invalida; 3 NXDOMAIN;
+  4 respuesta no valida o no soportada.
 - Sin adaptador: `red`/`mostrar_interfaz` informan
   `sin adaptador`; `configurar_ip`/`mostrar_rutas` funcionan igual
   (la configuracion no exige hardware); `configurar_dhcp`,

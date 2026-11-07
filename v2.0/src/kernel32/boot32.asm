@@ -32,7 +32,6 @@ inicio:
     ; (ver pag.c). ES=0 y DI avanza: el BIOS escribe cada entrada a ES:EDI.
     ;   El BIOS escribe cada entrada en ES:EDI y devuelve en EBX el
     ;   desplazamiento de la siguiente (0 al principio).
-    mov byte [0x7020], 0xAA             ; marca de que se llego aqui
     mov word [0x7001], 0
     xor bp, bp
     xor ebx, ebx
@@ -136,12 +135,16 @@ inicio:
     mov word [p_cnt], 224             ; F5: nucleo hasta 224 sectores
     call leer
     mov word [p_seg], 0x3000
-    mov word [p_off], 0
     mov ax, [cat_lba]
     mov [p_lba], ax
     mov ax, [pay_secs]
     mov [p_cnt], ax
     call leer
+    ; F7-B: el hueco VGA (0xA0000) no retiene: lo copiado ahi se
+    ; pierde (programas altos no cargaban: tutf8 -101). La cola
+    ; [1121, fin) va alta (0x1000000) via copyalta.asm (sector de
+    ; relleno LBA 224 del nucleo; no-op si no hay cola).
+    call 0x2000:0xBE00
 .ok:
     mov ax, [cat_lba]
     mov [0x7010], ax
@@ -229,6 +232,9 @@ gdt_fin:
 ; Indice CMOS 0x40: 0=800x600 (defecto y valor si CMOS virgen 0xFF),
 ; 1=640x480, 2=1024x768. Verificados con LFB+32bpp en QEMU.
 modo_tab db 0x43, 0x42, 0x44, 0x43
+; F7-B: cola alta del catalogo (tras el hueco VGA 0xA0000).
+; CORTE_LBA = primer LBA copiado alto (1121 = 225 + 896;
+; 896 = (0xA0000 - 0x30000) / 512).
 ; Parametros de "leer" y LBAs parcheados por el constructor (bytes
 ; 496-501 del sector, justo antes de la firma 0x55AA).
 times 496-($-$$) db 0

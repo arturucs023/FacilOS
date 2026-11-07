@@ -529,12 +529,573 @@ static void prueba_dns_f6d(void) {
     ok(u_dns_cache_n() == 0, "dns-cache-limpia");
 }
 
+static unsigned char hgrande[8192 + 16];
+
+static void prueba_http_f7b(void) {
+    u_http_res_t r;
+    u_http_url_t u;
+    unsigned char cuerpo[600];
+    int nbody, k;
+    char vb[300];
+    u_print("t_red F7-B: parser HTTP...\n");
+    k = u_http_url("http://example.com/", &u);
+    ok(k == 0 && u.puerto == 80 && !u.es_ip, "http-url-basica");
+    {
+        int j = 0, ig = 1;
+        const char *es = "example.com";
+        while (es[j] && u.host[j]) {
+            if (es[j] != u.host[j]) {
+                ig = 0;
+                break;
+            }
+            j++;
+        }
+        if (es[j] || u.host[j]) ig = 0;
+        ok(ig && u.ruta[0] == '/' && !u.ruta[1], "http-url-host-ruta");
+    }
+    k = u_http_url("http://example.com:8080/a/b?x=1", &u);
+    ok(k == 0 && u.puerto == 8080, "http-url-puerto-ruta");
+    k = u_http_url("http://192.0.2.1:80/x", &u);
+    ok(k == 0 && u.es_ip && u.ip == (192u | (0u << 8) | (2u << 16) |
+                                    (1u << 24)),
+       "http-url-ip");
+    ok(u_http_url("https://example.com/", &u) == -2,
+       "http-url-no-https");
+    ok(u_http_url("ftp://x/", &u) == -2, "http-url-esquema");
+    ok(u_http_url("example.com", &u) == -2, "http-url-sin-esquema");
+    ok(u_http_url("http://", &u) == -3, "http-url-vacia");
+    ok(u_http_url("http://h:0/", &u) == -4, "http-url-puerto-cero");
+    ok(u_http_url("http://h:99999/", &u) == -4, "http-url-puerto-grande");
+    ok(u_http_url("http://h:/", &u) == -4, "http-url-puerto-vacio");
+    ok(u_http_url("http://a_b/", &u) == -3, "http-url-host-malo");
+    ok(u_http_url("http://999.1.1.1/", &u) == -3, "http-url-ip-mala");
+    ok(u_http_url("http://1.2.3.04/", &u) == -3, "http-url-ip-cero");
+    {
+        char larga[600];
+        int j;
+        for (j = 0; j < 7; j++) larga[j] = "http://"[j];
+        for (; j < 560; j++) larga[j] = 'a';
+        larga[j] = 0;
+        ok(u_http_url(larga, &u) == -5, "http-url-larga");
+    }
+    k = u_http_url("http://example.com/", &u);
+    if (k == 0) {
+        int t = u_http_pide(&u, 0, (char *)cuerpo, (int)sizeof(cuerpo));
+        const char *es = "GET / HTTP/1.0\r\nHost: example.com\r\n"
+                         "Connection: close\r\n"
+                         "User-Agent: FacilOS32-HTTP/0.1\r\n"
+                         "Accept: */*\r\n\r\n";
+        int j = 0, ig = (t > 0);
+        while (ig && es[j]) {
+            if (j >= t || es[j] != (char)cuerpo[j]) ig = 0;
+            j++;
+        }
+        if (ig && j != t) ig = 0;
+        ok(ig, "http-pide-exacta");
+    } else {
+        ok(0, "http-pide-armar");
+    }
+    {
+        const char *m = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n"
+                        "Content-Type: text/plain\r\n\r\nhola!";
+        int n = 0, q;
+        while (m[n]) n++;
+        nbody = -1;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q == 1 && r.codigo == 200 && nbody == 5,
+           "http-resp-ok");
+        {
+            int j = 0, ig = (r.motivo[0] == 'O');
+            const char *ct = "text/plain";
+            char vb2[U_HTTP_VAL];
+            ok(u_http_cabecera(&r, "Content-Type", vb2,
+                               (int)sizeof(vb2)) == 10,
+               "http-cabecera-valor");
+            ok(u_http_cabecera(&r, "content-type", vb2,
+                               (int)sizeof(vb2)) == 10,
+               "http-cabecera-insensible");
+            ok(u_http_cabecera(&r, "ausente", vb2,
+                               (int)sizeof(vb2)) == -1,
+               "http-cabecera-ausente");
+            for (j = 0; ct[j]; j++)
+                if (vb2[j] != ct[j]) ig = 0;
+            ok(ig && !vb2[j], "http-cabecera-texto");
+        }
+    }
+    {
+        const char *m = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\n"
+                        "hola!";
+        int n = 0, q, j;
+        u_http_res_t r2;
+        unsigned char c2[600];
+        int nb2 = -1;
+        while (m[n]) n++;
+        u_http_res_inicia(&r2);
+        q = 0;
+        for (j = 0; j < n && q == 0; j++) {
+            q = u_http_res_datos(&r2, (const unsigned char *)m + j,
+                                 1, c2, (int)sizeof(c2), &nb2);
+        }
+        ok(q == 1 && r2.codigo == 200 && nb2 == 5,
+           "http-resp-byte-a-byte");
+    }
+    {
+        const char *a = "HTTP/1.0 404 Not Found\r\nContent-Length: 9\r\n"
+                        "\r\nno existe";
+        int n = 0, q;
+        while (a[n]) n++;
+        nbody = -1;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q == 1 && r.codigo == 404, "http-resp-404");
+    }
+    {
+        const char *a = "HTTP/1.1 500 x\r\nContent-Length: 0\r\n\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        nbody = -1;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q == 1 && r.codigo == 500 && nbody == 0,
+           "http-resp-11-vacia");
+    }
+    {
+        const char *a = "HTTP/2.0 200 OK\r\n\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-ver-no-soportada");
+    }
+    {
+        const char *a = "HTP/1.0 200 OK\r\n\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-ver-mala");
+    }
+    {
+        const char *a = "HTTP/1.0 20 OK\r\n\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-codigo-corto");
+    }
+    {
+        const char *a = "HTTP/1.0 2000 OK\r\n\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-codigo-largo");
+    }
+    {
+        const char *a = "HTTP/1.0 200 OK\r\nSinDosPuntos\r\n\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-cabecera-sin-dos-puntos");
+    }
+    {
+        char m[700];
+        int n = 0, q, j;
+        const char *ini = "HTTP/1.0 200 OK\r\nX: ";
+        while (ini[n]) {
+            m[n] = ini[n];
+            n++;
+        }
+        for (j = 0; j < 600; j++) m[n++] = 'y';
+        m[n++] = '\r';
+        m[n++] = '\n';
+        m[n++] = '\r';
+        m[n++] = '\n';
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (unsigned char *)m, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-cabecera-larga");
+    }
+    {
+        char m[2000];
+        int n = 0, q, j, h;
+        const char *ini = "HTTP/1.0 200 OK\r\n";
+        while (ini[n]) {
+            m[n] = ini[n];
+            n++;
+        }
+        for (h = 0; h < 33; h++) {
+            m[n++] = 'X';
+            m[n++] = ':';
+            m[n++] = '0' + (char)(h % 10);
+            m[n++] = '\r';
+            m[n++] = '\n';
+        }
+        m[n++] = '\r';
+        m[n++] = '\n';
+        (void)j;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (unsigned char *)m, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-demasiadas-cabeceras");
+    }
+    {
+        const char *a = "HTTP/1.0 200 OK\r\nContent-Length: abc\r\n"
+                        "\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-cl-no-numerico");
+    }
+    {
+        const char *a = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n"
+                        "Content-Length: 5\r\n\r\nabcde";
+        int n = 0, q;
+        while (a[n]) n++;
+        nbody = -1;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q == 1 && nbody == 5, "http-cl-duplicado-igual");
+    }
+    {
+        const char *a = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n"
+                        "Content-Length: 6\r\n\r\nabcde";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-cl-duplicado-distinto");
+    }
+    {
+        const char *a = "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked"
+                        "\r\n\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0 && r.chunked, "http-chunked-rechazado");
+    }
+    {
+        const char *a = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n"
+                        "\r\nabc";
+        int n = 0, q;
+        while (a[n]) n++;
+        nbody = -1;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q == 0 && nbody == 3, "http-parcial");
+        q = u_http_res_fin(&r);
+        ok(q < 0, "http-truncada-fin");
+    }
+    {
+        const char *a = "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n"
+                        "\r\nabcdef";
+        int n = 0, q;
+        while (a[n]) n++;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-excedente");
+    }
+    {
+        const char *a = "HTTP/1.0 200 OK\r\n\r\n";
+        int n = 0, q;
+        while (a[n]) n++;
+        nbody = -1;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)a, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q == 0, "http-sin-cl-espera");
+        q = u_http_res_fin(&r);
+        ok(q == 1 && nbody == 0, "http-cierre-completa");
+    }
+    {
+        static const unsigned char bin[4] = { 'a', 0, 'b', 0xFF };
+        unsigned char m[64];
+        int n = 0, q, j;
+        const char *ini = "HTTP/1.0 200 OK\r\nContent-Length: 4\r\n"
+                          "\r\n";
+        while (ini[n]) {
+            m[n] = (unsigned char)ini[n];
+            n++;
+        }
+        for (j = 0; j < 4; j++) m[n++] = bin[j];
+        nbody = -1;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, m, n, cuerpo, (int)sizeof(cuerpo),
+                             &nbody);
+        ok(q == 1 && nbody == 4 && cuerpo[1] == 0 &&
+           cuerpo[3] == 0xFF, "http-binario");
+    }
+    {
+        int q = u_http_cabecera(0, "x", vb, (int)sizeof(vb));
+        ok(q == -1, "http-cabecera-nula");
+    }
+    {
+        char m[11000];
+        int n = 0, q, j;
+        const char *ini = "HTTP/1.0 200 OK\r\n";
+        while (ini[n]) {
+            m[n] = ini[n];
+            n++;
+        }
+        for (j = 0; j < 20; j++) {
+            int k;
+            m[n++] = 'X';
+            m[n++] = ':';
+            for (k = 0; k < 500; k++) m[n++] = 'z';
+            m[n++] = '\r';
+            m[n++] = '\n';
+            if (n > 10500) break;
+        }
+        m[n++] = '\r';
+        m[n++] = '\n';
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (unsigned char *)m, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q < 0, "http-seccion-grande");
+    }
+    {
+        char m[40];
+        int n = 0, q;
+        const char *ini = "HTTP/1.0 204 SC\r\n\r\n";
+        while (ini[n]) {
+            m[n] = ini[n];
+            n++;
+        }
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (unsigned char *)m, n, cuerpo,
+                             (int)sizeof(cuerpo), &nbody);
+        ok(q == 1 && r.codigo == 204, "http-204-sin-cuerpo");
+    }
+    {
+        /* 8k determinista (misma formula que tools/http_stub.py):
+           prueba el parser, sin red. */
+        static const char cab[] = "HTTP/1.0 200 OK\r\n"
+                                  "Content-Length: 8192\r\n\r\n";
+        int hc = 0, q = 0, j;
+        unsigned int chk = 0;
+        while (cab[hc]) hc++;
+        nbody = -1;
+        u_http_res_inicia(&r);
+        for (j = 0; j < hc && q == 0; j++)
+            q = u_http_res_datos(&r, (const unsigned char *)cab + j, 1,
+                                 hgrande, 8192, &nbody);
+        for (j = 0; j < 8192 && q == 0; j += 1500) {
+            int trozo = 8192 - j, k;
+            unsigned char tmp[1500];
+            if (trozo > 1500) trozo = 1500;
+            for (k = 0; k < trozo; k++)
+                tmp[k] = (unsigned char)(((j + k) * 131 + 7) & 0xFF);
+            q = u_http_res_datos(&r, tmp, trozo, hgrande, 8192,
+                                 &nbody);
+        }
+        if (q == 1 && nbody == 8192) {
+            for (j = 0; j < 8192; j++) {
+                unsigned char es =
+                    (unsigned char)((j * 131 + 7) & 0xFF);
+                if (hgrande[j] != es) break;
+                chk += hgrande[j];
+            }
+            if (j < 8192) chk = 0;
+        }
+        u_printf("t_red: 8k chk=%u n=%d\n", chk, nbody);
+        ok(q == 1 && nbody == 8192 && chk == 1044480u,
+           "http-8k-parser");
+    }
+}
+
+/* F7-B vivo: matriz contra tools/http_stub.py en el anfitrion
+   (10.0.2.2:18080; el invitado inicia la conexion, sin hostfwd).
+   Requiere IP configurada (la pone el flujo vivo: 10.0.2.15).
+   URLs con IPv4 literal: sin DNS. hgrande se comparte con el
+   vector parser de 8k. */
+
+static void http_url(char *sal, const char *ruta) {
+    const char *pre = "http://10.0.2.2:18080";
+    int t = 0;
+    while (pre[t]) {
+        sal[t] = pre[t];
+        t++;
+    }
+    {
+        int j = 0;
+        while (ruta[j]) sal[t++] = ruta[j++];
+    }
+    sal[t] = 0;
+}
+
+static int http_cuerpo_igual(const unsigned char *a,
+                             const unsigned char *b, int n) {
+    int i;
+    for (i = 0; i < n; i++)
+        if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+static void prueba_http_8k(void) {
+    /* 8k al final de todo: tensiona el camino QEMU/slirp. Si el
+       entorno lo corta, trae agota su espera y el fallo queda
+       aislado aqui (documentado en F7-B-HTTP.md). */
+    u_http_res_t r;
+    char url[64];
+    int k, i;
+    u_print("t_red F7-B: HTTP 8k...\n");
+    http_url(url, "/ocho-kb");
+    k = u_http_trae(url, &r, hgrande, 8192, 30000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/ocho-kb", k, (unsigned int)r.cuerpo_n, r.codigo);
+    {
+        int bien = (k == 0 && r.codigo == 200 && r.cuerpo_n == 8192);
+        unsigned int chk = 0;
+        if (bien) {
+            for (i = 0; i < 8192; i++) {
+                unsigned char es = (unsigned char)((i * 131 + 7) & 0xFF);
+                if (hgrande[i] != es) {
+                    bien = 0;
+                    break;
+                }
+                chk += hgrande[i];
+            }
+        }
+        u_printf("t_red: 8k chk=%u n=%u\n", chk,
+                 (unsigned int)r.cuerpo_n);
+        ok(bien, "http-vivo-8k");
+    }
+}
+
+static void prueba_http_viva(void) {
+    u_http_res_t r;
+    char url[64];
+    int k, i;
+    u_print("t_red F7-B: HTTP vivo...\n");
+    http_url(url, "/normal");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/normal", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 200 && r.cuerpo_n == 13 &&
+       http_cuerpo_igual(hgrande, (const unsigned char *)"Hello, world!",
+                         13),
+       "http-vivo-normal");
+    http_url(url, "/conlongitud");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/conlongitud", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 200 && r.cuerpo_n == 16 &&
+       http_cuerpo_igual(hgrande,
+                         (const unsigned char *)"0123456789ABCDEF", 16),
+       "http-vivo-conlongitud");
+    http_url(url, "/fragmentado");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/fragmentado", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 200 && r.cuerpo_n == 14 &&
+       http_cuerpo_igual(hgrande,
+                         (const unsigned char *)"fragmentado-ok", 14),
+       "http-vivo-fragmentado");
+    http_url(url, "/por-cierre");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/por-cierre", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 200 && r.cuerpo_n == 15 &&
+       http_cuerpo_igual(hgrande,
+                         (const unsigned char *)"hasta el cierre",
+                         15),
+       "http-vivo-por-cierre");
+    http_url(url, "/chunked");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/chunked", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == -7, "http-vivo-chunked");
+    http_url(url, "/mala-cabecera");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/mala-cabecera", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == -6, "http-vivo-mala-cabecera");
+    http_url(url, "/cl-mal");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/cl-mal", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == -6, "http-vivo-cl-mal");
+    http_url(url, "/cl-corto");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/cl-corto", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == -8, "http-vivo-cl-corto");
+    http_url(url, "/cl-exceso");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/cl-exceso", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == -8, "http-vivo-cl-exceso");
+    http_url(url, "/vacio");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/vacio", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 200 && r.cuerpo_n == 0,
+       "http-vivo-vacio");
+    http_url(url, "/vacio204");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/vacio204", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 204 && r.cuerpo_n == 0,
+       "http-vivo-204");
+    http_url(url, "/noencontrado");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/noencontrado", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 404 && r.cuerpo_n == 9,
+       "http-vivo-404");
+    http_url(url, "/error");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/error", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 500 && r.cuerpo_n == 6,
+       "http-vivo-500");
+    http_url(url, "/redir301");
+    {
+        char loc[U_HTTP_VAL];
+        k = u_http_trae(url, &r, hgrande, 8192, 15000);
+        u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/redir301", k, (unsigned int)r.cuerpo_n, r.codigo);
+        ok(k == 0 && r.codigo == 301 &&
+           u_http_cabecera(&r, "Location", loc,
+                           (int)sizeof(loc)) > 0,
+           "http-vivo-301");
+    }
+    http_url(url, "/redir302");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/redir302", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 302, "http-vivo-302");
+    http_url(url, "/lento");
+    k = u_http_trae(url, &r, hgrande, 8192, 5000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/lento", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == -5, "http-vivo-timeout");
+    http_url(url, "/corte");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/corte", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == -6, "http-vivo-corte");
+    http_url(url, "/corte-cuerpo");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/corte-cuerpo", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == -8, "http-vivo-corte-cuerpo");
+    http_url(url, "/eco/hola");
+    k = u_http_trae(url, &r, hgrande, 8192, 15000);
+    u_printf("t_red: vivo %s k=%d n=%u c=%d\n", "/eco/hola", k, (unsigned int)r.cuerpo_n, r.codigo);
+    ok(k == 0 && r.codigo == 200 && r.cuerpo_n == 11 &&
+       http_cuerpo_igual(hgrande,
+                         (const unsigned char *)"visto: hola",
+                         11),
+       "http-vivo-eco");
+}
+
 int main(void) {
     int r, i, n;
     int hallada = 0;
     prueba_dns_parser();   /* sin red: codec determinista */
     prueba_dhcp_tiempo();  /* F6-B D1: vectores big-endian */
     prueba_dns_f6d();        /* F6-D: sin red */
+    prueba_http_f7b();       /* F7-B: sin red */
     u_print("t_red F1: interfaz...\n");
     for (i = 0; i < 32; i++) ((unsigned char *)&rif)[i] = 0;
     r = u_red_interfaz(&rif);
@@ -962,6 +1523,12 @@ int main(void) {
             ok(k == 0 && r.de_cache == 1, "dns-stub-conserva");
         }
 
+        /* F7-B: 8k primero con la sesion fresca y luego la
+           matriz: QEMU/slirp se degrada con el uso (ver informe);
+           el 8k necesita camino limpio. */
+        prueba_http_8k();
+        prueba_http_viva();
+
         /* F5: TCP vivo (par en anfitrion; ver tools/tcp_par.py). */
         {
             unsigned int gw = 10 | (0 << 8) | (2 << 16) | (2 << 24);
@@ -1160,6 +1727,7 @@ int main(void) {
                 }
             }
         }
+
     }
     u_print("t_red: contadores tras prueba:\n");
     for (i = 0; i < 32; i++) ((unsigned char *)&rif)[i] = 0;

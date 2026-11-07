@@ -26,4 +26,7 @@ y el codec DNS `u_dns_armar`/`u_dns_leer` (compartido por
 `dns` y `t_red`).
 
 Envueltos Ring3: `u_red_interfaz`, `u_red_trama_enviar`,
-`u_red_trama_recibir` (`sys_red_*` en `sys.h`).
+`u_red_trama_recibir` (`sys_red_*` en `sys.h`). F7-B anade el
+codec HTTP/1.0 `u_http_*` (`u_http_url`, `u_http_pide`,
+`u_http_res_{inicia,datos,fin}`, `u_http_cabecera`,
+`u_http_trae`): reutiliza DNS+TCP sin syscalls nuevas.
