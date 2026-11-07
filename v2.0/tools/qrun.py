@@ -31,8 +31,19 @@ if os.environ.get("QRUN_RED") == "1":
     # v2.3-red F1: red virtual opcional (user-net + RTL8139). Por
     # defecto NO hay red: el arranque sin adaptador debe seguir
     # funcionando. MAC fija para pruebas reproducibles.
-    args += ["-netdev", "user,id=red0",
+    # v2.3-red F5: QRUN_FWD="HP:GP[,HP2:GP2]" reenvia puertos del
+    # anfitrion al invitado (pruebas de escucha pasiva).
+    red = "user,id=red0"
+    if os.environ.get("QRUN_FWD"):
+        for rr in os.environ["QRUN_FWD"].split(","):
+            hp, gp = rr.split(":")
+            red += ",hostfwd=tcp::%s-:%s" % (hp.strip(), gp.strip())
+    args += ["-netdev", red,
              "-device", "rtl8139,netdev=red0,mac=52:54:00:12:34:56"]
+    if os.environ.get("QRUN_PCAP"):
+        args += ["-object",
+                 "filter-dump,id=pcap,netdev=red0,file=%s" %
+                 os.environ["QRUN_PCAP"]]
 if os.environ.get("QRUN_DEBUG"):
     # Traza de interrupciones y reinicios de QEMU (depuracion del kernel).
     args += ["-d", "int,cpu_reset,guest_errors", "-D",

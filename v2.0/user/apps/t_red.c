@@ -285,6 +285,19 @@ int main(void) {
             ok(u_red_udp_recibir(&pet, db, 8) == -1,
                "udp-recibir-sin-adaptador");
         }
+        {
+            unsigned char tb[8];
+            int j;
+            for (j = 0; j < 8; j++) tb[j] = 0;
+            ok(u_tcp_abrir(10 | (0 << 8) | (2 << 16) | (2 << 24),
+                           80, 0) == -1, "tcp-abrir-sin-adaptador");
+            ok(u_tcp_escuchar(5001) == -1, "tcp-escuchar-sin-adaptador");
+            ok(u_tcp_enviar(1, tb, 8) == -1, "tcp-enviar-sin-adaptador");
+            ok(u_tcp_recibir(1, tb, 8, 100) == -1,
+               "tcp-recibir-sin-adaptador");
+            ok(u_tcp_cerrar(1) == -1, "tcp-cerrar-sin-adaptador");
+            ok(u_tcp_estado(1) == -1, "tcp-estado-sin-adaptador");
+        }
         u_printf("t_red: %d pruebas %d fallos\n", pruebas, fallos);
         return fallos ? 1 : 0;
     }
@@ -530,6 +543,159 @@ int main(void) {
             ok(u_red_udp_enviar(&e, q, 2000) == -2, "udp-enviar-largo");
             e.dpuerto = 0;
             ok(u_red_udp_enviar(&e, q, 10) == -2, "udp-enviar-sin-puerto");
+        }
+
+        /* F5: TCP vivo (par en anfitrion; ver tools/tcp_par.py). */
+        {
+            unsigned int gw = 10 | (0 << 8) | (2 << 16) | (2 << 24);
+            unsigned char tb[600];
+            int id, r, kk;
+            id = u_tcp_abrir(gw, 5001, 0);
+            ok(id > 0, "tcp-abrir-eco");
+            if (id > 0) {
+                const char *h = "hola tcp f5";
+                int n = 0;
+                ok(u_tcp_estado(id) == 4, "tcp-establecido");
+                while (h[n]) n++;
+                r = u_tcp_enviar(id, h, n);
+                ok(r == n, "tcp-enviar-eco");
+                r = u_tcp_recibir(id, tb, (int)sizeof(tb), 3000);
+                ok(r == n, "tcp-recibir-eco");
+                if (r == n) {
+                    int igual = 1;
+                    for (kk = 0; kk < n; kk++)
+                        if (tb[kk] != (unsigned char)h[kk]) igual = 0;
+                    ok(igual, "tcp-eco-igual");
+                }
+                ok(u_tcp_cerrar(id) == 0, "tcp-cerrar-eco");
+                ok(u_tcp_estado(id) < 0, "tcp-cerrada-sin-estado");
+            }
+            {
+                int c1 = u_tcp_abrir(gw, 5001, 0);
+                int c2 = u_tcp_abrir(gw, 5001, 0);
+                ok(c1 > 0 && c2 > 0 && c1 != c2, "tcp-dos-abrir");
+                if (c1 > 0 && c2 > 0) {
+                    r = u_tcp_enviar(c1, "uno", 3);
+                    ok(r == 3, "tcp-enviar-c1");
+                    r = u_tcp_enviar(c2, "dos-dos", 7);
+                    ok(r == 7, "tcp-enviar-c2");
+                    r = u_tcp_recibir(c2, tb, (int)sizeof(tb), 3000);
+                    ok(r == 7, "tcp-recibir-c2");
+                    r = u_tcp_recibir(c1, tb, (int)sizeof(tb), 3000);
+                    ok(r == 3, "tcp-recibir-c1");
+                    if (r == 3)
+                        ok(tb[0] == 'u' && tb[1] == 'n' && tb[2] == 'o',
+                           "tcp-datos-c1");
+                    ok(u_tcp_cerrar(c1) == 0, "tcp-cerrar-c1");
+                    ok(u_tcp_cerrar(c2) == 0, "tcp-cerrar-c2");
+                } else {
+                    if (c1 > 0) u_tcp_abortar(c1);
+                    if (c2 > 0) u_tcp_abortar(c2);
+                }
+            }
+            id = u_tcp_abrir(gw, 5002, 0);
+            ok(id > 0, "tcp-abrir-fin");
+            if (id > 0) {
+                r = u_tcp_recibir(id, tb, (int)sizeof(tb), 5000);
+                ok(r == -12, "tcp-eof-fin");
+                r = u_tcp_cerrar(id);
+                ok(r == 0 || r == -9, "tcp-cerrar-tras-fin");
+            }
+            {
+                unsigned int t0 = 0, dt;
+                int t1 = u_ticks();
+                t0 = t1 < 0 ? 0u : (unsigned int)t1;
+                id = u_tcp_abrir(gw, 59999, 0);
+                {
+                    int t2 = u_ticks();
+                    dt = (t2 < 0 ? 0u : (unsigned int)t2) - t0;
+                }
+                ok(id == -7 && (int)dt < 1500, "tcp-rechazada-rapido");
+            }
+            {
+                unsigned int t0 = 0, dt;
+                unsigned int txa = 0, txb = 0;
+                int t1 = u_ticks();
+                red_if_t f2;
+                int j;
+                for (j = 0; j < 32; j++) ((unsigned char *)&f2)[j] = 0;
+                if (u_red_interfaz(&f2) == 0) txa = f2.tx_ok;
+                t0 = t1 < 0 ? 0u : (unsigned int)t1;
+                id = u_tcp_abrir(192 | (0 << 8) | (2 << 16) |
+                                     (1 << 24), 80, 0);
+                {
+                    unsigned int _dt;
+                    int _t2 = u_ticks();
+                    _dt = (_t2 < 0 ? 0u : (unsigned int)_t2) - t0;
+                    dt = _dt;
+                }
+                for (j = 0; j < 32; j++)
+                    ((unsigned char *)&f2)[j] = 0;
+                if (u_red_interfaz(&f2) == 0) txb = f2.tx_ok;
+                ok(id == -7, "tcp-negro-rechazado");
+                ok((int)dt < 1500, "tcp-negro-acotado");
+                ok(txb > txa, "tcp-negro-tx");
+            }
+            {
+                int esc = u_tcp_escuchar(6101);
+                int hid;
+                int sig = -1;
+                ok(esc > 0, "tcp-escuchar");
+                if (esc > 0) {
+                    sig = u_tcp_abrir(gw, 6102, 0);
+                    ok(sig > 0, "tcp-aviso-listo");
+                    if (sig > 0) u_tcp_cerrar(sig);
+                }
+                {
+                        int k2;
+                        hid = -1;
+                        for (k2 = 0; k2 < 3 && hid <= 0; k2++)
+                            hid = esc > 0 ? u_tcp_aceptar(esc, 10000)
+                                          : -1;
+                    }
+                ok(hid > 0, "tcp-aceptar");
+                if (hid > 0) {
+                    r = u_tcp_recibir(hid, tb, (int)sizeof(tb), 5000);
+                    ok(r == 13, "tcp-recibir-huesped");
+                    if (r == 13)
+                        ok(tb[0] == 'h' && tb[5] == 'i',
+                           "tcp-datos-huesped");
+                    r = u_tcp_enviar(hid, "hola anfitrion", 14);
+                    ok(r == 14, "tcp-enviar-huesped");
+                    r = u_tcp_recibir(hid, tb, (int)sizeof(tb), 5000);
+                    ok(r == -12, "tcp-eof-huesped");
+                    ok(u_tcp_cerrar(hid) == 0, "tcp-cerrar-huesped");
+                }
+                if (esc > 0) ok(u_tcp_cerrar(esc) == 0,
+                                "tcp-cerrar-escucha");
+            }
+            id = u_tcp_abrir(gw, 5001, 0);
+            ok(id > 0, "tcp-abrir-aborto");
+            if (id > 0) {
+                ok(u_tcp_abortar(id) == 0, "tcp-abortar");
+                ok(u_tcp_estado(id) < 0, "tcp-abortada-sin-estado");
+            }
+            ok(u_tcp_abrir(0, 80, 0) == -2, "tcp-abrir-sin-ip");
+            ok(u_tcp_abrir(gw, 0, 0) == -2, "tcp-abrir-sin-puerto");
+            ok(u_tcp_estado(9999) == -2, "tcp-estado-malo");
+            ok(u_tcp_cerrar(9999) == -2, "tcp-cerrar-malo");
+            {
+                int e2 = u_tcp_abrir(gw, 5001, 0);
+                if (e2 > 0) {
+                    unsigned char mucho[600];
+                    int j;
+                    for (j = 0; j < 600; j++) mucho[j] = 0;
+                    ok(u_tcp_enviar(e2, mucho, 600) == -2,
+                       "tcp-enviar-largo");
+                    ok(u_tcp_recibir(e2, tb, 0, 100) == -2,
+                       "tcp-recibir-max-cero");
+                    ok(u_tcp_aceptar(e2, 100) == -8,
+                       "tcp-aceptar-no-escucha");
+                    u_tcp_cerrar(e2);
+                } else {
+                    ok(0, "tcp-h-arg");
+                }
+            }
         }
     }
     u_print("t_red: contadores tras prueba:\n");
