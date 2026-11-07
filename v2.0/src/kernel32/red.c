@@ -143,7 +143,10 @@ void red_bombea(void) {
     int n;
     for (;;) {
         n = red_rx(bomba, sizeof(bomba));
-        if (n <= 0) return;
+        if (n <= 0) break;
         red_entrada(bomba, n);
     }
+    /* F6-C: el reloj TCP avanza con cualquier bombeo (no solo con
+       syscalls TCP bloqueadas). */
+    red_tcp_reloj();
 }

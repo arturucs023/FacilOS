@@ -75,6 +75,10 @@ void red_tcp_entrada(const uint8_t *m, int tam);
    en silencio. Devuelve cuantas libero. */
 int red_tcp_limpia_proceso(uint32_t pid);
 
+/* F6-C: avance del reloj (RTO) sin depender de una syscall TCP
+   bloqueada; lo llama red_bombea(). */
+void red_tcp_reloj(void);
+
 /* Autoprueba con captura de Tx (sin trafico al cable): checksum,
    handshake activo/pasivo, datos, retransmision, RST, FIN/EOF,
    segmentos malos. */

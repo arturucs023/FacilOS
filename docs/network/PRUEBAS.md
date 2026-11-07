@@ -122,3 +122,35 @@ F6-B P0 (misma ISO reconstruida con correcciones; sin cambio ABI):
   pasiva completa verificada en cable (SYN/SYN-ACK, datos ambos
   sentidos, FIN limpio; pcap `f6blive.pcap`: SYN=154 SYNACK=8
   FIN=17 RST=65 DATA=8). Regresion v2.2 verde (258/26/15).
+
+F6-C P1 (misma ISO reconstruida con correcciones; sin cambio ABI):
+- Repro previa: KAT 13-21 nuevos sobre codigo F6-B -> KAT FALLO
+  (dos de ellos, 15 y 20, exigieron corregir el propio test:
+  assert con ip_rem/pto_rem en TCB recien abierto, y falta de
+  higiene de la tabla best-effort; el codigo nunca estuvo roto
+  en esos dos puntos). Tras el arreglo: KAT OK con/sin
+  adaptador (F5+F6-B+13..21).
+- KAT 13 D6: datos (+datos+FIN) en FIN_TX aceptados y con ACK;
+  duplicado no duplica. KAT 14 D7: ventana llena anuncia 0, la
+  sonda de 1 B responde ACK wnd=0, tras drenar reabre. KAT 15
+  D9: libera sanea controles y cargas (memset) + reuso limpio.
+  KAT 16 D10: RST pelado seq=ackn ante ACK; SYN sigue RST+ACK.
+  KAT 17 D12: envia -8 con wnd 0/insuficiente, ok con wnd>=n;
+  lado activo aprende ventana del SYN-ACK. KAT 18 D13: aceptar
+  y recibir con espera 0 devuelven 0 en <=1 tick. KAT 19 D14:
+  cerrar con datos sin ACK = RST + -7, sin FIN con hueco.
+  KAT 20 D15: misma tupla -6 en gracia, distinta ok, SYN
+  pasivo en gracia gota, tras caducar reuso ok. KAT 21: RTO
+  avanza con solo `red_bombea` (reint=1).
+- Vivo `t_red` 110 pruebas 1 fallo (solo `rx-arp-puerta` flaky):
+  12 pruebas nuevas (poll aceptar/recibir con dt<=1 tick,
+  misma tupla: abrir/eco/cerrar, -6 en gracia, reuso tras 7 s)
+  mas todo F1-F6-B intacto (pasiva, dos simultaneas, EOF,
+  cierres, abortos, RTO negro, DHCP 86400).
+- pcap `f6clive.pcap`: SYN=165 SYNACK=11 FIN=21 RST=72 (14 sin
+  ACK = RST pelado D10 en accion) DATA=10, pasiva 6101 completa
+  (SYN-ACK del invitado + datos ambos sentidos + FIN limpio).
+- DHCP: obtener + renovar + liberar verificados en vivo
+  (`concesion (s): 86400`; renovar re-oferta; liberar limpia).
+- Regresion v2.2 verde (t1_lib 258/0, tutf8 26/0, mem32 15/0) y
+  `funcion.f32` sigue pendiente de ejecucion en vivo.

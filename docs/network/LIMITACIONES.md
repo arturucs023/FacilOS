@@ -1,4 +1,4 @@
-# Limitaciones conocidas (F1+F2+F3+F4+F5+F6-B)
+# Limitaciones conocidas (F1+F2+F3+F4+F5+F6-B+F6-C)
 
 - Red `user` de QEMU es NAT 10.0.2.0/24: sin entrada sin `hostfwd`,
   sin promiscuo externo. DNS lo da slirp (10.0.2.3); el eco ICMP
@@ -15,9 +15,19 @@
   =10 nada mas arrancar.
 - TCP: MSS 536 de envio (se ignora el MSS del par), recepcion
   hasta 2048 B por segmento, 4 conexiones sin desalojo, sin
-  reensamblado (OOO se descarta y retransmite), sin 2MSL, sin
-  keepalive, sin medio-cierre API, ISN por ticks+pid (no
-  criptografico). Stop-and-wait: un segmento sin ACK a la vez.
+  reensamblado (OOO se descarta y retransmite; decision F6-C,
+  no previsto), sin ventana deslizante ni persist-timer emisor
+  (el RTO hace de sonda; la app reintenta el -8), sin keepalive,
+  sin medio-cierre API, ISN por ticks+pid (no criptografico).
+  Stop-and-wait: un segmento sin ACK a la vez. Enviar es
+  siempre bloqueante hasta su ACK (sin parametro de espera por
+  ABI); aceptar/recibir con espera 0 no bloquean (F6-C).
+  Cerrar con datos sin confirmar aborta con RST y -7 (sin FIN
+  con hueco). Cuarentena de tupla 6 s best-effort (4 entradas;
+  en vez de TIME_WAIT con slot). Residuales: re-Tx con ARP sin
+  resolver puede bloquear hasta ~3 s (acotado); sin kill en ABI
+  la reentrada IRQ/limpieza es teorica; `funcion.f32` sin
+  ejecucion en vivo (pendiente desde v2.2).
 - El cargador lee el nucleo en sectores fijos: F5 lo sube a 224
   (llega a 0x2C000, sin pisar el catalogo en 0x30000). Si el
   nucleo crece mas, hay que volver a subirlo (2 lineas:

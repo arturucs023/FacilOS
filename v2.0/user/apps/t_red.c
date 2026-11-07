@@ -692,6 +692,52 @@ int main(void) {
                 if (esc > 0) ok(u_tcp_cerrar(esc) == 0,
                                 "tcp-cerrar-escucha");
             }
+            /* F6-C: poll sin bloqueo (D13) y cuarentena (D15). */
+            {
+                int esc2 = u_tcp_escuchar(6105);
+                ok(esc2 > 0, "tcp-escuchar-poll");
+                if (esc2 > 0) {
+                    int t0 = u_ticks();
+                    int r0 = u_tcp_aceptar(esc2, 0);
+                    int dt = u_ticks() - t0;
+                    ok(r0 == 0, "tcp-aceptar-poll-vacio");
+                    ok(dt >= 0 && dt <= 1, "tcp-aceptar-poll-rapido");
+                    u_tcp_cerrar(esc2);
+                }
+            }
+            {
+                unsigned char pb[16];
+                int t0, dt, r0;
+                id = u_tcp_abrir(gw, 5003, 0);
+                ok(id > 0, "tcp-abrir-silencio");
+                if (id > 0) {
+                    t0 = u_ticks();
+                    r0 = u_tcp_recibir(id, pb, sizeof(pb), 0);
+                    dt = u_ticks() - t0;
+                    ok(r0 == 0, "tcp-recibir-poll-vacio");
+                    ok(dt >= 0 && dt <= 1, "tcp-recibir-poll-rapido");
+                    u_tcp_abortar(id);
+                }
+            }
+            {
+                int e1, e2, e3;
+                e1 = u_tcp_abrir(gw, 5001, 45001);
+                ok(e1 > 0, "tcp-tupla-abrir");
+                if (e1 > 0) {
+                    r = u_tcp_enviar(e1, "hola", 4);
+                    ok(r == 4, "tcp-tupla-eco-tx");
+                    r = u_tcp_recibir(e1, tb, (int)sizeof(tb), 5000);
+                    ok(r == 4, "tcp-tupla-eco-rx");
+                    ok(u_tcp_cerrar(e1) == 0, "tcp-tupla-cerrar");
+                }
+                e2 = u_tcp_abrir(gw, 5001, 45001);
+                ok(e2 == -6, "tcp-tupla-gracia");
+                if (e2 > 0) u_tcp_abortar(e2);
+                u_dormir(7000);
+                e3 = u_tcp_abrir(gw, 5001, 45001);
+                ok(e3 > 0, "tcp-tupla-reuso");
+                if (e3 > 0) u_tcp_cerrar(e3);
+            }
             id = u_tcp_abrir(gw, 5001, 0);
             ok(id > 0, "tcp-abrir-aborto");
             if (id > 0) {

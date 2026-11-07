@@ -55,6 +55,7 @@ typedef struct {
     uint16_t dp;
     uint32_t seq, ackn;
     uint8_t nd;
+    uint16_t wnd;   /* F6-C: ventana anunciada por el segmento */
 } katreg_t;
 static katreg_t kat_r[32];
 static int kat_n = 0;
@@ -115,7 +116,10 @@ static tcp_t *nuevo_tcb(uint32_t pid) {
             if (!t->gen) t->gen = gen_seq++;
             t->pid = pid;
             t->err = 0;
-            /* F6-B D2: saneado completo (sin residuos de tuple/seq). */
+            /* F6-B D2 + F6-C D9: saneado completo (controles y
+               cargas; sin residuos de la conexion anterior). */
+            libc_memset(t->snd, 0, TCP_MSS);
+            libc_memset(t->rcv, 0, TCP_RCV);
             t->ip_rem = 0;
             t->pto_loc = 0;
             t->pto_rem = 0;
@@ -147,10 +151,13 @@ static int id_de(tcp_t *t) {
 }
 
 static void libera(tcp_t *t) {
-    /* F6-B D2: saneado completo para reutilizacion segura. */
+    /* F6-B D2 + F6-C D9: saneado completo para reutilizacion segura
+       (controles y cargas; sin residuos de la conexion anterior). */
     t->estado = TCP_CERRADO;
     t->pid = 0;
     t->err = 0;
+    libc_memset(t->snd, 0, TCP_MSS);
+    libc_memset(t->rcv, 0, TCP_RCV);
     t->ip_rem = 0;
     t->pto_loc = 0;
     t->pto_rem = 0;
@@ -180,6 +187,59 @@ static void muere(tcp_t *t, int e) {
     t->err = e;
 }
 
+/* F6-C D15: cuarentena de tuplas (TIME_WAIT sin ocupar TCB). Tras un
+   cierre ordenado o un aborto, la tupla queda en gracia TUP_GRACIA:
+   un SYN nuevo o una apertura activa con la misma tupla se rechaza
+   (el par reintenta por RTO y lo logra tras la gracia). Con 4 TCB,
+   un TIME_WAIT clasico consumiria 25% de la tabla por cierre; la
+   cuarentena da la misma proteccion (sin reencarnaciones) con 48 B
+   fijos, caducidad perezosa y presion nula sobre la tabla. */
+#define TUP_N 4
+#define TUP_GRACIA 600u   /* 6 s: cubre el ciclo RTO del par */
+static struct {
+    uint32_t ip;
+    uint16_t loc, rem;
+    uint32_t hasta;
+} tups[TUP_N];
+
+static int tup_viva(uint32_t ip, uint16_t loc, uint16_t rem) {
+    int i;
+    uint32_t ahora = irq_ticks();
+    for (i = 0; i < TUP_N; i++) {
+        if (tups[i].hasta && tups[i].ip == ip &&
+            tups[i].loc == loc && tups[i].rem == rem) {
+            if ((int32_t)(tups[i].hasta - ahora) > 0) return 1;
+            tups[i].hasta = 0;
+        }
+    }
+    return 0;
+}
+
+static void tup_guarda(uint32_t ip, uint16_t loc, uint16_t rem) {
+    int i, vict = 0;
+    uint32_t ahora = irq_ticks();
+    if (!ip || !loc || !rem) return;
+    for (i = 0; i < TUP_N; i++) {
+        if (!tups[i].hasta ||
+            (int32_t)(tups[i].hasta - ahora) <= 0) {
+            vict = i;
+            break;
+        }
+        if ((int32_t)(tups[i].hasta - tups[vict].hasta) < 0)
+            vict = i;
+    }
+    tups[vict].ip = ip;
+    tups[vict].loc = loc;
+    tups[vict].rem = rem;
+    tups[vict].hasta = ahora + TUP_GRACIA;
+}
+
+/* Guarda la tupla de t antes de liberarla (t valida). */
+static void cierra_guarda(tcp_t *t) {
+    if (t->ip_rem && t->pto_loc && t->pto_rem)
+        tup_guarda(t->ip_rem, t->pto_loc, t->pto_rem);
+}
+
 static uint16_t wnd_loc(tcp_t *t) {
     uint32_t libre = TCP_RCV - t->rcv_n;
     return (uint16_t)(libre > 0xFFFFu ? 0xFFFFu : libre);
@@ -199,6 +259,7 @@ static int tcp_salida(uint32_t dst, const uint8_t *seg, int n) {
                 ((uint32_t)seg[8] << 24) | ((uint32_t)seg[9] << 16) |
                 ((uint32_t)seg[10] << 8) | seg[11];
             kat_r[kat_n].nd = (uint8_t)(n - 20 > 255 ? 255 : n - 20);
+            kat_r[kat_n].wnd = (uint16_t)((seg[14] << 8) | seg[15]);
             kat_n++;
         }
         return n;
@@ -266,8 +327,17 @@ static int tcp_tx(tcp_t *t, uint8_t band, const uint8_t *d, int n,
 }
 
 /* RST a (dst,dp,sp) con seq y ack dados. */
+static void rst_band(uint32_t dst, uint16_t dp, uint16_t sp,
+                     uint32_t seq, uint32_t ackn, uint8_t band);
 static void rst_para(uint32_t dst, uint16_t dp, uint16_t sp,
                      uint32_t seq, uint32_t ackn) {
+    rst_band(dst, dp, sp, seq, ackn, 0x14);   /* RST+ACK */
+}
+
+/* F6-C D10: RST pelado (sin ACK) para responder a un segmento que
+   trae ACK: seq = SEG.ACK (RFC 793). */
+static void rst_band(uint32_t dst, uint16_t dp, uint16_t sp,
+                     uint32_t seq, uint32_t ackn, uint8_t band) {
     uint8_t s[20];
     uint8_t seudo[8];
     uint32_t mio = red_cfg_ip();
@@ -288,7 +358,7 @@ static void rst_para(uint32_t dst, uint16_t dp, uint16_t sp,
     s[10] = (uint8_t)((ackn >> 8) & 0xFFu);
     s[11] = (uint8_t)(ackn & 0xFFu);
     s[12] = 0x50;
-    s[13] = 0x14;   /* RST+ACK */
+    s[13] = band;   /* 0x14 RST+ACK, 0x04 RST pelado (D10) */
     s[14] = 0;
     s[15] = 0;
     s[16] = 0;
@@ -360,6 +430,10 @@ static void tcp_reloj(void) {
         reenvia(t);
     }
 }
+
+/* F6-C: avance del reloj sin depender de una syscall TCP bloqueada
+   (red_bombea lo llama: RTO progresa con cualquier espera de red). */
+void red_tcp_reloj(void) { tcp_reloj(); }
 
 void red_tcp_entrada(const uint8_t *m, int tam) {
     int hlen, thl, n, tot;
@@ -441,6 +515,12 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
                         ocupado = 1;
                         break;
                     }
+                    /* F6-C D15: SYN a tupla en gracia = gota
+                       (el cliente reintenta tras la gracia). */
+                    if (tup_viva(src, dp, sp)) {
+                        c_err++;
+                        return;
+                    }
                     tcp_t *h = nuevo_tcb(q->pid);
                     if (!h) {
                         c_err++;
@@ -481,11 +561,14 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
                 c_err++;
                 return;
             }
-            /* Puerto cerrado: RST con seq 0 y ack del extremo. */
+            /* Puerto cerrado: si el entrante trae ACK, RST pelado
+               con seq = SEG.ACK (RFC 793); si no, RST+ACK con seq 0
+               y ack del extremo (F6-C D10). */
             {
                 int largo = n - thl + ((band & 0x02) ? 1 : 0) +
                             ((band & 0x01) ? 1 : 0);
-                rst_para(src, sp, dp, 0, seq + (uint32_t)largo);
+                if (band & 0x10) rst_band(src, sp, dp, ackn, 0, 0x04);
+                else rst_para(src, sp, dp, 0, seq + (uint32_t)largo);
             }
             c_err++;
             return;
@@ -540,6 +623,9 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
                     c->estado = TCP_ESTABLECIDO;
                     c->reint = 0;
                     c->rto = RTO0;
+                    /* F6-C D12: el lado activo tambien aprende la
+                       ventana del SYN-ACK (antes se perdia). */
+                    c->wnd_par = (uint16_t)((t[14] << 8) | t[15]);
                     tcp_tx(c, 0x10, 0, 0, c->snd_nxt);
                     c_ok++;
                 }
@@ -584,8 +670,13 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
         {
             int dl = n - thl;
             if (dl > 0) {
+                /* F6-C D6: en FIN_TX se sigue aceptando lo del par
+                   mientras no llego su FIN (half-close); lo que no
+                   se admite es transmitir (ver envia_nb). El FIN del
+                   mismo segmento se procesa abajo (datos+FIN). */
                 if (c->estado != TCP_ESTABLECIDO &&
-                    c->estado != TCP_FIN_RX) {
+                    c->estado != TCP_FIN_RX &&
+                    !(c->estado == TCP_FIN_TX && !c->fin_rx)) {
                     c_err++;
                     return;
                 }
@@ -684,9 +775,17 @@ static int abre_nb(uint32_t ip, uint16_t puerto, uint16_t local,
                     break;
                 }
             }
+            /* F6-C D15: el efimero salta tuplas en gracia. */
+            if (!choca && tup_viva(ip, efem, puerto)) choca = 1;
             if (!choca) break;
         }
         t->pto_loc = efem;
+    }
+    /* F6-C D15: la tupla en gracia no se reutiliza (transitorio);
+       con puerto efimero el bucle ya la evita (red de seguridad). */
+    if (tup_viva(ip, t->pto_loc, puerto)) {
+        libera(t);
+        return -6;
     }
     t->iss = irq_ticks() + (pid << 16) + (uint32_t)id_de(t) * 7919u;
     t->snd_nxt = t->iss + 1;
@@ -755,6 +854,12 @@ int red_tcp_aceptar(int id_esc, uint32_t pid, uint32_t espera_ms) {
     if (q->estado != TCP_ESCUCHA) return -8;
     if (espera_ms > 10000) espera_ms = 10000;
     fin = irq_ticks() + espera_ms / 10u + 1u;
+    /* F6-C D13: espera 0 = consulta sin bloqueo (un bombeo para
+       recoger lo ya llegado; sin dormir). */
+    if (espera_ms == 0) {
+        red_bombea();
+        tcp_reloj();
+    }
     for (;;) {
         int h;
         r = idx_de_id(id_esc, pid, &q);
@@ -769,6 +874,7 @@ int red_tcp_aceptar(int id_esc, uint32_t pid, uint32_t espera_ms) {
                 return id_de(c);
             }
         }
+        if (espera_ms == 0) return 0;
         if ((int32_t)(irq_ticks() - fin) >= 0) return 0;
         red_bombea();
         tcp_reloj();
@@ -782,6 +888,9 @@ static int envia_nb(tcp_t *t, const uint8_t *d, int n) {
     if (t->estado != TCP_ESTABLECIDO && t->estado != TCP_FIN_RX)
         return -8;
     if (t->snd_len) return -8;   /* stop-and-wait: uno en vuelo */
+    /* F6-C D12: respeta la ventana del par (0 = cerrada,
+       n > wnd = insuficiente). La app reintenta; no se bloquea. */
+    if (t->wnd_par == 0 || n > (int)t->wnd_par) return -8;
     for (i = 0; i < n; i++) t->snd[i] = d[i];
     t->snd_len = (uint16_t)n;
     if (tcp_tx(t, 0x18, t->snd, n, t->snd_nxt) < 0) {
@@ -829,6 +938,11 @@ int red_tcp_recibir(int id, uint32_t pid, uint8_t *dst, int max,
         return -8;
     if (espera_ms > 10000) espera_ms = 10000;
     fin = irq_ticks() + espera_ms / 10u + 1u;
+    /* F6-C D13: espera 0 = consulta sin bloqueo. */
+    if (espera_ms == 0) {
+        red_bombea();
+        tcp_reloj();
+    }
     for (;;) {
         r = idx_de_id(id, pid, &t);
         if (r < 0) return r;
@@ -841,6 +955,7 @@ int red_tcp_recibir(int id, uint32_t pid, uint8_t *dst, int max,
             return copia;
         }
         if (t->fin_rx) return -12;
+        if (espera_ms == 0) return 0;
         if ((int32_t)(irq_ticks() - fin) >= 0) return 0;
         red_bombea();
         tcp_reloj();
@@ -869,6 +984,17 @@ static int fin_listo(tcp_t *t) {
         return 1;
     }
     return 0;
+}
+
+/* F6-C D14: cierra con datos sin confirmar: no emite FIN con
+   hueco (el par lo ignoraria y ambos lados colgarian); aborta con
+   RST y devuelve -7. */
+static int cierra_descarta(tcp_t *t) {
+    rst_para(t->ip_rem, t->pto_rem, t->pto_loc, t->snd_nxt,
+             t->rcv_nxt);
+    cierra_guarda(t);
+    libera(t);
+    return -7;
 }
 
 int red_tcp_cerrar(int id, uint32_t pid) {
@@ -903,7 +1029,9 @@ int red_tcp_cerrar(int id, uint32_t pid) {
         libera(t);
         return e;
     }
-    /* Drena envio previo (acotado) y FIN. */
+    /* Drena envio previo (acotado) y FIN. Si tras el drenaje
+       siguen datos sin confirmar, no se emite FIN con hueco
+       (F6-C D14): se aborta con RST. */
     {
         uint32_t f2 = irq_ticks() + 300u;
         while (t->snd_len && (int32_t)(irq_ticks() - f2) < 0) {
@@ -911,7 +1039,7 @@ int red_tcp_cerrar(int id, uint32_t pid) {
             tcp_reloj();
             duerme();
         }
-        t->snd_len = 0;
+        if (t->snd_len) return cierra_descarta(t);
     }
     r = fin_nb(t);
     if (r < 0) {
@@ -923,11 +1051,14 @@ int red_tcp_cerrar(int id, uint32_t pid) {
         r = idx_de_id(id, pid, &t);
         if (r < 0) return r;
         if (fin_listo(t)) {
+            /* F6-C D15: gracia de tupla tras cierre ordenado. */
+            cierra_guarda(t);
             libera(t);
             return 0;
         }
         if ((int32_t)(irq_ticks() - fin) >= 0) {
             int e = t->fin_ack ? 0 : -7;
+            if (t->fin_ack) cierra_guarda(t);
             libera(t);
             return e;
         }
@@ -954,11 +1085,14 @@ int red_tcp_abortar(int id, uint32_t pid) {
     if (t->estado != TCP_ESCUCHA) {
         rst_para(t->ip_rem, t->pto_rem, t->pto_loc, t->snd_nxt,
                  t->rcv_nxt);
+        /* F6-C D15: gracia de tupla tras aborto. */
+        cierra_guarda(t);
     } else if (t->pendiente >= 0 && t->pendiente < TCP_N) {
         tcp_t *h = &tcbs[t->pendiente];
         if (h->estado != TCP_CERRADO) {
             rst_para(h->ip_rem, h->pto_rem, h->pto_loc, h->snd_nxt,
                      h->rcv_nxt);
+            cierra_guarda(h);
             libera(h);
         }
         t->pendiente = -1;
@@ -995,6 +1129,8 @@ int red_tcp_limpia_proceso(uint32_t pid) {
             rst_para(t->ip_rem, t->pto_rem, t->pto_loc, t->snd_nxt,
                      t->rcv_nxt);
         }
+        /* F6-C D15: gracia de tupla tambien al morir el dueno. */
+        if (t->estado != TCP_CERRADO) cierra_guarda(t);
         if (t->pendiente >= 0 && t->pendiente < TCP_N)
             libera(&tcbs[t->pendiente]);
         t->pendiente = -1;
@@ -1087,6 +1223,31 @@ static int kat_conecta(uint16_t lp, uint16_t rp, uint32_t irs) {
     red_tcp_entrada(kat_frm, n);
     if (t->estado != TCP_ESTABLECIDO) return -2;
     return id;
+}
+
+/* F6-C: reescribe la ventana anunciada del marco KAT y recompone
+   checksums IP/TCP. */
+static void kat_pon_wnd(uint16_t w) {
+    uint16_t c;
+    uint8_t seudo[8];
+    int k, tot;
+    kat_frm[48] = (uint8_t)((w >> 8) & 0xFFu);
+    kat_frm[49] = (uint8_t)(w & 0xFFu);
+    kat_frm[24] = 0;
+    kat_frm[25] = 0;
+    c = red_ip_cksum(kat_frm + 14, 20);
+    kat_frm[24] = (uint8_t)((c >> 8) & 0xFFu);
+    kat_frm[25] = (uint8_t)(c & 0xFFu);
+    for (k = 0; k < 4; k++) {
+        seudo[k] = kat_frm[26 + k];
+        seudo[4 + k] = kat_frm[30 + k];
+    }
+    tot = ((kat_frm[16] << 8) | kat_frm[17]) - 20;
+    kat_frm[50] = 0;
+    kat_frm[51] = 0;
+    c = cks_tcp(seudo, seudo + 4, kat_frm + 34, tot);
+    kat_frm[50] = (uint8_t)((c >> 8) & 0xFFu);
+    kat_frm[51] = (uint8_t)(c & 0xFFu);
 }
 
 void red_tcp_kat(void) {
@@ -1448,6 +1609,318 @@ void red_tcp_kat(void) {
                 red_tcp_entrada(kat_frm, n);
                 if (t->rcv_n != rn0) ok = 0;
             }
+            libera(t);
+        }
+    }
+    /* 13. F6-C D6: datos tras FIN propio (sin FIN ajeno). */
+    kat_n = 0;
+    {
+        static const uint8_t dd[2] = { 'Q', 'W' };
+        int id = kat_conecta(50210, 80, 9200);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            uint32_t rcv;
+            int n, k0;
+            uint8_t tmp[8];
+            if (fin_nb(t) != 0) ok = 0;
+            rcv = t->rcv_nxt;
+            n = kat_arma(KAT_PAR, 80, 50210, rcv, t->snd_nxt,
+                         0x18, dd, 2);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (t->rcv_n != 2) ok = 0;
+            if (t->rcv_nxt != rcv + 2) ok = 0;
+            if (kat_n != k0 + 1) ok = 0;
+            n = kat_arma(KAT_PAR, 80, 50210, rcv, t->snd_nxt,
+                         0x18, dd, 2);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (t->rcv_n != 2) ok = 0;
+            if (kat_n != k0 + 1) ok = 0;
+            if (red_tcp_recibir(id, 9999, tmp, 8, 0) != 2) ok = 0;
+            n = kat_arma(KAT_PAR, 80, 50210, rcv + 2, t->snd_nxt,
+                         0x19, dd, 2);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (t->rcv_n != 2) ok = 0;
+            if (!t->fin_rx) ok = 0;
+            if (kat_n != k0 + 2) ok = 0;   /* ACK datos + ACK FIN */
+            libera(t);
+        }
+    }
+    /* 14. F6-C D7: ventana llena anuncia 0 y la sonda responde. */
+    kat_n = 0;
+    {
+        static uint8_t kre[536];
+        int id = kat_conecta(50211, 80, 9201);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            uint32_t rcv = t->rcv_nxt;
+            int n, k, k0;
+            uint8_t tmp[536];
+            int got = 0, q;
+            for (k = 0; k < 536; k++) kre[k] = (uint8_t)k;
+            for (k = 0; k < 3; k++) {
+                n = kat_arma(KAT_PAR, 80, 50211, rcv, t->snd_nxt,
+                             0x18, kre, 536);
+                red_tcp_entrada(kat_frm, n);
+                rcv += 536;
+            }
+            n = kat_arma(KAT_PAR, 80, 50211, rcv, t->snd_nxt,
+                         0x18, kre, 440);
+            red_tcp_entrada(kat_frm, n);
+            if (t->rcv_n != TCP_RCV) ok = 0;
+            if (kat_n < 1) ok = 0;
+            else if (kat_r[kat_n - 1].wnd != 0) ok = 0;
+            n = kat_arma(KAT_PAR, 80, 50211, t->rcv_nxt, t->snd_nxt,
+                         0x18, kre, 1);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (kat_n != k0 + 1) ok = 0;
+            else {
+                if (kat_r[kat_n - 1].band != 0x10) ok = 0;
+                if (kat_r[kat_n - 1].ackn != t->rcv_nxt) ok = 0;
+                if (kat_r[kat_n - 1].wnd != 0) ok = 0;
+            }
+            if (t->rcv_n != TCP_RCV) ok = 0;
+            /* drenado total: la sonda cabe y la ventana reabre
+               (2048-1 tras consumir la sonda). */
+            while (t->rcv_n) {
+                q = red_tcp_recibir(id, 9999, tmp, sizeof(tmp), 0);
+                if (q <= 0) break;
+                got += q;
+            }
+            if (got != TCP_RCV) ok = 0;
+            n = kat_arma(KAT_PAR, 80, 50211, t->rcv_nxt, t->snd_nxt,
+                         0x18, kre, 1);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (kat_n != k0 + 1) ok = 0;
+            else if (kat_r[kat_n - 1].wnd != TCP_RCV - 1) ok = 0;
+            libera(t);
+        }
+    }
+    /* 15. F6-C D9: libera sanea controles y cargas. */
+    kat_n = 0;
+    {
+        static const uint8_t abc[3] = { 'a', 'b', 'c' };
+        int id = kat_conecta(50212, 80, 9202);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            int n = kat_arma(KAT_PAR, 80, 50212, t->rcv_nxt,
+                             t->snd_nxt, 0x18, abc, 3);
+            red_tcp_entrada(kat_frm, n);
+            if (envia_nb(t, abc, 3) != 0) ok = 0;
+            libera(t);
+            if (t->ip_rem || t->pto_loc || t->pto_rem || t->iss ||
+                t->irs || t->snd_nxt || t->snd_una || t->rcv_nxt ||
+                t->wnd_par || t->snd_len || t->rcv_ini || t->rcv_n ||
+                t->fin_rx || t->fin_ack || t->reint || t->t0 ||
+                t->snd[0] || t->rcv[0]) ok = 0;
+            if (t->rto != RTO0) ok = 0;
+            {
+                int id2 = abre_nb(KAT_PAR, 85, 50112, 9999);
+                if (id2 <= 0) ok = 0;
+                else {
+                    tcp_t *u = &tcbs[id2 % TCP_N];
+                    /* Recien abierto: cargas y pendientes a cero;
+                       ip_rem/pto_rem/pto_loc/iss asignados. */
+                    if (u->snd_len || u->rcv_n || u->fin_rx ||
+                        u->fin_ack || u->snd[0] || u->rcv[0]) ok = 0;
+                    if (u->pto_loc != 50112 || u->iss == 0) ok = 0;
+                    if (u->ip_rem != KAT_PAR || u->pto_rem != 85) ok = 0;
+                    red_tcp_abortar(id2, 9999);
+                }
+            }
+        }
+    }
+    /* 16. F6-C D10: RST a cerrado con ACK usa seq=ackn sin ACK. */
+    kat_n = 0;
+    {
+        int n, kat0b = kat_n;
+        n = kat_arma(KAT_PAR, 80, 61998, 5000, 12345, 0x10, 0, 0);
+        red_tcp_entrada(kat_frm, n);
+        if (kat_n != kat0b + 1) ok = 0;
+        else {
+            if (kat_r[kat_n - 1].band != 0x04) ok = 0;
+            if (kat_r[kat_n - 1].seq != 12345) ok = 0;
+        }
+        n = kat_arma(KAT_PAR, 80, 61997, 1000, 0, 0x02, 0, 0);
+        kat0b = kat_n;
+        red_tcp_entrada(kat_frm, n);
+        if (kat_n != kat0b + 1) ok = 0;
+        else {
+            if (kat_r[kat_n - 1].band != 0x14) ok = 0;
+            if (kat_r[kat_n - 1].ackn != 1001) ok = 0;
+        }
+    }
+    /* 17. F6-C D12: se respeta wnd_par; SYN-ACK la ensena. */
+    kat_n = 0;
+    {
+        static uint8_t zx[100];
+        int id = kat_conecta(50213, 80, 9203);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            int n, k0, k;
+            for (k = 0; k < 100; k++) zx[k] = (uint8_t)k;
+            if (t->wnd_par != 0x0800) ok = 0;
+            n = kat_arma(KAT_PAR, 80, 50213, t->rcv_nxt, t->snd_nxt,
+                         0x10, 0, 0);
+            kat_pon_wnd(0);
+            red_tcp_entrada(kat_frm, n);
+            if (t->wnd_par != 0) ok = 0;
+            k0 = kat_n;
+            if (envia_nb(t, zx, 100) != -8) ok = 0;
+            if (kat_n != k0) ok = 0;
+            n = kat_arma(KAT_PAR, 80, 50213, t->rcv_nxt, t->snd_nxt,
+                         0x10, 0, 0);
+            kat_pon_wnd(10);
+            red_tcp_entrada(kat_frm, n);
+            if (envia_nb(t, zx, 100) != -8) ok = 0;
+            n = kat_arma(KAT_PAR, 80, 50213, t->rcv_nxt, t->snd_nxt,
+                         0x10, 0, 0);
+            kat_pon_wnd(1000);
+            red_tcp_entrada(kat_frm, n);
+            k0 = kat_n;
+            if (envia_nb(t, zx, 100) != 0) ok = 0;
+            if (kat_n != k0 + 1) ok = 0;
+            else if (kat_r[kat_n - 1].nd != 100) ok = 0;
+            n = kat_arma(KAT_PAR, 80, 50213, t->rcv_nxt, t->snd_nxt,
+                         0x10, 0, 0);
+            red_tcp_entrada(kat_frm, n);
+            libera(t);
+        }
+        {
+            int ida = abre_nb(KAT_PAR, 86, 50113, 9999);
+            if (ida <= 0) ok = 0;
+            else {
+                tcp_t *t = &tcbs[ida % TCP_N];
+                int n;
+                if (t->wnd_par != TCP_MSS) ok = 0;
+                n = kat_arma(KAT_PAR, 86, 50113, 4000, t->iss + 1,
+                             0x12, 0, 0);
+                kat_pon_wnd(0);
+                red_tcp_entrada(kat_frm, n);
+                if (t->estado != TCP_ESTABLECIDO) ok = 0;
+                else if (t->wnd_par != 0) ok = 0;
+                libera(t);
+            }
+        }
+    }
+    /* 18. F6-C D13: espera 0 no bloquea. */
+    kat_n = 0;
+    {
+        int esc = red_tcp_escuchar(62020, 9999);
+        if (esc <= 0) ok = 0;
+        else {
+            uint32_t a = irq_ticks();
+            int r = red_tcp_aceptar(esc, 9999, 0);
+            uint32_t d = irq_ticks() - a;
+            if (r != 0) ok = 0;
+            if (d > 1) ok = 0;
+            red_tcp_cerrar(esc, 9999);
+        }
+        {
+            int id = kat_conecta(50214, 80, 9204);
+            if (id <= 0) ok = 0;
+            else {
+                uint8_t tmp[8];
+                uint32_t a, d;
+                int r;
+                a = irq_ticks();
+                r = red_tcp_recibir(id, 9999, tmp, sizeof(tmp), 0);
+                d = irq_ticks() - a;
+                if (r != 0) ok = 0;
+                if (d > 1) ok = 0;
+                libera(&tcbs[id % TCP_N]);
+            }
+        }
+    }
+    /* 19. F6-C D14: cerrar con datos sin ACK no manda FIN con
+       hueco: aborta con RST y devuelve -7. */
+    kat_n = 0;
+    {
+        static const uint8_t abc[3] = { 'a', 'b', 'c' };
+        int id = kat_conecta(50215, 80, 9205);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            int k0, k, r, vio_fin = 0, vio_rst = 0;
+            if (envia_nb(t, abc, 3) != 0) ok = 0;
+            k0 = kat_n;
+            r = cierra_descarta(t);
+            if (r != -7) ok = 0;
+            if (t->estado != TCP_CERRADO) ok = 0;
+            for (k = k0; k < kat_n; k++) {
+                if (kat_r[k].band == 0x11) vio_fin = 1;
+                if (kat_r[k].band == 0x14) vio_rst = 1;
+            }
+            if (vio_fin) ok = 0;
+            if (!vio_rst) ok = 0;
+        }
+    }
+    /* 20. F6-C D15: cuarentena de tupla tras cierre. */
+    kat_n = 0;
+    {
+        int id, k;
+        /* Higiene: la gracia es best-effort con 4 entradas; se parte
+           de tabla vacia para no desalojar lo probado. */
+        for (k = 0; k < TUP_N; k++) tups[k].hasta = 0;
+        id = kat_conecta(50216, 80, 9206);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            uint32_t rip = t->ip_rem;
+            uint16_t rpo = t->pto_rem, lpo = t->pto_loc;
+            int id2, n, k0, k;
+            cierra_guarda(t);
+            libera(t);
+            /* misma tupla con puerto local explicito: -6 */
+            id2 = abre_nb(rip, rpo, lpo, 9999);
+            if (id2 != -6) ok = 0;
+            if (id2 > 0) red_tcp_abortar(id2, 9999);
+            /* tupla distinta: sin bloqueo */
+            id2 = abre_nb(rip, 87, 50114, 9999);
+            if (id2 <= 0) ok = 0;
+            else red_tcp_abortar(id2, 9999);
+            /* SYN pasivo a la tupla en gracia: gota */
+            {
+                int esc = red_tcp_escuchar(lpo, 9999);
+                if (esc <= 0) ok = 0;
+                else {
+                    n = kat_arma(rip, rpo, lpo, 5000, 0, 0x02, 0, 0);
+                    k0 = kat_n;
+                    red_tcp_entrada(kat_frm, n);
+                    if (kat_n != k0) ok = 0;
+                    red_tcp_cerrar(esc, 9999);
+                }
+            }
+            /* caduca: reutilizable */
+            for (k = 0; k < TUP_N; k++) tups[k].hasta = 0;
+            id2 = abre_nb(rip, rpo, lpo, 9999);
+            if (id2 <= 0) ok = 0;
+            else red_tcp_abortar(id2, 9999);
+        }
+    }
+    /* 21. F6-C reloj: tcp_reloj avanza con red_bombea. */
+    kat_n = 0;
+    {
+        static const uint8_t abc[3] = { 'a', 'b', 'c' };
+        int id = kat_conecta(50217, 80, 9207);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            int k0;
+            if (envia_nb(t, abc, 3) != 0) ok = 0;
+            t->t0 -= 1000;
+            k0 = kat_n;
+            red_bombea();
+            if (t->reint != 1) ok = 0;
+            if (kat_n != k0 + 1) ok = 0;
             libera(t);
         }
     }
