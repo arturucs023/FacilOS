@@ -256,11 +256,285 @@ static void prueba_dhcp_tiempo(void) {
     ok(1, "dhcp-58-59-ignoradas-doc");
 }
 
+static void prueba_dns_f6d(void) {
+    /* F6-D: parser CNAME/robusto + cache (sin red). */
+    unsigned char preg[300], resp[600], cn[8];
+    unsigned int ips[8], ttls[8];
+    int npreg, nresp, k, rc;
+    unsigned int ip1 = 93 | (184 << 8) | (216 << 16) | (34 << 24);
+    unsigned int ipf = 192 | (0 << 8) | (2 << 16) | (10 << 24);
+    unsigned int ipo = 192 | (0 << 8) | (2 << 16) | (20 << 24);
+    char cnom[256];
+    unsigned int cttl = 0;
+    int i;
+    u_print("t_red F6D: parser CNAME + cache...\\n");
+    npreg = u_dns_armar("example.com", 0x1234, preg, (int)sizeof(preg));
+    /* CNAME solo: cname + TTL, sin A. */
+    nresp = dns_resp(resp, 0x1234, 0x8180, 0, 0, 0);
+    resp[6] = 0;
+    resp[7] = 1;
+    {
+        int t = nresp;
+        unsigned char wt[] = { 5, 'f', 'i', 'n', 'a', 'l', 4, 't',
+                               'e', 's', 't', 0 };
+        resp[t++] = 0xC0;
+        resp[t++] = 0x0C;
+        resp[t++] = 0;
+        resp[t++] = 5;
+        resp[t++] = 0;
+        resp[t++] = 1;
+        resp[t++] = 0;
+        resp[t++] = 0;
+        resp[t++] = 0;
+        resp[t++] = 100;
+        resp[t++] = 0;
+        resp[t++] = (unsigned char)sizeof(wt);
+        for (i = 0; i < (int)sizeof(wt); i++) resp[t++] = wt[i];
+        for (i = 0; i < 256; i++) cnom[i] = 0;
+        cttl = 0;
+        rc = -9;
+        k = u_dns_leer2(resp, t, 0x1234, preg, npreg, ips, ttls, 8,
+                        &rc, cnom, (int)sizeof(cnom), &cttl);
+        ok(k == 0 && rc == 0 && cttl == 100, "dns-cname-solo");
+        {
+            int ig = 1, j = 0;
+            const char *es = "final.test";
+            while (es[j] && cnom[j]) {
+                if (es[j] != cnom[j]) {
+                    ig = 0;
+                    break;
+                }
+                j++;
+            }
+            if (es[j] || cnom[j]) ig = 0;
+            ok(ig, "dns-cname-nombre");
+        }
+        ok(u_dns_leer(resp, t, 0x1234, preg, npreg, ips, ttls, 8,
+                      &rc) == 0, "dns-cname-compat");
+    }
+    /* CNAME + A ajeno: el A no cuenta; queda el CNAME. */
+    {
+        int t;
+        unsigned char wt[] = { 5, 'f', 'i', 'n', 'a', 'l', 4, 't',
+                               'e', 's', 't', 0 };
+        unsigned char wo[] = { 4, 'o', 't', 'r', 'o', 4, 't', 'e',
+                               's', 't', 0 };
+        unsigned char base[600];
+        int nb = dns_resp(base, 0x1234, 0x8180, 0, 0, 0);
+        base[7] = 2;
+        t = nb;
+        base[t++] = 0xC0;
+        base[t++] = 0x0C;
+        base[t++] = 0;
+        base[t++] = 5;
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 50;
+        base[t++] = 0;
+        base[t++] = (unsigned char)sizeof(wt);
+        for (i = 0; i < (int)sizeof(wt); i++) base[t++] = wt[i];
+        for (i = 0; i < (int)sizeof(wo); i++) base[t++] = wo[i];
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 60;
+        base[t++] = 0;
+        base[t++] = 4;
+        base[t++] = 192;
+        base[t++] = 0;
+        base[t++] = 2;
+        base[t++] = 99;
+        for (i = 0; i < 256; i++) cnom[i] = 0;
+        rc = -9;
+        k = u_dns_leer2(base, t, 0x1234, preg, npreg, ips, ttls, 8,
+                        &rc, cnom, (int)sizeof(cnom), &cttl);
+        ok(k == 0 && rc == 0 && cnom[0] == 'f', "dns-cname-ajeno");
+    }
+    /* CNAME + A del destino: el A cuenta. */
+    {
+        int t;
+        unsigned char wt[] = { 5, 'f', 'i', 'n', 'a', 'l', 4, 't',
+                               'e', 's', 't', 0 };
+        unsigned char base[600];
+        int nb = dns_resp(base, 0x1234, 0x8180, 0, 0, 0);
+        base[7] = 2;
+        t = nb;
+        base[t++] = 0xC0;
+        base[t++] = 0x0C;
+        base[t++] = 0;
+        base[t++] = 5;
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 50;
+        base[t++] = 0;
+        base[t++] = (unsigned char)sizeof(wt);
+        for (i = 0; i < (int)sizeof(wt); i++) base[t++] = wt[i];
+        for (i = 0; i < (int)sizeof(wt); i++) base[t++] = wt[i];
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 60;
+        base[t++] = 0;
+        base[t++] = 4;
+        base[t++] = 192;
+        base[t++] = 0;
+        base[t++] = 2;
+        base[t++] = 10;
+        for (i = 0; i < 256; i++) cnom[i] = 0;
+        rc = -9;
+        k = u_dns_leer2(base, t, 0x1234, preg, npreg, ips, ttls, 8,
+                        &rc, cnom, (int)sizeof(cnom), &cttl);
+        ok(k == 1 && ips[0] == ipf && rc == 0, "dns-cname-mas-a");
+    }
+    /* Z reservado: se rechaza. */
+    {
+        unsigned int una[1];
+        una[0] = ip1;
+        nresp = dns_resp(resp, 0x1234, 0x8180, 1, una, 1);
+        resp[3] |= 0x70;
+        ok(u_dns_leer2(resp, nresp, 0x1234, preg, npreg, ips, ttls,
+                       8, &rc, 0, 0, 0) == -1, "dns-z-reservado");
+    }
+    /* Basura final: se rechaza. */
+    {
+        unsigned int una[1];
+        una[0] = ip1;
+        nresp = dns_resp(resp, 0x1234, 0x8180, 1, una, 1);
+        resp[nresp] = 0xAA;
+        ok(u_dns_leer2(resp, nresp + 1, 0x1234, preg, npreg, ips,
+                       ttls, 8, &rc, 0, 0, 0) == -1,
+           "dns-basura-final");
+    }
+    /* Puntero a la cabecera: se rechaza. */
+    {
+        unsigned int una[1];
+        una[0] = ip1;
+        nresp = dns_resp(resp, 0x1234, 0x8180, 1, una, 1);
+        resp[29] = 0xC0;
+        resp[30] = 0x04;
+        ok(u_dns_leer2(resp, nresp, 0x1234, preg, npreg, ips, ttls,
+                       8, &rc, 0, 0, 0) == -1,
+           "dns-puntero-cabecera");
+    }
+    /* RDLEN mas alla del mensaje: se rechaza. */
+    {
+        unsigned int una[1];
+        una[0] = ip1;
+        nresp = dns_resp(resp, 0x1234, 0x8180, 1, una, 1);
+        resp[nresp - 6] = 0;
+        resp[nresp - 5] = 8;
+        ok(u_dns_leer2(resp, nresp, 0x1234, preg, npreg, ips, ttls,
+                       8, &rc, 0, 0, 0) == -1,
+           "dns-rdlen-largo");
+    }
+    /* Tipo desconocido se salta; el A posterior cuenta. */
+    {
+        unsigned int una[1];
+        int t;
+        unsigned char base[600];
+        int nb = dns_resp(base, 0x1234, 0x8180, 0, 0, 0);
+        una[0] = ipo;
+        base[7] = 2;
+        t = nb;
+        base[t++] = 0xC0;
+        base[t++] = 0x0C;
+        base[t++] = 0;
+        base[t++] = 99;
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 10;
+        base[t++] = 0;
+        base[t++] = 3;
+        base[t++] = 'a';
+        base[t++] = 'b';
+        base[t++] = 'c';
+        base[t++] = 0xC0;
+        base[t++] = 0x0C;
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 70;
+        base[t++] = 0;
+        base[t++] = 4;
+        base[t++] = 192;
+        base[t++] = 0;
+        base[t++] = 2;
+        base[t++] = 20;
+        rc = -9;
+        k = u_dns_leer2(base, t, 0x1234, preg, npreg, ips, ttls, 8,
+                        &rc, 0, 0, 0);
+        ok(k == 1 && ips[0] == ipo && rc == 0, "dns-tipo-raro");
+        (void)cn;
+    }
+    /* CNAME en bucle: se ignora sin colgar. */
+    {
+        int t;
+        unsigned char base[600];
+        int nb = dns_resp(base, 0x1234, 0x8180, 0, 0, 0);
+        base[7] = 1;
+        t = nb;
+        base[t++] = 0xC0;
+        base[t++] = 0x0C;
+        base[t++] = 0;
+        base[t++] = 5;
+        base[t++] = 0;
+        base[t++] = 1;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 0;
+        base[t++] = 60;
+        base[t++] = 0;
+        base[t++] = 2;
+        base[t++] = 0xC0;
+        base[t++] = (unsigned char)(nb + 4);
+        for (i = 0; i < 256; i++) cnom[i] = 0;
+        rc = -9;
+        k = u_dns_leer2(base, t, 0x1234, preg, npreg, ips, ttls, 8,
+                        &rc, cnom, (int)sizeof(cnom), &cttl);
+        ok(k == 0 && rc == 0 && cnom[0] == 0, "dns-cname-bucle");
+    }
+    /* Cache: predicado puro incl. wraparound. */
+    ok(u_dns_cache_viva(1000, 60, 1000) == 1, "dns-cache-viva-ahora");
+    ok(u_dns_cache_viva(1000, 60, 1000 + 5999) == 1,
+       "dns-cache-viva-borde");
+    ok(u_dns_cache_viva(1000, 60, 1000 + 6000) == 0,
+       "dns-cache-caduca");
+    ok(u_dns_cache_viva(1000, 0, 1000) == 0, "dns-cache-ttl-cero");
+    ok(u_dns_cache_viva(0xFFFFFF00u, 60, 0x00000100u) == 1,
+       "dns-cache-wrap-viva");
+    ok(u_dns_cache_viva(0xFFFFFF00u, 60, 0x00100000u) == 0,
+       "dns-cache-wrap-muerta");
+    u_dns_cache_limpiar();
+    ok(u_dns_cache_n() == 0, "dns-cache-limpia");
+}
+
 int main(void) {
     int r, i, n;
     int hallada = 0;
     prueba_dns_parser();   /* sin red: codec determinista */
     prueba_dhcp_tiempo();  /* F6-B D1: vectores big-endian */
+    prueba_dns_f6d();        /* F6-D: sin red */
     u_print("t_red F1: interfaz...\n");
     for (i = 0; i < 32; i++) ((unsigned char *)&rif)[i] = 0;
     r = u_red_interfaz(&rif);
@@ -566,6 +840,126 @@ int main(void) {
             ok(u_red_udp_enviar(&e, q, 2000) == -2, "udp-enviar-largo");
             e.dpuerto = 0;
             ok(u_red_udp_enviar(&e, q, 10) == -2, "udp-enviar-sin-puerto");
+        }
+
+        /* F6-D: resolucion contra stub controlado (10.0.2.2:5353;
+           ver tools/dns_stub.py). Sin dependencia de DNS publico. */
+        {
+            unsigned int stub = 10 | (0 << 8) | (2 << 16) | (2 << 24);
+            unsigned int ip10 = 192 | (0 << 8) | (2 << 16) | (10 << 24);
+            unsigned int ip20 = 192 | (0 << 8) | (2 << 16) | (20 << 24);
+            unsigned int ip30 = 192 | (0 << 8) | (2 << 16) | (30 << 24);
+            unsigned int ip40 = 192 | (0 << 8) | (2 << 16) | (40 << 24);
+            unsigned int ip60 = 192 | (0 << 8) | (2 << 16) | (60 << 24);
+            unsigned int ip70 = 192 | (0 << 8) | (2 << 16) | (70 << 24);
+            unsigned int ip99 = 192 | (0 << 8) | (2 << 16) | (99 << 24);
+            u_dns_res_t r;
+            int k;
+            u_dns_cache_limpiar();
+            k = u_dns_resuelve3("directo.test", stub, 5353, &r,
+                                15000);
+            ok(k == 0 && r.ip == ip10 && r.de_cache == 0 &&
+               r.ttl == 300 && r.via_tcp == 0, "dns-stub-directo");
+            k = u_dns_resuelve3("directo.test", stub, 5353, &r,
+                                15000);
+            ok(k == 0 && r.ip == ip10 && r.de_cache == 1,
+               "dns-stub-cache-hit");
+            k = u_dns_resuelve3("alias-full.test", stub, 5353, &r,
+                                15000);
+            ok(k == 0 && r.ip == ip20 && r.saltos == 0 &&
+               r.cname[0] == 'm', "dns-stub-alias-full");
+            k = u_dns_resuelve3("alias1.test", stub, 5353, &r,
+                                15000);
+            ok(k == 0 && r.ip == ip30 && r.saltos == 2,
+               "dns-stub-alias-cadena");
+            {
+                const char *es = "alias1.test -> alias2.test -> "
+                                 "alias3.test";
+                int j = 0, ig = 1;
+                while (es[j] && r.cname[j]) {
+                    if (es[j] != r.cname[j]) {
+                        ig = 0;
+                        break;
+                    }
+                    j++;
+                }
+                if (es[j] || r.cname[j]) ig = 0;
+                ok(ig, "dns-stub-cadena-texto");
+            }
+            k = u_dns_resuelve3("loop.test", stub, 5353, &r, 15000);
+            ok(k == -7, "dns-stub-ciclo");
+            k = u_dns_resuelve3("c1.test", stub, 5353, &r, 20000);
+            ok(k == 0 && r.ip == ip40 && r.saltos == 8,
+               "dns-stub-8-saltos");
+            k = u_dns_resuelve3("d1.test", stub, 5353, &r, 25000);
+            ok(k == -7, "dns-stub-9-saltos");
+            k = u_dns_resuelve3("nx.test", stub, 5353, &r, 15000);
+            ok(k == -3 && r.rc == 3, "dns-stub-nxdomain");
+            k = u_dns_resuelve3("nodata.test", stub, 5353, &r,
+                                15000);
+            ok(k == -8, "dns-stub-nodata");
+            k = u_dns_resuelve3("srvfail.test", stub, 5353, &r,
+                                15000);
+            ok(k == -4 && r.rcode == 2, "dns-stub-servfail");
+            k = u_dns_resuelve3("refused.test", stub, 5353, &r,
+                                15000);
+            ok(k == -4 && r.rcode == 5, "dns-stub-refused");
+            k = u_dns_resuelve3("tc.test", stub, 5353, &r, 20000);
+            ok(k == 0 && r.ip == ip60 && r.via_tcp == 1,
+               "dns-stub-tc-tcp");
+            k = u_dns_resuelve3("multi.test", stub, 5353, &r,
+                                15000);
+            ok(k == 0 && r.nrec == 3 && r.ip == ip70,
+               "dns-stub-multi");
+            k = u_dns_resuelve3("ttl0.test", stub, 5353, &r, 15000);
+            ok(k == 0 && r.ttl == 0, "dns-stub-ttl0");
+            k = u_dns_resuelve3("ttl0.test", stub, 5353, &r, 15000);
+            ok(k == 0 && r.de_cache == 0, "dns-stub-ttl0-nocache");
+            k = u_dns_resuelve3("ttlbig.test", stub, 5353, &r,
+                                15000);
+            ok(k == 0 && r.ttl == 86400, "dns-stub-ttl-tope");
+            k = u_dns_resuelve3("nada.test", stub, 5399, &r, 3000);
+            ok(k == -5, "dns-stub-timeout");
+            k = u_dns_resuelve3("directo.test", stub, 5354, &r,
+                                15000);
+            ok(k == 0 && r.ip == ip99 && r.de_cache == 0,
+               "dns-stub-otro-srv");
+            k = u_dns_resuelve3("directo.test", stub, 5353, &r,
+                                15000);
+            ok(k == 0 && r.ip == ip10 && r.de_cache == 1,
+               "dns-stub-srv-cache");
+            u_dns_cache_limpiar();
+            {
+                int j, bien = 1;
+                for (j = 1; j <= 33; j++) {
+                    char nm[16];
+                    int t = 0, q2;
+                    const char *p1 = "gen";
+                    char nb[12];
+                    while (p1[t]) {
+                        nm[t] = p1[t];
+                        t++;
+                    }
+                    u_utoa((unsigned int)j, nb, 10);
+                    q2 = 0;
+                    while (nb[q2] && t < 10) nm[t++] = nb[q2++];
+                    nm[t++] = '.';
+                    nm[t++] = 't';
+                    nm[t++] = 'e';
+                    nm[t++] = 's';
+                    nm[t++] = 't';
+                    nm[t] = 0;
+                    k = u_dns_resuelve3(nm, stub, 5353, &r, 15000);
+                    if (k != 0 || r.de_cache != 0) bien = 0;
+                }
+                ok(bien, "dns-stub-33-miss");
+            }
+            ok(u_dns_cache_n() == 32, "dns-cache-llena");
+            k = u_dns_resuelve3("gen1.test", stub, 5353, &r, 15000);
+            ok(k == 0 && r.de_cache == 0, "dns-stub-desalojo");
+            k = u_dns_resuelve3("gen33.test", stub, 5353, &r,
+                                15000);
+            ok(k == 0 && r.de_cache == 1, "dns-stub-conserva");
         }
 
         /* F5: TCP vivo (par en anfitrion; ver tools/tcp_par.py). */

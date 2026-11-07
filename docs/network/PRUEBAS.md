@@ -154,3 +154,29 @@ F6-C P1 (misma ISO reconstruida con correcciones; sin cambio ABI):
   (`concesion (s): 86400`; renovar re-oferta; liberar limpia).
 - Regresion v2.2 verde (t1_lib 258/0, tutf8 26/0, mem32 15/0) y
   `funcion.f32` sigue pendiente de ejecucion en vivo.
+
+F6-D (misma ISO reconstruida; sin cambio ABI/syscalls):
+- `t_red` sin red 52/0: parser (CNAME solo/nombre/compat/
+  ajeno/mas-A, Z, basura final, puntero a cabecera, RDLEN,
+  tipo desconocido, bucle CNAME) + cache (viva/borde/caduca/
+  ttl-cero/wrap-viva/wrap-muerta/limpia).
+- `t_red` vivo 152 pruebas 1 fallo (solo `rx-arp-puerta`
+  flaky): 34 nuevas DNS con stub controlado (10.0.2.2:5353
+  UDP+TCP, `tools/dns_stub.py`): directo+hit, alias-full,
+  cadena (texto verificado), ciclo, 8 saltos ok, 9 saltos
+  fallo, NXDOMAIN, NODATA, SERVFAIL, REFUSED, TC->TCP,
+  multi, ttl0(+nocache), ttl-tope 86400, timeout, otro
+  servidor, cache-servidor, 33 miss, llena (32), desalojo,
+  conserva. F1-F6-C intacto (TCP poll/tupla en verde).
+- `consultar_dns example.com|google.com` en vivo: IP, TTL,
+  origen red, transporte UDP, tiempo; NXDOMAIN con nombre
+  inventado. `dns: alias:`/`Cadena:`/`Origen:`/`Transporte:`
+  en salida y `/dnssal.txt` (volcado VGA, no serie).
+- pcap `f6dfinal.pcap`: 138 intercambios UDP con 5353 y
+  10 TCP a 5353 (fallback incl. prefijo BE16); resto TCP
+  como en F6-C.
+- Regresion v2.2 verde (258/0, 26/0, 15/0).
+- Nota: 2 fallos transitorios de `tcp-tupla-reuso` en dos
+  pasadas con procesos huerfanos del anfitrion (binds en
+  conflicto tras limpieza fallida) y slirp cargado; verde
+  en pasada limpia con dt=701 y gracia -6 registradas.

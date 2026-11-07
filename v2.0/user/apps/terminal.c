@@ -2116,7 +2116,9 @@ static void op_mostrar_dns(const cmd_t *c) {
     }
     if (cfg.dns) pon_ip("Servidor DNS", cfg.dns);
     else pon("Sin servidor DNS (DHCP o configurar_ip dns).");
-    pon("Sin cache en F4: cada consulta pregunta al servidor.");
+    pon("Cache DNS F6-D: 32 entradas por proceso con TTL (tope 1 dia,");
+    pon("TTL 0 no se guarda); CNAME hasta 8 saltos; TCP si TC=1.");
+    pon("Ver /dnssal.txt tras consultar_dns (origen y transporte).");
 }
 
 static int termina_en_f32(const char *r) {

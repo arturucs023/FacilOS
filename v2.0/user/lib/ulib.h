@@ -306,5 +306,45 @@ int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
                const unsigned char *preg, int npreg,
                unsigned int *ips, unsigned int *ttls, int maxips,
                int *rcode);
+/* F6-D: lectura ampliada. Ademas de lo de u_dns_leer: valida que
+   los A pertenezcan a la pregunta o a la cadena CNAME del mismo
+   mensaje; si hay CNAME y ningun A, expande el primer destino a
+   cname (texto con puntos, "" si directo) y su TTL minimo a
+   *cttl. cname/cnmax y cttl pueden ser NULL/0 (equivale a leer).
+   u_dns_leer es un envoltorio con cname=0. */
+int u_dns_leer2(const unsigned char *m, int n, unsigned short xid,
+                const unsigned char *preg, int npreg,
+                unsigned int *ips, unsigned int *ttls, int maxips,
+                int *rcode, char *cname, int cnmax,
+                unsigned int *cttl);
+/* F6-D: resolucion completa Ring3 (cache + UDP + CNAME + TCP).
+   dom: nombre; servidor 0 = configurado, puerto 0 = 53.
+   espera_ms 0 = 30000 (tope 60000). Rellena r y devuelve:
+   0 ok, -1 args, -2 nombre invalido, -3 NXDOMAIN, -4 error DNS
+   (r->rcode), -5 timeout/red, -6 TCP fallo, -7 ciclo/profundidad,
+   -8 NODATA. r->ip/ttl validos solo con 0; r->cname cadena de
+   alias ("" si directo); r->de_cache/via_tcp informativos. */
+typedef struct {
+    unsigned int ip;
+    unsigned int ttl;
+    int rc;
+    int rcode;
+    int nrec;
+    int saltos;
+    int via_tcp;
+    int de_cache;
+    char cname[256];
+} u_dns_res_t;
+int u_dns_resuelve3(const char *dom, unsigned int servidor,
+                    unsigned short puerto, u_dns_res_t *r,
+                    unsigned int espera_ms);
+int u_dns_resuelve(const char *dom, unsigned int servidor,
+                   unsigned int *ip, unsigned int *ttl);
+/* F6-D: cache (por proceso). n = entradas validas; limpiar la
+   vacia. cache_viva es el predicado puro (para pruebas). */
+void u_dns_cache_limpiar(void);
+int u_dns_cache_n(void);
+int u_dns_cache_viva(unsigned int ins, unsigned int ttl,
+                     unsigned int ahora);
 
 #endif

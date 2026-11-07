@@ -1,4 +1,4 @@
-# Limitaciones conocidas (F1+F2+F3+F4+F5+F6-B+F6-C)
+# Limitaciones conocidas (F1+F2+F3+F4+F5+F6-B+F6-C+F6-D)
 
 - Red `user` de QEMU es NAT 10.0.2.0/24: sin entrada sin `hostfwd`,
   sin promiscuo externo. DNS lo da slirp (10.0.2.3); el eco ICMP
@@ -7,9 +7,15 @@
 - UDP: carga encolable 512 B, TTL 64 fijo, 4 ligas x cola 4,
   tabla llena desaloja la vacia mas antigua (-6 si todas tienen
   pendientes); sin broadcast dirigido ni fragmentacion.
-- DNS solo A/IN sobre UDP (sin TCP: respuestas >512 darian
-  timeout); sin persecucion CNAME; sin cache (cada consulta
-  pregunta al servidor); una pregunta por consulta.
+- DNS: A/IN solo IPv4; CNAME hasta 8 saltos; nombres
+  cacheables <=127 (mas largos resuelven sin cache); TTL tope
+  1 dia, TTL 0 no cachea; sin negativos (NXDOMAIN no se
+  guarda); sin DNSSEC/DoT/DoH/mDNS/PTR; respuestas UDP >512
+  solo via TCP (maximo operativo 4096); una pregunta por
+  consulta; `guion` en borde y `_` se rechazan al armar
+  (conservador F4); eco de pregunta exacto (fail-closed).
+  Cache por proceso (muere con el); servidor/puerto forman
+  parte de la clave.
 - ICMP solo eco (sin unreachable/time-exceeded ni reenvio; F6+).
   Contadores basales del KAT: `ICMP errores`=1, `UDP recibidos`
   =10 nada mas arrancar.

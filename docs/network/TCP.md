@@ -115,7 +115,9 @@ D13 poll<=1 tick, D14 sin FIN con hueco, D15 cuarentena y
 reuso, reloj en bombea). Captura Tx en RAM.
 
 Syscall unica 61 op-multiplexada; la 62 queda reservada.
-Ring3: `u_tcp_*` en `ulib`. Sin cambios ABI en F6-C.
+Ring3: `u_tcp_*` en `ulib` (F6-D: el fallback DNS-sobre-TCP
+abre una conexion por consulta truncada y la aborta tras la
+respuesta; sin TCB colgados). Sin cambios ABI en F6-C.
 
 Demostrado con QEMU user-net + par Python: lo de F5 mas
 poll-0 inmediato, cuarentena (-6 y reuso tras 7 s),

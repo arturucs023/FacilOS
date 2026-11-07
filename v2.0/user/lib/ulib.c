@@ -754,6 +754,7 @@ static int dns_salta(const unsigned char *m, int n, int o, int *sig) {
             if (o + 1 >= n) return -1;
             d = ((c & 0x3Fu) << 8) | m[o + 1];
             if (d >= n) return -1;
+            if (d < 12) return -1;   /* F6-D: jamas a la cabecera */
             if (fin < 0) fin = o + 2;
             o = d;
             if (++saltos > 16) return -1;
@@ -769,15 +770,65 @@ static int dns_salta(const unsigned char *m, int n, int o, int *sig) {
     }
 }
 
+/* Expande un nombre a texto con puntos (minusculas). Devuelve
+   longitud (>0) o -1. Nunca escribe mas de smax-1 + NUL. */
+static int dns_expande(const unsigned char *m, int n, int o,
+                       char *sal, int smax) {
+    int saltos = 0, t = 0, primero = 1;
+    for (;;) {
+        unsigned char c;
+        int k;
+        if (o < 0 || o >= n) return -1;
+        c = m[o];
+        if ((c & 0xC0) == 0xC0) {
+            int d;
+            if (o + 1 >= n) return -1;
+            d = ((c & 0x3Fu) << 8) | m[o + 1];
+            if (d >= n || d < 12) return -1;
+            o = d;
+            if (++saltos > 16) return -1;
+            continue;
+        }
+        if (c & 0xC0) return -1;
+        if (!c) break;
+        if (c > 63 || o + 1 + c > n) return -1;
+        if (!primero) {
+            if (t + 1 >= smax) return -1;
+            sal[t++] = '.';
+        }
+        primero = 0;
+        for (k = 0; k < c; k++) {
+            unsigned char ch = m[o + 1 + k];
+            if (t + 1 >= smax) return -1;
+            sal[t++] = (char)((ch >= 'A' && ch <= 'Z') ? ch + 32 : ch);
+        }
+        o += 1 + c;
+    }
+    if (!t || t + 1 > smax) return -1;
+    sal[t] = 0;
+    return t;
+}
+
 /* Lee respuesta DNS. Compara xid y la pregunta con la enviada
    (preg/npreg). Extrae hasta maxips A en ips[] con ttls[].
-   *rcode = codigo (0..5, -1 si ni cabecera). Devuelve #A o
-   negativo (-1 malformada, -2 no es nuestra, -4 truncada TC). */
-int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
-               const unsigned char *preg, int npreg,
-               unsigned int *ips, unsigned int *ttls, int maxips,
-               int *rcode) {
-    int band, qd, an, ns, ar, o, qfin, i, hall = 0;
+   *rcode = codigo (0..15, -1 si ni cabecera). Solo cuenta los A
+   cuyo NAME es la pregunta o un destino CNAME del mismo mensaje.
+   Si hay CNAME y ningun A valido, expande el primer destino a
+   cname ("" si directo) y su TTL minimo a *cttl.
+   Devuelve #A o negativo (-1 malformada, -2 no es nuestra,
+   -4 truncada TC). */
+static char dc_cn[8][256];   /* F6-D: destinos CNAME del mensaje */
+int u_dns_leer2(const unsigned char *m, int n, unsigned short xid,
+                const unsigned char *preg, int npreg,
+                unsigned int *ips, unsigned int *ttls, int maxips,
+                int *rcode, char *cname, int cnmax,
+                unsigned int *cttl) {
+    int band, qd, an, ns, ar, o, qfin, i, hall = 0, ncn = 0;
+    char qnom[256];
+    unsigned int cn_ttl = 0;
+    int k;
+    if (cname && cnmax > 0) cname[0] = 0;
+    if (cttl) *cttl = 0;
     if (rcode) *rcode = -1;
     if (!m || n < 12 || !preg || npreg < 12 + 1 + 4 || !ips ||
         maxips < 1)
@@ -786,8 +837,9 @@ int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
     band = (m[2] << 8) | m[3];
     if (!(band & 0x8000)) return -1;     /* debe ser respuesta */
     if ((band & 0x7800)) return -1;      /* opcode 0 */
+    if ((band & 0x0070)) return -1;      /* F6-D: Z debe ser 0 */
     if (rcode) *rcode = band & 15;
-    if (band & 0x0200) return -4;        /* truncada (sin TCP) */
+    if (band & 0x0200) return -4;        /* truncada (TCP aparte) */
     qd = (m[4] << 8) | m[5];
     an = (m[6] << 8) | m[7];
     ns = (m[8] << 8) | m[9];
@@ -797,15 +849,49 @@ int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
     if (qfin + 4 > n) return -1;
     /* La pregunta debe ser eco exacto de la enviada (nombre+tipo+clase). */
     if (qfin + 4 - 12 != npreg - 12) return -2;
-    {
-        int k;
-        for (k = 0; k + 12 < npreg; k++)
-            if (m[12 + k] != preg[12 + k]) return -2;
-    }
+    for (k = 0; k + 12 < npreg; k++)
+        if (m[12 + k] != preg[12 + k]) return -2;
+    if (dns_expande(m, n, 12, qnom, (int)sizeof(qnom)) < 0)
+        return -1;
     o = qfin + 4;
+    /* Pasada 1: destinos CNAME (hasta 8; el resto solo se enmarca). */
+    {
+        int p = o, j;
+        for (j = 0; j < an; j++) {
+            int tipo, clase, rdlen, sig;
+            unsigned int ttl;
+            if (dns_salta(m, n, p, &p)) return -1;
+            if (p + 10 > n) return -1;
+            tipo = (m[p] << 8) | m[p + 1];
+            clase = (m[p + 2] << 8) | m[p + 3];
+            ttl = ((unsigned int)m[p + 4] << 24) |
+                  ((unsigned int)m[p + 5] << 16) |
+                  ((unsigned int)m[p + 6] << 8) | m[p + 7];
+            rdlen = (m[p + 8] << 8) | m[p + 9];
+            p += 10;
+            if (p + rdlen > n) return -1;
+            if (tipo == 5 && clase == 1 && ncn < 8) {
+                char tgt[256];
+                if (!dns_salta(m, n, p, &sig) && sig <= p + rdlen &&
+                    dns_expande(m, n, p, tgt,
+                                (int)sizeof(tgt)) > 0) {
+                    int q;
+                    for (q = 0; tgt[q] && q < 255; q++)
+                        dc_cn[ncn][q] = tgt[q];
+                    dc_cn[ncn][q] = 0;
+                    if (!cn_ttl || ttl < cn_ttl) cn_ttl = ttl;
+                    ncn++;
+                }
+            }
+            p += rdlen;
+        }
+    }
+    /* Pasada 2: A cuyo NAME es la pregunta o un destino CNAME. */
     for (i = 0; i < an; i++) {
-        int tipo, clase, rdlen;
+        int tipo, clase, rdlen, onom = o;
         unsigned int ttl;
+        char tnom[256];
+        int j, vale = 0;
         if (dns_salta(m, n, o, &o)) return -1;
         if (o + 10 > n) return -1;
         tipo = (m[o] << 8) | m[o + 1];
@@ -817,7 +903,19 @@ int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
         o += 10;
         if (o + rdlen > n) return -1;
         if (tipo == 1 && clase == 1 && rdlen == 4) {
-            if (hall < maxips) {
+            if (dns_expande(m, n, onom, tnom,
+                            (int)sizeof(tnom)) > 0) {
+                if (!u_strcmp(tnom, qnom)) vale = 1;
+                else {
+                    for (j = 0; j < ncn; j++) {
+                        if (!u_strcmp(tnom, dc_cn[j])) {
+                            vale = 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (vale && hall < maxips) {
                 ips[hall] = (unsigned int)m[o] |
                             ((unsigned int)m[o + 1] << 8) |
                             ((unsigned int)m[o + 2] << 16) |
@@ -837,8 +935,462 @@ int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
         if (o + rdlen > n) return -1;
         o += rdlen;
     }
-    if (o > n) return -1;
+    if (o != n) return -1;   /* F6-D: sin basura final */
+    if (ncn && cname && cnmax > 0) {
+        int q;
+        for (q = 0; dc_cn[0][q] && q + 1 < cnmax; q++)
+            cname[q] = dc_cn[0][q];
+        cname[q] = 0;
+    }
+    if (cttl) *cttl = cn_ttl;
     return hall;
+}
+
+int u_dns_leer(const unsigned char *m, int n, unsigned short xid,
+               const unsigned char *preg, int npreg,
+               unsigned int *ips, unsigned int *ttls, int maxips,
+               int *rcode) {
+    return u_dns_leer2(m, n, xid, preg, npreg, ips, ttls, maxips,
+                       rcode, 0, 0, 0);
+}
+
+/* ---- F6-D: cache + resolucion completa (Ring3) ---- */
+
+#define DNS_CMAX 32          /* entradas */
+#define DNS_CNAM 128         /* nombre cacheable (mas largo: sin cache) */
+#define DNS_TTL_MAX 86400u   /* tope de TTL almacenable (1 dia) */
+#define DNS_TCP_MAX 4096     /* mensaje DNS/TCP maximo operativo */
+#define DNS_SALTOS 8         /* CNAME seguidos como maximo */
+
+static struct {
+    char nom[DNS_CNAM];
+    unsigned int ip[8];
+    int n;
+    unsigned int ttl;    /* segundos efectivos */
+    unsigned int ins;    /* tick de insercion */
+    unsigned int srv;
+    unsigned short pto;
+    int valido;
+} dc_cache[DNS_CMAX];
+static unsigned int dc_vict = 0;
+
+static unsigned int dns_ahora(void) {
+    int t = u_ticks();
+    return t < 0 ? 0u : (unsigned int)t;
+}
+
+/* Predicado puro (testeable): entrada valida en el instante dado. */
+int u_dns_cache_viva(unsigned int ins, unsigned int ttl,
+                     unsigned int ahora) {
+    int d;
+    if (!ttl || ttl > DNS_TTL_MAX) return 0;
+    d = (int)(ahora - ins);
+    if (d < 0) return 0;
+    return (unsigned int)d < ttl * 100u;
+}
+
+static void dns_min(char *d, const char *s) {
+    int i = 0;
+    while (s[i] && i + 1 < DNS_CNAM) {
+        char c = s[i];
+        d[i++] = (char)((c >= 'A' && c <= 'Z') ? c + 32 : c);
+    }
+    d[i] = 0;
+}
+
+static int dns_cache_halla(const char *nom, unsigned int srv,
+                           unsigned short pto, unsigned int *ip,
+                           int *n, unsigned int *ttl) {
+    char k[DNS_CNAM];
+    unsigned int ahora = dns_ahora();
+    int i, l = u_strlen(nom);
+    if (l < 1 || l >= DNS_CNAM) return 0;
+    dns_min(k, nom);
+    for (i = 0; i < DNS_CMAX; i++) {
+        if (!dc_cache[i].valido) continue;
+        if (dc_cache[i].srv != srv || dc_cache[i].pto != pto)
+            continue;
+        if (u_strcmp(dc_cache[i].nom, k)) continue;
+        if (!u_dns_cache_viva(dc_cache[i].ins, dc_cache[i].ttl,
+                              ahora)) {
+            dc_cache[i].valido = 0;
+            continue;
+        }
+        for (l = 0; l < dc_cache[i].n && l < 8; l++)
+            ip[l] = dc_cache[i].ip[l];
+        *n = dc_cache[i].n;
+        *ttl = dc_cache[i].ttl;
+        return 1;
+    }
+    return 0;
+}
+
+static void dns_cache_pon(const char *nom, unsigned int srv,
+                          unsigned short pto, const unsigned int *ip,
+                          int n, unsigned int ttl) {
+    char k[DNS_CNAM];
+    unsigned int ahora = dns_ahora();
+    int i, v = -1, l;
+    if (!ttl) return;   /* TTL 0: no cacheable */
+    if (ttl > DNS_TTL_MAX) ttl = DNS_TTL_MAX;
+    if (u_strlen(nom) < 1 || u_strlen(nom) >= DNS_CNAM) return;
+    if (n < 1) return;
+    if (n > 8) n = 8;
+    dns_min(k, nom);
+    for (i = 0; i < DNS_CMAX; i++) {
+        if (!dc_cache[i].valido) {
+            v = i;
+            break;
+        }
+    }
+    if (v < 0) {
+        for (i = 0; i < DNS_CMAX; i++) {
+            if (!u_dns_cache_viva(dc_cache[i].ins, dc_cache[i].ttl,
+                                  ahora)) {
+                dc_cache[i].valido = 0;
+                v = i;
+                break;
+            }
+        }
+    }
+    if (v < 0) {
+        v = (int)(dc_vict % DNS_CMAX);
+        dc_vict++;
+    }
+    for (l = 0; k[l]; l++) dc_cache[v].nom[l] = k[l];
+    dc_cache[v].nom[l] = 0;
+    for (l = 0; l < n; l++) dc_cache[v].ip[l] = ip[l];
+    dc_cache[v].n = n;
+    dc_cache[v].ttl = ttl;
+    dc_cache[v].ins = ahora;
+    dc_cache[v].srv = srv;
+    dc_cache[v].pto = pto;
+    dc_cache[v].valido = 1;
+}
+
+void u_dns_cache_limpiar(void) {
+    int i;
+    for (i = 0; i < DNS_CMAX; i++) dc_cache[i].valido = 0;
+    dc_vict = 0;
+}
+
+int u_dns_cache_n(void) {
+    unsigned int ahora = dns_ahora();
+    int i, c = 0;
+    for (i = 0; i < DNS_CMAX; i++) {
+        if (!dc_cache[i].valido) continue;
+        if (!u_dns_cache_viva(dc_cache[i].ins, dc_cache[i].ttl,
+                              ahora)) {
+            dc_cache[i].valido = 0;
+            continue;
+        }
+        c++;
+    }
+    return c;
+}
+
+/* Intercambio DNS sobre TCP (prefijo BE16, lecturas parciales).
+   Devuelve long del mensaje o negativo. Libera el TCB siempre. */
+static unsigned char dns_tm[DNS_TCP_MAX];
+static int dns_tcp_xchg(unsigned int srv, unsigned short pto,
+                        const unsigned char *q, int qlen,
+                        unsigned int fin) {
+    unsigned char pre[2 + 300];
+    int id, got = 0, len, r;
+    if (qlen < 12 || qlen > 300) return -1;
+    id = u_tcp_abrir(srv, pto, 0);
+    if (id <= 0) return -1;
+    pre[0] = (unsigned char)((qlen >> 8) & 0xFFu);
+    pre[1] = (unsigned char)(qlen & 0xFFu);
+    {
+        int k;
+        for (k = 0; k < qlen; k++) pre[2 + k] = q[k];
+    }
+    /* La consulta cabe en un segmento (<=302 B); enviar es atomico. */
+    r = u_tcp_enviar(id, pre, 2 + qlen);
+    if (r != 2 + qlen) {
+        u_tcp_abortar(id);
+        return -1;
+    }
+    {
+        unsigned char lp[2];
+        int g = 0;
+        while (g < 2) {
+            if ((int)(dns_ahora() - fin) >= 0) {
+                u_tcp_abortar(id);
+                return -1;
+            }
+            r = u_tcp_recibir(id, lp + g, 2 - g, 500);
+            if (r < 0) {
+                u_tcp_abortar(id);
+                return -1;
+            }
+            if (!r) continue;
+            g += r;
+        }
+        len = (lp[0] << 8) | lp[1];
+    }
+    if (len < 12 || len > DNS_TCP_MAX) {
+        u_tcp_abortar(id);
+        return -1;
+    }
+    while (got < len) {
+        int mx = len - got;
+        if (mx > 2048) mx = 2048;
+        if ((int)(dns_ahora() - fin) >= 0) {
+            u_tcp_abortar(id);
+            return -1;
+        }
+        r = u_tcp_recibir(id, dns_tm + got, mx, 500);
+        if (r < 0) {
+            u_tcp_abortar(id);
+            return -1;
+        }
+        if (!r) continue;
+        got += r;
+    }
+    u_tcp_abortar(id);   /* request/response: RST tras lo completo */
+    return len;
+}
+
+/* Resolucion completa: cache + UDP (3 intentos) + CNAME (<=8) +
+   TCP si TC. Sin recursion; todo acotado. */
+static int dns_sport = 0;   /* F6-D: una liga por proceso */
+static unsigned char dns_q[300];
+static unsigned char dns_ru[8 + 512];
+static char dns_vis[DNS_SALTOS][256];
+
+int u_dns_resuelve3(const char *dom, unsigned int servidor,
+                    unsigned short puerto, u_dns_res_t *r,
+                    unsigned int espera_ms) {
+    char actual[256];
+    unsigned int fin, srv = servidor, eff = 0xFFFFFFFFu;
+    unsigned short pto = puerto;
+    int i, q, nv = 0, saltos = 0, via_tcp = 0;
+    red_cfg_t cfg;
+    if (!dom || !r) return -1;
+    if (!puerto) pto = 53;
+    if (!espera_ms) espera_ms = 30000;
+    if (espera_ms > 60000) espera_ms = 60000;
+    if (!srv) {
+        int j;
+        for (j = 0; j < 16; j++) ((unsigned char *)&cfg)[j] = 0;
+        if (u_red_configurar_leer(&cfg)) return -5;
+        if (!cfg.dns) return -5;
+        srv = cfg.dns;
+    }
+    for (i = 0; dom[i] && i < 255; i++) actual[i] = dom[i];
+    actual[i] = 0;
+    if (!i) return -2;
+    r->ip = 0;
+    r->ttl = 0;
+    r->rc = -1;
+    r->rcode = -1;
+    r->nrec = 0;
+    r->saltos = 0;
+    r->via_tcp = 0;
+    r->de_cache = 0;
+    r->cname[0] = 0;
+    fin = dns_ahora() + espera_ms / 10u;
+    for (q = 0; q < 1 + DNS_SALTOS; q++) {
+        unsigned int ips[8], ttls[8], cttl = 0;
+        char cn[256];
+        int intento, k, rc = -1;
+        if ((int)(dns_ahora() - fin) >= 0) return -5;
+        /* 1. Cache (nombre + servidor + puerto). */
+        {
+            unsigned int cip[8];
+            int cn2 = 0;
+            unsigned int cttl2 = 0;
+            if (dns_cache_halla(actual, srv, pto, cip, &cn2,
+                                &cttl2) &&
+                cn2 > 0) {
+                r->ip = cip[0];
+                r->ttl = cttl2;
+                r->rc = 0;
+                r->rcode = 0;
+                r->nrec = cn2;
+                r->saltos = saltos;
+                r->via_tcp = via_tcp;
+                r->de_cache = 1;
+                return 0;
+            }
+        }
+        /* 2. UDP: 3 intentos con XID nuevo (ventana 3 s). */
+        {
+            int sp = dns_sport;
+            if (sp <= 0) {
+                sp = u_red_udp_ligar(0);
+                if (sp <= 0) return -5;   /* tabla UDP llena */
+                dns_sport = sp;
+            }
+        }
+        k = -5;
+        for (intento = 0; intento < 3; intento++) {
+            unsigned short xid;
+            int npreg;
+            unsigned int fat;
+            red_udp_envio_t e;
+            red_udp_peticion_t pet;
+            if ((int)(dns_ahora() - fin) >= 0) return -5;
+            xid = (unsigned short)(((unsigned int)u_mi_pid() *
+                                    7919u + dns_ahora() +
+                                    (unsigned int)intento * 131u) &
+                                   0xFFFFu);
+            npreg = u_dns_armar(actual, xid, dns_q,
+                                (int)sizeof(dns_q));
+            if (npreg == -2) return -2;
+            if (npreg < 0) return -5;
+            e.ip = srv;
+            e.dpuerto = pto;
+            e.spuerto = (unsigned short)dns_sport;
+            if (u_red_udp_enviar(&e, dns_q, npreg) < 0) return -5;
+            {
+                int rest = (int)(fin - dns_ahora());
+                fat = dns_ahora() +
+                      (rest < 0 ? 0u
+                               : ((unsigned int)rest < 300u
+                                      ? (unsigned int)rest
+                                      : 300u));
+            }
+            for (;;) {
+                int rr;
+                if ((int)(dns_ahora() - fat) >= 0) break;
+                if ((int)(dns_ahora() - fin) >= 0) return -5;
+                pet.puerto = dns_sport;
+                pet.espera = 100;
+                rr = u_red_udp_recibir(&pet, dns_ru,
+                                       (int)sizeof(dns_ru));
+                if (rr < 0) return -5;
+                if (!rr) continue;
+                cn[0] = 0;
+                k = u_dns_leer2(dns_ru + 8, rr - 8, xid, dns_q,
+                                npreg, ips, ttls, 8, &rc, cn,
+                                (int)sizeof(cn), &cttl);
+                if (k == -2 || k == -1) continue; /* ajeno/ruido */
+                break;
+            }
+            if (k == -2 || k == -1) continue;   /* siguiente XID */
+            break;
+        }
+        if (k == -5 || k == -1 || k == -2) return -5;
+        if (k == -4) {
+            /* 3. TC: fallback TCP (un intento). */
+            int npreg2 = u_dns_armar(actual, 0x1234, dns_q,
+                                     (int)sizeof(dns_q));
+            int ml;
+            if (npreg2 < 0) return -2;
+            via_tcp = 1;
+            ml = dns_tcp_xchg(srv, pto, dns_q, npreg2, fin);
+            if (ml < 0) return -6;
+            cn[0] = 0;
+            cttl = 0;
+            k = u_dns_leer2(dns_tm, ml, 0x1234, dns_q, npreg2,
+                            ips, ttls, 8, &rc, cn, (int)sizeof(cn),
+                            &cttl);
+            if (k == -4 || k == -2 || k == -1) return -6;
+        }
+        r->rcode = rc;
+        if (rc == 3) {
+            r->rc = 3;
+            return -3;   /* NXDOMAIN: no se reintenta ni cachea */
+        }
+        if (rc) {
+            r->rc = 4;
+            return -4;   /* SERVFAIL/REFUSED/otro */
+        }
+        if (k > 0) {
+            unsigned int tmin = ttls[0];
+            int j;
+            for (j = 1; j < k; j++)
+                if (ttls[j] < tmin) tmin = ttls[j];
+            if (cttl && cttl < tmin) tmin = cttl;
+            if (tmin < eff) eff = tmin;
+            if (eff != 0xFFFFFFFFu && eff > DNS_TTL_MAX)
+                eff = DNS_TTL_MAX;
+            if (eff) {
+                dns_cache_pon(actual, srv, pto, ips,
+                              k < 8 ? k : 8, eff);
+            }
+            if (!r->cname[0] && cn[0]) {
+                int s;
+                for (s = 0; cn[s] && s < 255; s++) r->cname[s] = cn[s];
+                r->cname[s] = 0;
+            }
+            r->ip = ips[0];
+            r->ttl = eff == 0xFFFFFFFFu ? 0 : eff;
+            r->rc = 0;
+            r->nrec = k;
+            r->saltos = saltos;
+            r->via_tcp = via_tcp;
+            r->de_cache = 0;
+            return 0;
+        }
+        /* k == 0: sin A. */
+        if (!cn[0]) {
+            r->rc = 4;
+            return -8;   /* NODATA */
+        }
+        {
+            int v;
+            for (v = 0; v < nv; v++) {
+                int a = 0, b = 0, ig = 1;
+                while (cn[a] && dns_vis[v][b]) {
+                    char ca = cn[a], cb = dns_vis[v][b];
+                    if (ca >= 'A' && ca <= 'Z') ca += 32;
+                    if (cb >= 'A' && cb <= 'Z') cb += 32;
+                    if (ca != cb) {
+                        ig = 0;
+                        break;
+                    }
+                    a++;
+                    b++;
+                }
+                if (ig && !cn[a] && !dns_vis[v][b]) return -7;
+            }
+            if (nv >= DNS_SALTOS) return -7;
+            for (v = 0; cn[v] && v < 255; v++)
+                dns_vis[nv][v] = cn[v];
+            dns_vis[nv][v] = 0;
+            nv++;
+        }
+        if (saltos >= DNS_SALTOS) return -7;
+        saltos++;
+        /* Cadena visible "a -> b -> c" (acotada a 255). */
+        {
+            int p = 0, s;
+            while (r->cname[p]) p++;
+            if (p) {
+                const char *sep = " -> ";
+                for (s = 0; sep[s] && p + 1 < 255; s++)
+                    r->cname[p++] = sep[s];
+            } else {
+                for (s = 0; actual[s] && p + 1 < 255; s++)
+                    r->cname[p++] = actual[s];
+                for (s = 0; s < 4 && p + 1 < 255; s++)
+                    r->cname[p++] = " -> "[s];
+            }
+            for (s = 0; cn[s] && p + 1 < 255; s++)
+                r->cname[p++] = cn[s];
+            r->cname[p] = 0;
+        }
+        if (cttl && cttl < eff) eff = cttl;
+        for (i = 0; cn[i] && i < 255; i++) actual[i] = cn[i];
+        actual[i] = 0;
+        if (u_dns_armar(actual, 0, dns_q, (int)sizeof(dns_q)) < 0)
+            return -2;   /* destino no consultable */
+    }
+    return -7;
+}
+
+int u_dns_resuelve(const char *dom, unsigned int servidor,
+                   unsigned int *ip, unsigned int *ttl) {
+    u_dns_res_t r;
+    int k = u_dns_resuelve3(dom, servidor, 53, &r, 15000);
+    if (k) return k;
+    if (ip) *ip = r.ip;
+    if (ttl) *ttl = r.ttl;
+    return 0;
 }
 
 const char *u_estado_nombre(int e) {
