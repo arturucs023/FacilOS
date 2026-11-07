@@ -331,7 +331,7 @@ static void tcp_reloj(void) {
 }
 
 void red_tcp_entrada(const uint8_t *m, int tam) {
-    int hlen, thl, n;
+    int hlen, thl, n, tot;
     const uint8_t *ip, *t;
     uint16_t sp, dp;
     uint32_t seq, ackn;
@@ -344,12 +344,16 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
     }
     ip = m + 14;
     hlen = (ip[0] & 0x0F) * 4;
-    if (hlen < 20 || 14 + hlen + 20 > tam) {
+    tot = (ip[2] << 8) | ip[3];
+    /* Longitud TCP real = total IP - cabecera IP (el marco puede
+       traer relleno Ethernet: no debe entrar en la pseudo-cabecera
+       ni contarse como datos). */
+    if (hlen < 20 || tot < hlen + 20 || 14 + tot > tam) {
         c_err++;
         return;
     }
+    n = tot - hlen;
     t = m + 14 + hlen;
-    n = tam - 14 - hlen;
     thl = (t[12] >> 4) * 4;
     if (thl < 20 || thl > n) {
         c_err++;
@@ -445,9 +449,11 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
             c_err++;
             return;
         }
-        /* RST validado (no antiguo). */
+        /* RST: en apertura se valida por ACK (rechazo rapido);
+           establecida, por ventana (no aceptar basura vieja). */
         if (band & 0x04) {
-            if ((int32_t)(seq - c->rcv_nxt) >= -(int32_t)TCP_RCV) {
+            if (c->estado == TCP_SYN_TX || c->estado == TCP_SYN_RX) {
+                if (ackn != c->snd_nxt) return;
                 if (c->hijo_de >= 0) {
                     int p = c->hijo_de;
                     if (p >= 0 && p < TCP_N &&
@@ -455,8 +461,20 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
                         tcbs[p].pendiente = -1;
                     libera(c);
                 } else {
-                    muere(c, -9);
+                    muere(c, -7);
                 }
+                return;
+            }
+            if ((int32_t)(seq - c->rcv_nxt) < -(int32_t)TCP_RCV)
+                return;
+            if (c->hijo_de >= 0) {
+                int p = c->hijo_de;
+                if (p >= 0 && p < TCP_N &&
+                    tcbs[p].pendiente == (int)(c - tcbs))
+                    tcbs[p].pendiente = -1;
+                libera(c);
+            } else {
+                muere(c, -9);
             }
             return;
         }
@@ -562,6 +580,7 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
             } else if (c->estado == TCP_FIN_TX) {
                 if (fin_seq == c->rcv_nxt) {
                     c->rcv_nxt++;
+                    c->fin_rx = 1;
                     tcp_tx(c, 0x10, 0, 0, c->snd_nxt);
                     c_ok++;
                 }
@@ -1028,6 +1047,35 @@ void red_tcp_kat(void) {
     e1 = c_err;
     if (e1 != e0 + 2) ok = 0;   /* corta + checksum */
     if (kat_n != 0) ok = 0;   /* nada que transmitir */
+    {
+        /* RST en apertura: con ACK valido cierra (-7); sin el,
+           se ignora y sigue retransmitiendo. */
+        tcp_t *t;
+        int id = abre_nb(KAT_PAR, 81, 50010, 9999);
+        uint32_t iss;
+        int n;
+        kat_n = 0;
+        if (id <= 0) ok = 0;
+        else {
+            t = &tcbs[id % TCP_N];
+            iss = t->iss;
+            n = kat_arma(KAT_PAR, 81, 50010, 4000, iss + 1, 0x04, 0, 0);
+            red_tcp_entrada(kat_frm, n);
+            if (t->estado != TCP_CERRADO || t->err != -7) ok = 0;
+            if (red_tcp_cerrar(id, 9999) != -7) ok = 0;
+        }
+        id = abre_nb(KAT_PAR, 82, 50011, 9999);
+        kat_n = 0;
+        if (id <= 0) ok = 0;
+        else {
+            t = &tcbs[id % TCP_N];
+            iss = t->iss;
+            n = kat_arma(KAT_PAR, 82, 50011, 4000, iss + 5, 0x04, 0, 0);
+            red_tcp_entrada(kat_frm, n);
+            if (t->estado != TCP_SYN_TX) ok = 0;
+            red_tcp_abortar(id, 9999);
+        }
+    }
     {
         int n = kat_arma(KAT_PAR, 80, 61999, 1000, 0, 0x02, 0, 0);
         kat0 = kat_n;

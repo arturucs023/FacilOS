@@ -1682,7 +1682,7 @@ __attribute__((optimize("O0"))) static void sc_61(regs_t *r, int di)
                 b[0] = s[0];
                 b[1] = s[1];
             }
-            k = red_tcp_escuchar((uint16_t)((b[0] << 8) | b[1]),
+            k = red_tcp_escuchar((uint16_t)(b[0] | ((uint16_t)b[1] << 8)),
                                  pid);
             r = regs_actual(r);
             r->eax = (uint32_t)k;
