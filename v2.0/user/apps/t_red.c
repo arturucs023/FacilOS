@@ -234,10 +234,33 @@ static void prueba_dns_parser(void) {
     }
 }
 
+static void prueba_dhcp_tiempo(void) {
+    /* F6-B D1: opcion 51 en orden de red (big-endian).
+       00 00 00 3C = 60 s; en LE daria 1006632960 (bug F5). */
+    unsigned char v60[4] = { 0x00, 0x00, 0x00, 0x3C };
+    unsigned char v86400[4] = { 0x00, 0x01, 0x51, 0x80 };
+    unsigned int be60, be86400, le60;
+    u_print("t_red F6B: tiempo DHCP...\n");
+    be60 = ((unsigned int)v60[0] << 24) |
+           ((unsigned int)v60[1] << 16) |
+           ((unsigned int)v60[2] << 8) | (unsigned int)v60[3];
+    be86400 = ((unsigned int)v86400[0] << 24) |
+              ((unsigned int)v86400[1] << 16) |
+              ((unsigned int)v86400[2] << 8) | (unsigned int)v86400[3];
+    le60 = (unsigned int)v60[0] | ((unsigned int)v60[1] << 8) |
+           ((unsigned int)v60[2] << 16) | ((unsigned int)v60[3] << 24);
+    ok(be60 == 60, "dhcp-tiempo-60-be");
+    ok(be86400 == 86400, "dhcp-tiempo-86400-be");
+    ok(le60 == 1006632960u, "dhcp-tiempo-60-le-es-erroneo");
+    /* 58/59: ignoradas a proposito en esta fase (sin renovacion). */
+    ok(1, "dhcp-58-59-ignoradas-doc");
+}
+
 int main(void) {
     int r, i, n;
     int hallada = 0;
     prueba_dns_parser();   /* sin red: codec determinista */
+    prueba_dhcp_tiempo();  /* F6-B D1: vectores big-endian */
     u_print("t_red F1: interfaz...\n");
     for (i = 0; i < 32; i++) ((unsigned char *)&rif)[i] = 0;
     r = u_red_interfaz(&rif);

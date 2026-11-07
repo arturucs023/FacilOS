@@ -26,8 +26,16 @@ retransmision), sin 2MSL, sin keepalive (todo documentado abajo).
   SYN puros), offset, checksum y demultiplexa por tupla o escucha.
   RST en apertura se valida por ACK (rechazo rapido y fiable);
   establecida, por ventana. Puerto cerrado responde RST+ACK.
+  Backlog lleno (F6-B): SYN extra con pendiente ocupado = gota
+  silenciosa sin RST (el cliente reintenta por RTO).
+- ACK (F6-B): futuro (>snd_nxt) = gota entera; viejo (<snd_una)
+  se ignora pero datos/FIN validos siguen procesandose.
 - Cierre: FIN propio con retransmision; al ver el FIN ajeno se
   contesta; con ambos vistos se envia el ACK final y se libera.
+  Re-Tx de FIN repite fseq = snd_nxt-1 (F6-B); FIN duplicado
+  re-acusa sin avanzar rcv_nxt (F6-B).
+  Limpieza por pid (F6-B) libera tambien CERRADO+sticky del
+  proceso muerto y sanea tuple/seq; `abrir` usa id estable (oid).
   Sin el FIN ajeno, tras ~5 s se libera igual (0 si el nuestro
   fue confirmado, -7 si no). Abort envia RST y libera al instante.
   EOF para la app: recibir devuelve -12 con todo drenado.
@@ -38,7 +46,9 @@ retransmision), sin 2MSL, sin keepalive (todo documentado abajo).
   vectores malos, RST a puerto cerrado, handshake activo, datos,
   retransmision con backoff y agotamiento (-7), RST con sticky
   -9, pasiva completa (escucha/SYN/acepta), tabla llena sin
-  desalojo. Captura la Tx en RAM: cero trafico al cable.
+  desalojo + F6-B (D2 limpia sticky, D3 id estable, D4 re-Tx FIN,
+  D5 FIN duplicado, D8 backlog sin RST, D11 ACK viejo/futuro).
+  Captura la Tx en RAM: cero trafico al cable.
 
 Syscall unica 61 `red_tcp` op-multiplexada (op 0 abrir, 1
 escuchar, 2 aceptar, 3 enviar, 4 recibir, 5 cerrar, 6 abortar,

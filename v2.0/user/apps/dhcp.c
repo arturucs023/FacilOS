@@ -190,6 +190,15 @@ static unsigned int lee_u32(const unsigned char *p) {
            ((unsigned int)p[2] << 16) | ((unsigned int)p[3] << 24);
 }
 
+/* F6-B D1: tiempo DHCP (opcion 51) en orden de red (big-endian).
+   Las direcciones usan lee_u32 (orden del anfitrion en FacilOS32);
+   el tiempo NO: 00 00 00 3C = 60 s (LE daria 1006632960). */
+
+static unsigned int lee_be32(const unsigned char *p) {
+    return ((unsigned int)p[0] << 24) | ((unsigned int)p[1] << 16) |
+           ((unsigned int)p[2] << 8) | (unsigned int)p[3];
+}
+
 /* Espera un mensaje DHCP del tipo pedido; extrae oferta. */
 static int espera_dhcp(unsigned char tipo, unsigned int xid,
                        unsigned int *yip, unsigned int *mask,
@@ -241,7 +250,10 @@ static int espera_dhcp(unsigned char tipo, unsigned int xid,
                 else if (cod == 54 && ln == 4)
                     s = lee_u32(inb + o + 2);
                 else if (cod == 51 && ln == 4)
-                    l = lee_u32(inb + o + 2);
+                    l = lee_be32(inb + o + 2);
+                /* F6-B: 58/59 (renovacion/religa) se ignoran a
+                   proposito: sin temporizador de renovacion en
+                   esta fase; la concesion es informativa. */
                 o += 2 + ln;
             }
             if (mtipo != tipo || !rip) continue;

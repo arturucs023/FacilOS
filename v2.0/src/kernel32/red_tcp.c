@@ -115,6 +115,17 @@ static tcp_t *nuevo_tcb(uint32_t pid) {
             if (!t->gen) t->gen = gen_seq++;
             t->pid = pid;
             t->err = 0;
+            /* F6-B D2: saneado completo (sin residuos de tuple/seq). */
+            t->ip_rem = 0;
+            t->pto_loc = 0;
+            t->pto_rem = 0;
+            t->iss = 0;
+            t->irs = 0;
+            t->snd_nxt = 0;
+            t->snd_una = 0;
+            t->rcv_nxt = 0;
+            t->t0 = irq_ticks();
+            t->rto = RTO0;
             t->snd_len = 0;
             t->rcv_ini = 0;
             t->rcv_n = 0;
@@ -136,9 +147,27 @@ static int id_de(tcp_t *t) {
 }
 
 static void libera(tcp_t *t) {
+    /* F6-B D2: saneado completo para reutilizacion segura. */
     t->estado = TCP_CERRADO;
     t->pid = 0;
     t->err = 0;
+    t->ip_rem = 0;
+    t->pto_loc = 0;
+    t->pto_rem = 0;
+    t->iss = 0;
+    t->irs = 0;
+    t->snd_nxt = 0;
+    t->snd_una = 0;
+    t->rcv_nxt = 0;
+    t->wnd_par = 0;
+    t->snd_len = 0;
+    t->rcv_ini = 0;
+    t->rcv_n = 0;
+    t->fin_rx = 0;
+    t->fin_ack = 0;
+    t->reint = 0;
+    t->t0 = 0;
+    t->rto = RTO0;
     t->pendiente = -1;
     t->hijo_de = -1;
     t->gen = gen_seq++;
@@ -291,7 +320,9 @@ static void reenvia(tcp_t *t) {
     } else if (t->snd_len) {
         tcp_tx(t, 0x18, t->snd, t->snd_len, t->snd_una);
     } else if (t->estado == TCP_FIN_TX) {
-        tcp_tx(t, 0x11, 0, 0, t->snd_nxt);
+        /* F6-B D4: el FIN consume 1 numero (snd_nxt ya avanzo);
+           la re-Tx repite fseq = snd_nxt-1, no snd_nxt. */
+        tcp_tx(t, 0x11, 0, 0, t->snd_nxt - 1);
     }
 }
 
@@ -402,10 +433,14 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
         if (!c && (band & 0x04)) return;   /* RST sin dueno */
         if (!c) {
             /* Escucha: solo SYN pelado, con hijo libre. */
+            int ocupado = 0;
             for (i = 0; i < TCP_N; i++) {
                 tcp_t *q = &tcbs[i];
-                if (q->estado == TCP_ESCUCHA && q->pto_loc == dp &&
-                    q->pendiente < 0) {
+                if (q->estado == TCP_ESCUCHA && q->pto_loc == dp) {
+                    if (q->pendiente >= 0) {
+                        ocupado = 1;
+                        break;
+                    }
                     tcp_t *h = nuevo_tcb(q->pid);
                     if (!h) {
                         c_err++;
@@ -439,6 +474,12 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
                     c_ok++;
                     return;
                 }
+            }
+            /* F6-B D8: backlog lleno = gota silenciosa (el cliente
+               reintenta por RTO); solo RST si no hay escucha. */
+            if (ocupado) {
+                c_err++;
+                return;
             }
             /* Puerto cerrado: RST con seq 0 y ack del extremo. */
             {
@@ -479,10 +520,13 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
             return;
         }
         if (c->estado == TCP_ESCUCHA) return;   /* datos a escucha */
-        /* ACK: avanza lo pendiente (stop-and-wait: todo o nada). */
+        /* ACK: avanza lo pendiente (stop-and-wait: todo o nada).
+           F6-B D11: ACK futuro (>snd_nxt) = gota entera; ACK viejo
+           (<snd_una) se ignora pero datos/FIN validos siguen. */
         if (band & 0x10) {
-            if ((int32_t)(ackn - c->snd_una) < 0 ||
-                (int32_t)(ackn - c->snd_nxt) > 0) {
+            int ack_futuro = (int32_t)(ackn - c->snd_nxt) > 0;
+            int ack_viejo = (int32_t)(ackn - c->snd_una) < 0;
+            if (ack_futuro) {
                 c_err++;
                 return;
             }
@@ -510,7 +554,7 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
                     c_ok++;
                 }
                 /* Si no casa, el RTO reenviara el SYN-ACK. */
-            } else if (ackn == c->snd_nxt) {
+            } else if (!ack_viejo && ackn == c->snd_nxt) {
                 if (c->snd_len) {
                     c->snd_len = 0;
                     c->reint = 0;
@@ -521,6 +565,7 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
                     c->fin_ack = 1;
                 }
             }
+            /* Si ack_viejo: no avanza nada, pero datos/FIN siguen. */
             c->wnd_par = (uint16_t)((t[14] << 8) | t[15]);
         } else if (c->estado != TCP_SYN_TX) {
             c_err++;
@@ -576,11 +621,19 @@ void red_tcp_entrada(const uint8_t *m, int tam) {
                         c->estado = TCP_FIN_RX;
                     tcp_tx(c, 0x10, 0, 0, c->snd_nxt);
                     c_ok++;
+                } else if (c->fin_rx && fin_seq + 1 == c->rcv_nxt) {
+                    /* F6-B D5: FIN duplicado (ACK nuestro perdido):
+                       re-acusa sin avanzar. */
+                    tcp_tx(c, 0x10, 0, 0, c->snd_nxt);
+                    c_ok++;
                 }
             } else if (c->estado == TCP_FIN_TX) {
                 if (fin_seq == c->rcv_nxt) {
                     c->rcv_nxt++;
                     c->fin_rx = 1;
+                    tcp_tx(c, 0x10, 0, 0, c->snd_nxt);
+                    c_ok++;
+                } else if (c->fin_rx && fin_seq + 1 == c->rcv_nxt) {
                     tcp_tx(c, 0x10, 0, 0, c->snd_nxt);
                     c_ok++;
                 }
@@ -650,22 +703,21 @@ static int abre_nb(uint32_t ip, uint16_t puerto, uint16_t local,
 
 int red_tcp_abrir(uint32_t ip, uint16_t puerto, uint16_t local,
                   uint32_t pid) {
-    int id = abre_nb(ip, puerto, local, pid);
+    int oid = abre_nb(ip, puerto, local, pid);
     tcp_t *t;
     uint32_t fin;
-    if (id < 0) return id;
-    t = &tcbs[id % TCP_N];
+    if (oid < 0) return oid;
     fin = irq_ticks() + CONEX_ESP;
     for (;;) {
-        id = id_de(t);
+        /* F6-B D3: id estable (oid); si el slot se reutiliza,
+           el alias se detecta y no se devuelve un id ajeno. */
         red_bombea();
         tcp_reloj();
-        t = &tcbs[id % TCP_N];
-        if (t->pid != pid ||
-            (int)(t->gen * TCP_N + (uint32_t)(id % TCP_N)) != id) {
+        t = &tcbs[oid % TCP_N];
+        if (t->pid != pid || id_de(t) != oid) {
             return -9;
         }
-        if (t->estado == TCP_ESTABLECIDO) return id;
+        if (t->estado == TCP_ESTABLECIDO) return oid;
         if (t->estado == TCP_CERRADO) {
             int e = t->err ? t->err : -7;
             libera(t);
@@ -929,7 +981,14 @@ int red_tcp_limpia_proceso(uint32_t pid) {
     for (i = 0; i < TCP_N; i++) {
         tcp_t *t = &tcbs[i];
         uint32_t gw = 0;
-        if (t->estado == TCP_CERRADO || t->pid != pid) continue;
+        /* F6-B D2: incluye CERRADO+sticky del pid muerto (nadie
+           lo recogera); sin RST en ese caso, solo saneado. */
+        if (!t->pid || t->pid != pid) continue;
+        if (t->estado == TCP_CERRADO) {
+            libera(t);
+            n++;
+            continue;
+        }
         /* RST solo sin bloquear: ruta + ARP en cache. */
         if (t->estado != TCP_ESCUCHA && !red_ruta_para(t->ip_rem, &gw) &&
             !red_arp_mira(gw ? gw : t->ip_rem, mac)) {
@@ -1236,6 +1295,160 @@ void red_tcp_kat(void) {
         if (red_tcp_limpia_proceso(9999) != 4) ok = 0;
         for (i = 0; i < TCP_N; i++) {
             if (tcbs[i].estado != TCP_CERRADO) ok = 0;
+        }
+    }
+    /* 7. F6-B D2: limpia libera sticky del proceso muerto. */
+    kat_n = 0;
+    {
+        int ids[4], k, n;
+        tcp_t *t;
+        for (k = 0; k < 4; k++) {
+            ids[k] = kat_conecta((uint16_t)(50100 + k), 80,
+                                 9000u + (uint32_t)k);
+            if (ids[k] <= 0) ok = 0;
+        }
+        for (k = 0; k < 4; k++) {
+            t = &tcbs[ids[k] % TCP_N];
+            n = kat_arma(KAT_PAR, 80, (uint16_t)(50100 + k),
+                         t->rcv_nxt, 0, 0x04, 0, 0);
+            red_tcp_entrada(kat_frm, n);
+            if (t->estado != TCP_CERRADO || t->err != -9) ok = 0;
+        }
+        if (red_tcp_limpia_proceso(9999) != 4) ok = 0;
+        for (i = 0; i < TCP_N; i++) {
+            if (tcbs[i].estado != TCP_CERRADO || tcbs[i].err) ok = 0;
+        }
+        {
+            int a = red_tcp_escuchar(62001, 9999);
+            int b = red_tcp_escuchar(62002, 9999);
+            int c = red_tcp_escuchar(62003, 9999);
+            int d = red_tcp_escuchar(62004, 9999);
+            if (a <= 0 || b <= 0 || c <= 0 || d <= 0) ok = 0;
+            if (red_tcp_limpia_proceso(9999) != 4) ok = 0;
+        }
+    }
+    /* 8. F6-B D3: id antiguo rechazado tras reutilizar slot. */
+    kat_n = 0;
+    {
+        int id1 = abre_nb(KAT_PAR, 83, 50110, 9999);
+        if (id1 <= 0) ok = 0;
+        else {
+            int idx = id1 % TCP_N;
+            int id2;
+            libera(&tcbs[idx]);
+            id2 = abre_nb(KAT_PAR, 84, 50111, 9999);
+            if (id2 <= 0) ok = 0;
+            else {
+                if (red_tcp_estado(id1, 9999) != -2) ok = 0;
+                red_tcp_abortar(id2, 9999);
+            }
+        }
+    }
+    /* 9. F6-B D4: re-Tx de FIN usa la misma secuencia. */
+    kat_n = 0;
+    {
+        int id = kat_conecta(50200, 80, 9100);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            uint32_t fseq;
+            int n0;
+            if (fin_nb(t) != 0) ok = 0;
+            else {
+                fseq = t->snd_nxt - 1;
+                if (kat_n < 1) ok = 0;
+                else if (kat_r[kat_n - 1].band != 0x11) ok = 0;
+                else if (kat_r[kat_n - 1].seq != fseq) ok = 0;
+                n0 = kat_n;
+                t->t0 -= 100000;
+                tcp_reloj();
+                if (kat_n != n0 + 1) ok = 0;
+                else if (kat_r[kat_n - 1].band != 0x11) ok = 0;
+                else if (kat_r[kat_n - 1].seq != fseq) ok = 0;
+            }
+            libera(t);
+        }
+    }
+    /* 10. F6-B D5: FIN duplicado re-acusa sin avanzar. */
+    kat_n = 0;
+    {
+        int id = kat_conecta(50201, 80, 9101);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            uint32_t rn;
+            int n, k0;
+            rn = t->rcv_nxt;
+            n = kat_arma(KAT_PAR, 80, 50201, rn, t->snd_nxt,
+                         0x11, 0, 0);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (!t->fin_rx) ok = 0;
+            if (kat_n != k0 + 1) ok = 0;
+            rn = t->rcv_nxt;
+            n = kat_arma(KAT_PAR, 80, 50201, rn - 1, t->snd_nxt,
+                         0x11, 0, 0);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (t->rcv_nxt != rn) ok = 0;
+            if (kat_n != k0 + 1) ok = 0;
+            else if (kat_r[kat_n - 1].band != 0x10) ok = 0;
+            libera(t);
+        }
+    }
+    /* 11. F6-B D8: backlog lleno no responde RST. */
+    kat_n = 0;
+    {
+        int esc = red_tcp_escuchar(62010, 9999);
+        if (esc <= 0) ok = 0;
+        else {
+            int n, k0;
+            n = kat_arma(KAT_PAR, 4567, 62010, 3000, 0, 0x02, 0, 0);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (kat_n != k0 + 1) ok = 0;
+            n = kat_arma(KAT_PAR, 4568, 62010, 4000, 0, 0x02, 0, 0);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (kat_n != k0) ok = 0;
+            {
+                tcp_t *q = &tcbs[esc % TCP_N];
+                if (q->pendiente >= 0 && q->pendiente < TCP_N)
+                    libera(&tcbs[q->pendiente]);
+                q->pendiente = -1;
+                red_tcp_cerrar(esc, 9999);
+            }
+        }
+    }
+    /* 12. F6-B D11: ACK viejo con datos validos no descarta. */
+    kat_n = 0;
+    {
+        static const uint8_t dd[2] = { 'X', 'Y' };
+        int id = kat_conecta(50202, 80, 9102);
+        if (id <= 0) ok = 0;
+        else {
+            tcp_t *t = &tcbs[id % TCP_N];
+            uint32_t una = t->snd_una, nxt = t->snd_nxt;
+            uint32_t rcv = t->rcv_nxt;
+            int n, k0;
+            uint8_t tmp[8];
+            n = kat_arma(KAT_PAR, 80, 50202, rcv, una - 1, 0x18,
+                         dd, 2);
+            k0 = kat_n;
+            red_tcp_entrada(kat_frm, n);
+            if (t->rcv_n != 2) ok = 0;
+            if (t->rcv_nxt != rcv + 2) ok = 0;
+            if (kat_n != k0 + 1) ok = 0;
+            if (red_tcp_recibir(id, 9999, tmp, 8, 0) != 2) ok = 0;
+            rcv = t->rcv_nxt;
+            n = kat_arma(KAT_PAR, 80, 50202, rcv, nxt + 100, 0x18,
+                         dd, 2);
+            {
+                uint16_t rn0 = t->rcv_n;
+                red_tcp_entrada(kat_frm, n);
+                if (t->rcv_n != rn0) ok = 0;
+            }
+            libera(t);
         }
     }
     kat_on = 0;

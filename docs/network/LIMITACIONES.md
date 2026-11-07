@@ -1,4 +1,4 @@
-# Limitaciones conocidas (F1+F2+F3+F4+F5)
+# Limitaciones conocidas (F1+F2+F3+F4+F5+F6-B)
 
 - Red `user` de QEMU es NAT 10.0.2.0/24: sin entrada sin `hostfwd`,
   sin promiscuo externo. DNS lo da slirp (10.0.2.3); el eco ICMP

@@ -109,3 +109,16 @@ F5 (esta fase, todo en la ISO de entrega salvo f1/f3/f4 intactas):
   trama ("Slirp: Failed to send packet" en arranque con carga);
   la via del nucleo con reintentos (`arp-nucleo-resuelve`)
   pasa en la misma ejecucion.
+
+F6-B P0 (misma ISO reconstruida con correcciones; sin cambio ABI):
+- KAT tcp OK con/sin adaptador con 6 regresiones nuevas
+  (D2/D3/D4/D5/D8/D11). Repro previa: KAT FALLO con los tests
+  nuevos sobre codigo F5; tras el arreglo: KAT OK.
+- DHCP D1: vector `00 00 00 3C`=60 s (`dhcp-tiempo-60-be`,
+  `dhcp-tiempo-86400-be`) en `t_red` 34/0 sin adaptador; en vivo
+  `concesion (s): 86400` (antes `2152792320` byte-swapped).
+  58/59 ignoradas y documentadas (sin renovacion automatica).
+- TCP vivo 98 pruebas 1 fallo (solo `rx-arp-puerta` flaky):
+  pasiva completa verificada en cable (SYN/SYN-ACK, datos ambos
+  sentidos, FIN limpio; pcap `f6blive.pcap`: SYN=154 SYNACK=8
+  FIN=17 RST=65 DATA=8). Regresion v2.2 verde (258/26/15).
