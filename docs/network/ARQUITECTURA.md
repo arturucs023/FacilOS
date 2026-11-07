@@ -16,6 +16,8 @@ Sin sockets POSIX, sin pila prestada. Capas con nombres FacilOS:
   F4: UDP (ligas+colas+demux) en el nucleo, DNS como app Ring3
   sobre syscalls 58-60; `sc_54` centraliza el bombeo (sirve del
   tap) para no robar tramas a la pila.
+  F5: TCP (TCB por pid, colas FIFO, demux por tupla) en el nucleo,
+  syscall unica 61 op-multiplexada; Ring3 habla por `u_tcp_*`.
 - API `red_*` (syscalls 52-63, ver `API-FACILOS32.md`): F1 solo
   52/53/54. Toda espera acotada; ningun bloqueo indefinido.
   No hay pipes: la recepcion es por sondeo con espera maxima.

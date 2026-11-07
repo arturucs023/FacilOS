@@ -1,4 +1,4 @@
-# Limitaciones conocidas (F1+F2+F3+F4)
+# Limitaciones conocidas (F1+F2+F3+F4+F5)
 
 - Red `user` de QEMU es NAT 10.0.2.0/24: sin entrada sin `hostfwd`,
   sin promiscuo externo. DNS lo da slirp (10.0.2.3); el eco ICMP
@@ -13,9 +13,14 @@
 - ICMP solo eco (sin unreachable/time-exceeded ni reenvio; F6+).
   Contadores basales del KAT: `ICMP errores`=1, `UDP recibidos`
   =10 nada mas arrancar.
-- El cargador lee el nucleo en sectores fijos: F4 lo sube de 160
-  a 192 (llega a 0x28000, sin pisar el catalogo en 0x30000).
-  Si el nucleo crece mas, hay que volver a subirlo (2 lineas:
+- TCP: MSS 536 de envio (se ignora el MSS del par), recepcion
+  hasta 2048 B por segmento, 4 conexiones sin desalojo, sin
+  reensamblado (OOO se descarta y retransmite), sin 2MSL, sin
+  keepalive, sin medio-cierre API, ISN por ticks+pid (no
+  criptografico). Stop-and-wait: un segmento sin ACK a la vez.
+- El cargador lee el nucleo en sectores fijos: F5 lo sube a 224
+  (llega a 0x2C000, sin pisar el catalogo en 0x30000). Si el
+  nucleo crece mas, hay que volver a subirlo (2 lineas:
   `boot32.asm` + `KERN_SECS`) y re-verificar el arranque.
 - Sondeo, no IRQ: la recepcion se recoge al pedirla; latencia
   de sondeo, sin perdida (el anillo retiene; el deposito crudo

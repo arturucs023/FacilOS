@@ -1,4 +1,4 @@
-# Pruebas (QEMU; F4 en `FacilOS-v2.3-red-f4.iso`, F1 en `...-f1.iso`, F3 en `...-f3.iso`)
+# Pruebas (QEMU; F5 en `FacilOS-v2.3-red-f5.iso`, F1 en `...-f1.iso`, F3 en `...-f3.iso`, F4 en `...-f4.iso`)
 
 Red virtual: `-netdev user,id=red0 -device rtl8139,netdev=red0,
 mac=52:54:00:12:34:56` (puerta 10.0.2.2, DNS 10.0.2.3). Sin la
@@ -77,3 +77,35 @@ F4 (esta fase, todo en la ISO de entrega salvo f1/f3 intactas):
   pendiente (no hay `.f32` en la ISO).
 - Basales de contadores (KAT): ICMP errores=1, UDP recibidos=10
   nada mas arrancar; las pruebas miran deltas.
+
+F5 (esta fase, todo en la ISO de entrega salvo f1/f3/f4 intactas):
+- KAT al arrancar: `red: KAT tcp OK` con y sin adaptador
+  (vectores malos, RST a puerto cerrado, handshake activo,
+  datos, retransmision con backoff y agotamiento, RST con
+  sticky -9, pasiva completa, tabla llena sin desalojo; captura
+  de Tx en RAM, cero trafico al cable).
+- TCP vivo en `t_red` (94 pruebas 0 fallos en total) contra par
+  Python en el anfitrion (ver `tools/tcp_par.py`): apertura
+  activa + eco + cierre ordenado, 2 conexiones simultaneas con
+  datos entrelazados, FIN ajeno -> EOF (-12) y cierre, rechazo
+  rapido en puerto cerrado (-7), negro acotado con avance de Tx,
+  pasiva completa (escuchar/avisar/recibir/enviar/EOF/cerrar),
+  aborto con RST, negativas de argumentos y estados.
+- Capturas de cable (pcap + `tools/tcp_par.py`): SYN con checksum
+  valido y 0 datos, SYN-ACK aceptados, retransmisiones SYN con
+  backoff ante silencio, RST validado por ACK en apertura,
+  FIN/ACK de cierre en ambos sentidos, RST a puerto cerrado.
+- Sin adaptador: abrir/escuchar/enviar/recibir/cerrar/estado -1.
+- F1-F4 intactas en la misma ISO: `t_red` incluye ARP/IP/ICMP
+  (eco-2, eco-seq, eco-timeout), UDP y DNS reales (example.com,
+  google.com resueltos en la prueba); DHCP obtener+renovar+
+  liberar y eco a la puerta re-ejecutados.
+- Regresion v2.2 en la misma ISO: t1_lib 258/0, tutf8 26/0,
+  mem32 15/0. `funcion.f32`: interprete y syscalls que usa
+  identicos desde v2.2 (sin cambios F3-F5); repaso dedicado
+  pendiente (no hay `.f32` en la ISO).
+- Flaky conocido (entorno, no regresion): `rx-arp-puerta` (ARP
+  crudo de un solo disparo) puede fallar si slirp pierde la
+  trama ("Slirp: Failed to send packet" en arranque con carga);
+  la via del nucleo con reintentos (`arp-nucleo-resuelve`)
+  pasa en la misma ejecucion.

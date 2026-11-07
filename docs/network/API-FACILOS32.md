@@ -13,12 +13,12 @@ Nombres en castellano. Sin `socket/bind/listen/accept`.
 | 58 | `red_udp_ligar`    | liga puerto UDP (0=efimero)            | F4   | DNS y transporte sin sockets      |
 | 59 | `red_udp_enviar`   | datagrama {ip,dport,sport}+datos       | F4   | Tx por IPv4+ARP+ruta              |
 | 60 | `red_udp_recibir`  | datagrama {src,sport,len}+datos        | F4   | espera acotada, 0=agotada          |
-| 61 | reservada          |                                        | F5   | TCP                                |
-| 62 | reservada          |                                        | F5   | TCP                                |
+| 61 | `red_tcp`        | TCP op-multiplexada (op 0..7)          | F5   | abrir/escuchar/aceptar/datos/cierre |
+| 62 | reservada        |                                        |      | libre                               |
 | 63 | `red_rutas`        | leer/definir tabla de rutas            | F2/F6| `mostrar_rutas`/`trazar_ruta`     |
 
-`SC_N` es 64 (52-60 y 63 en uso; 61-62 reservadas F5).
-La ABI solo crece, nunca cambia: 52-57 y 63 intactas en F4
+`SC_N` es 64 (52-61 y 63 en uso; 62 libre).
+La ABI solo crece, nunca cambia: 52-60 y 63 intactas en F5
 (`sc_54` sirve del tap tras bombear: mismo contrato).
 `red_if_t` (32 B) identica en `drv_red.h` y `ulib.h`;
 `rsv[3]` lleva UDP recibidos (F4). Ring3 anade `u_red_udp_*`
