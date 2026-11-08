@@ -2,6 +2,7 @@
 #include "red.h"
 #include "red_ip.h"
 #include "red_arp.h"
+#include "nim.h"
 #include "drv_red.h"
 #include "libc.h"
 #include "irq.h"
@@ -105,7 +106,7 @@ void red_icmp_entrada(const uint8_t *m, int tam) {
             rep[14 + 22] = (uint8_t)((c >> 8) & 0xFFu);
             rep[14 + 23] = (uint8_t)(c & 0xFFu);
         }
-        if (red_tx(rep, rl) > 0) c_ok++;
+        if (nim_tx(0, rep, rl) > 0) c_ok++;
         else c_err++;
     }
 }

@@ -168,8 +168,10 @@ int raton_lee(raton_t *dst) {
             cpu_if_restaura(fl);
             return 0;
         }
-        cpu_if_restaura(fl);
+        /* F8: hlt exige IF=1 (igual que kbd_tecla). */
+        sti();
         hlt();
+        cli();
         /* recheck tras hlt (igual que kbd_tecla): lo llegado en la
            ventana se consume sin bloquear. */
         fl = cpu_eflags();
@@ -190,8 +192,9 @@ int raton_lee(raton_t *dst) {
 }
 
 
-/* Cuerpo con IF ya a 0: las respuestas en 0x60 no pueden ser robadas
-   por la IRQ1 (el manejador de teclado las tomaria por teclas). */
+/* Cuerpo con sondeo: mientras ps2_sondeo vale 1 la IRQ1 no consume
+   0x60 (el byte lo lee el sondeo). Asi el init puede correr con IF=1. */
+volatile int ps2_sondeo = 0;
 static int ps2_init_nolock(void) {
     /* Etapa4: SeaBIOS deja los puertos PS/2 vivos (el teclado funciona sin
        init). Se intenta la secuencia completa, pero lo esencial (handler
@@ -232,6 +235,7 @@ static int ps2_init_nolock(void) {
     }
     irq_escucha(12, raton_irq);
     outb(0xA1, 0xEF);                  /* desmascara IRQ12 (i8259) */
+    outb(0x21, inb(0x21) & 0xFB);      /* F8: abre cascada IRQ2 del maestro */
     /* Etapa4: la cascada del i8259 no entrega el esclavo en este QEMU;
        la IRQ12 va por IOAPIC (mismo vector 44). Si no hay APIC, queda
        el i8259 por compatibilidad con HW real. */
@@ -244,11 +248,19 @@ static int ps2_init_nolock(void) {
     return 0;
 }
 int ps2_init(void) {
-    uint32_t fl = cpu_eflags();
+    /* F8: el sondeo largo ya no cierra IRQ todo el rato. La IRQ1 se
+     * atiende igual pero teclado_irq deja el byte en el 8042 mientras
+     * ps2_sondeo vale 1 (ver teclado.c), asi no se pierden ticks. */
+    extern volatile int ps2_sondeo;
     int r;
-    cli();
+    ps2_sondeo = 1;
     r = ps2_init_nolock();
-    cpu_if_restaura(fl);
+    {
+        uint32_t fl = cpu_eflags();
+        cli();
+        ps2_sondeo = 0;
+        cpu_if_restaura(fl);
+    }
     return r;
 }
 

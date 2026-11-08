@@ -70,8 +70,12 @@ copy_alta:
     mov cr0, eax
     mov esi, 0x8000          ; rebote -> alto (32 bits)
     mov edi, [cs:alto_dst]
+    ; F8: no pisar mas alla de 0x1100000 (1 MB de cola).
+    cmp edi, 0x1100000 - 512
+    ja .salta_copia
     mov ecx, 128
     a32 rep movsd
+.salta_copia:
     xor bx, bx               ; DS/ES normales otra vez
     mov ds, bx
     mov es, bx

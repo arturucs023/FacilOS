@@ -2,12 +2,12 @@
 #include "libc.h"
 #include "cpu.h"
 #include "bootinfo.h"
+#include "klog.h"
 
 /* FacilOS32 v1.9: marcos fisicos, directorios y tablas de pagina.
  *
- * Las tablas viven en 0xC00000 (la zona que v1.8 reservaba para
- * preservar al padre en la syscall 25; en v1.9 ya no hace falta porque
- * cada proceso tiene su propio espacio de direcciones).
+ * Las tablas (pd_pool/pt_pool/ventana_pt) viven en el .bss del nucleo
+ * (ver pag.c), no en 0xC00000: ese comentario de v1.8 quedo obsoleto.
  *
  * Decisiones de diseno:
  *  - Paginas de 4 KiB en todas partes (sin paginas grandes).
@@ -132,7 +132,7 @@ static void reserva_fijas(void) {
     reserva(0x480000, 0x640000);   /* pilas de anillo 0 + pool del FS */
     reserva(0x800000, 0xD00000);   /* heap del kernel, dorso, tablas */
     reserva(0xE00000, 0xF00000);   /* pilas de anillo 0 de los procesos */
-    reserva(0x1000000, 0x1100000);   /* F7-B/C: cola alta del catalogo */
+    reserva(0x1000000, 0x1800000);   /* F8: cola alta del catalogo (8 MB) */
 }
 
 /* Dorso grande (pantalla completa a 1920x1080x32): bloque contiguo alto
@@ -270,9 +270,20 @@ int pag_mapa(unsigned di, uint32_t virt, uint32_t fis, uint32_t flags) {
     uint32_t *pd = pd_pool[di];
     uint32_t *pt = pt_suya(pd, virt);
     if (!pt) return -1;
-    uint32_t j = (virt >> 12) & 0x3FF;
-    if (pt[j] & PAG_PRESENTE) pag_devuelve_marco(pt[j] & 0xFFFFF000u);
-    pt[j] = (fis & 0xFFFFF000u) | PAG_PRESENTE | flags;
+    {
+        uint32_t j = (virt >> 12) & 0x3FF;
+        if (pt[j] & PAG_PRESENTE) {
+            uint32_t viejo = pt[j] & 0xFFFFF000u;
+            /* F8: no devolver marcos reservados del nucleo. Remapear
+             * identidad con pag_mapa convertia RESERVA en LIBRE. */
+            if (marco_dueno[viejo / PAG_MARCO] == DUENO_RESERVA) {
+                klog(KLOG_WARN, "pag", "mapa sobre reserva");
+            } else {
+                pag_devuelve_marco(viejo);
+            }
+        }
+        pt[j] = (fis & 0xFFFFF000u) | PAG_PRESENTE | flags;
+    }
     cpu_tlb_invalida(virt);
     return 0;
 }
@@ -467,13 +478,13 @@ void pag_inicia(void) {
     /* Identidad del nucleo: 0-4 MB, 4-8 MB, 8-13 MB y el LFB. Todo
        supervisor: ningun proceso puede escribir ahi. */
     uint32_t sup = PAG_PRESENTE | PAG_ESCRITURA;
-    /* 0-2 MB (nucleo), 16-17 MB (cola alta del catalogo ISO),
+    /* 0-2 MB (nucleo), 16-24 MB (cola alta del catalogo ISO),
        4.75-6.25 MB (pilas de anillo 0 y pool del FS),
        8-13 MB (heap, dorso, tablas). El resto NO se mapea: 2-3 MB y
        2-4.75 MB son para los procesos, y sin mapear aqui no hay
        aliasing entre un marco de usuario y la identidad del nucleo. */
     mapea_rango(0, 0x000000, 0x200000, sup);
-    mapea_rango(0, 0x1000000, 0x1100000, sup); /* F7-B/C: visible al nucleo */
+    mapea_rango(0, 0x1000000, 0x1800000, sup); /* F8: cola alta 8 MB */
     mapea_rango(0, 0x480000, 0x640000, sup);
     mapea_rango(0, 0x800000, 0xD00000, sup);
     mapea_rango(0, 0xE00000, 0xF00000, sup);

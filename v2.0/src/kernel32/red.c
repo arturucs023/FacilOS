@@ -1,4 +1,5 @@
 #include "red.h"
+#include "nim.h"
 #include "drv_red.h"
 #include "red_arp.h"
 #include "red_ip.h"
@@ -86,6 +87,18 @@ int red_rutas(uint8_t *dst, int max) {
 /* Devuelve 0 si debe ir por puerta (gw en *gw), 1 si directa,
    -1 si no hay ruta. */
 int red_ruta_para(uint32_t dst, uint32_t *gw) {
+    int oif = 0;
+    return red_ruta_oif(dst, gw, &oif);
+}
+
+/* F8: con interfaz de salida (una cfg global hoy: siempre oif=0). */
+int red_ruta_oif(uint32_t dst, uint32_t *gw, int *oif) {
+    if (oif) *oif = 0;
+    if (cfg.ip && cfg.mascara &&
+        (dst & cfg.mascara) == (cfg.ip & cfg.mascara)) {
+        *gw = 0;
+        return 1;
+    }
     if (cfg.ip && cfg.mascara &&
         (dst & cfg.mascara) == (cfg.ip & cfg.mascara)) {
         *gw = 0;
@@ -142,7 +155,7 @@ static void red_entrada(const uint8_t *m, int tam) {
 void red_bombea(void) {
     int n;
     for (;;) {
-        n = red_rx(bomba, sizeof(bomba));
+        n = nim_rx(0, bomba, sizeof(bomba));
         if (n <= 0) break;
         red_entrada(bomba, n);
     }

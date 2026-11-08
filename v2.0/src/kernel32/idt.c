@@ -68,7 +68,7 @@ void idt_init(void) {
     outb(0xA1, 0x02); io_espera();
     outb(0x21, 0x01); io_espera();
     outb(0xA1, 0x01); io_espera();
-    outb(0x21, 0xFC); io_espera();
+    outb(0x21, 0xF8); io_espera(); /* F8: cascada IRQ2 libre */
     outb(0xA1, 0xFF); io_espera();
     /* v2.0: el PIT lo programa su driver (pit_init) via drv_init_todos. */
     idt_cargar();

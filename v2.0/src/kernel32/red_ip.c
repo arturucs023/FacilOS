@@ -1,6 +1,7 @@
 #include "red_ip.h"
 #include "red.h"
 #include "red_arp.h"
+#include "nim.h"
 #include "red_icmp.h"
 #include "red_udp.h"
 #include "red_tcp.h"
@@ -92,7 +93,7 @@ int red_ip_enviar(uint32_t dst, uint8_t proto,
     }
     for (i = 0; i < 20; i++) marco[14 + i] = cab[i];
     for (i = 0; i < ncarga; i++) marco[34 + i] = carga[i];
-    r = red_tx(marco, 34 + ncarga);
+    r = nim_tx(0, marco, 34 + ncarga);
     if (r < 0) return -5;
     return ncarga;
 }

@@ -387,6 +387,10 @@ int fs_libres(void) {
 
 int fs_crear(int tipo, int padre, const char *nom) {
     if (!nombre_ok(nom)) return -1;
+    /* F8: valida tipo y padre (antes un padre/tipo arbitrario se
+     * almacenaba truncado y ensuciaba el indice). */
+    if (tipo != 1 && tipo != 2) return -1;
+    if (padre < 0 || padre >= FS_N || ent(padre)[0] != 1) return -1;
     if (fs_hijo(padre, nom) >= 0) return -2;
     for (int i = 1; i < FS_N; i++) {
         if (ent(i)[0]) continue;
@@ -466,8 +470,12 @@ int fs_escribir_parcial(int idx, uint32_t off, const uint8_t *buf,
     if (!n) return 0;
     uint16_t t = e_tam(idx);
     if (off > t) return -1;
+    /* F8: fin en 64 bit: off+n podia envolver u32 y eludir el tope. */
+    {
+        uint64_t fin64 = (uint64_t)off + (uint64_t)n;
+        if (fin64 > FS_MAX_TAM16) return -1;
+    }
     uint32_t fin = off + n;
-    if (fin > FS_MAX_TAM16) return -1;
     uint16_t ntam = fin > t ? (uint16_t)fin : t;
     if (ntam > fs_tam_max()) return -1;
     uint32_t need = nsec_de(ntam), old = nsec_de(t);

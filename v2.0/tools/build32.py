@@ -32,7 +32,7 @@ def run(cmd):
         sys.exit(1)
 
 run([NASM, "-f", "bin", str(K32 / "boot32.asm"), "-o", str(BLD / "boot32.bin")])
-assert (BLD / "boot32.bin").stat().st_size == 512, "boot32 != 512"
+assert (BLD / "boot32.bin").stat().st_size == 1024, "boot32 != 1024 (F8)"
 run([NASM, "-f", "win32", str(K32 / "entry32.asm"), "-o", str(BLD / "entry32.o")])
 run([NASM, "-f", "win32", str(K32 / "idt32.asm"), "-o", str(BLD / "idt32.o")])
 for c in sorted(K32.glob("*.c")):
@@ -52,27 +52,30 @@ floppy[0:512] = (BLD / "boot32.bin").read_bytes()
 floppy[512:512 + kb] = (BLD / "kernel32.bin").read_bytes()
 (IMG_DIR / "floppy32.img").write_bytes(bytes(floppy))
 
-# v1.8: TODO dentro de la ISO. El BIOS entrega al arranque la disquete
-# virtual de El Torito, que es la imagen que metemos en el LBA 21. Ahi va:
-#   LBA 0 = arranque | 1 = cabecera F32H | 2.. = nucleo | cat | datos
-# El cargador y el nucleo leen de ahi con int 0x13 AH=42 (solo lectura).
-IMG_LBA = 21
-IMG_F32H = 1
-IMG_KERN = 2
-iso = bytearray(2048 * 320)
+# F8: TODO dentro de la ISO, sin limite de 1,44 MB. Arranque por
+# no-emulacion El Torito + EDD (INT 13h AH=42h): el BIOS carga 2
+# sectores de 512 (boot32 de 1024 B) en 0x7C00 y el cargador lee
+# por LBA absoluta del CD. Ahi va (sectores logicos de 512):
+#   LBA 0 = arranque (sector 1) | 1..224 = nucleo | 225 = catalogo
+#   F32C (4 sect) | 229.. = datos. En el CD van empaquetados de 4
+#   en 4 en sectores de 2048 desde PAYLOAD_LBA. La RAM destino no
+#   cambia (0x30000 baja / 0x1000000 alta), asi que cd.c sigue igual.
+BOOT_LBA = 21        # sector CD (2048) con los 1024 B de arranque
+PAYLOAD_LBA = 22    # sector CD del logico 0
+iso = None          # se dimensiona al final (tamano = contenido)
 CAT_LBA = 0
 DATOS_LBA = 0
 def both16(v): return struct.pack("<H", v) + struct.pack(">H", v)
 def both32(v): return struct.pack("<I", v) + struct.pack(">I", v)
+iso_sec = {}   # F8: sectores CD (2048) dispersos; la ISO final se ensambla al final
 def wsec(lba, data):
     assert len(data) == 2048, len(data)
-    iso[lba * 2048:(lba + 1) * 2048] = data
+    iso_sec[lba] = bytes(data)
 pvd = bytearray(2048)
 pvd[0] = 1; pvd[1:6] = b"CD001"; pvd[6] = 1
 pvd[8:40] = b"FACILOS".ljust(32, b" ")
 pvd[40:72] = b"FACILOS_V20_32".ljust(32, b" ")
-struct.pack_into("<I", pvd, 80, len(iso) // 2048)
-struct.pack_into(">I", pvd, 84, len(iso) // 2048)
+# F8: tamano real se parchea al ensamblar (depende del contenido).
 now = datetime.datetime.now()
 db = bytes([now.year - 1900, now.month, now.day, now.hour, now.minute, now.second, 0])
 rr = bytearray(34); rr[0] = 34; rr[2:10] = both32(20); rr[10:18] = both32(2048)
@@ -93,14 +96,13 @@ cat[0] = 1; cat[4:28] = b"FACILOS1832".ljust(24, b"\x00"); cat[30] = 0x55; cat[3
 s = sum(struct.unpack("<16H", cat[0:32])) & 0xFFFF
 cat[28:30] = struct.pack("<H", (0x10000 - s) & 0xFFFF)
 cat[32] = 0x88          # arrancable
-cat[33] = 2             # medio: emulacion de disquete (lo unico que el
-cat[34] = 0x00          # BIOS es capa de leer la ISO; ver INFORME)
+cat[33] = 0             # F8: sin emulacion (antes 2 = disquete 1.44 MB)
+cat[34] = 0x00          # el BIOS carga `count` sectores de 512 en 0x7C00
 cat[35] = 0x00
 cat[36] = 0x00          # tipo de sistema (0 = BIOS)
 cat[37] = 0x00
-cat[38:40] = struct.pack("<H", 1)     # 1 sector al BIOS (solo el arranque);
-cat[40:44] = struct.pack("<I", IMG_LBA)   # con 0 intenta cargar 1.44 MB y
-                                         # cuelga (verificado en SeaBIOS)
+cat[38:40] = struct.pack("<H", 2)     # boot32 mide 1024 B (2 sectores)
+cat[40:44] = struct.pack("<I", BOOT_LBA)
 wsec(19, cat)
 rd = bytearray(2048)
 r1 = bytearray(34); r1[0] = 34; r1[2:10] = both32(20); r1[10:18] = both32(2048)
@@ -110,40 +112,39 @@ r2 = bytearray(34); r2[0] = 34; r2[2:10] = both32(20); r2[10:18] = both32(2048)
 r2[18:25] = db; r2[25] = 2; r2[28] = 1; r2[29] = 1
 rd[34:68] = r2
 wsec(20, rd)
-# sector 21: arranque. El nucleo va en 23.. y la cabecera F32H en 22.
-# Imagen de arranque de 1.44 MB: lo que SeaBIOS exige para emulacion de
-# disquete (v1.8: probados sin-emulacion, imagen corta y sector-count 0;
-# todos fallan en este BIOS; ver INFORME-v1.8-32.txt). Contenido util
-# ~130 KB; el resto es relleno que el BIOS exige.
-KERN_SECS = 224          # sectores de 512 que lee el cargador (F5; era 192)
-IMG_SECS = 2880
-img = bytearray(IMG_SECS * 512)
-CAT_LBA = KERN_SECS + 1  # LBA del catalogo (0 = arranque, 1.. = nucleo)
+# F8: payload logico de 512 B (sin tope de 1,44 MB): el arranque
+# (boot32 de 1024 B) ocupa su propio sector CD; aqui solo van los
+# logicos [0..fin): 0 = arranque (sector 1), 1..224 = nucleo,
+# 225 = catalogo F32C (4 sect), 229.. = datos (ver cdcat_build).
+# El tamano final lo dicta el contenido (10/50/100 MB posibles).
+KERN_SECS = 240          # sectores logicos de nucleo (F8: margen EDD; era 224)
+img = bytearray(225 * 512)
+CAT_LBA = KERN_SECS + 1  # = 225 (0 = arranque, 1.. = nucleo)
 # v1.9: el catalogo ocupa 4 sectores (2048 B) para que quepan 32 programas
 # (12 B de cabecera + 32 entradas de 32 B); con 512 B solo cabian 15.
 CAT_SECS = 4
 DATOS_LBA = CAT_LBA + CAT_SECS
-# El cargador lee LBAs 1..KERN_SECS (el nucleo) y despues copia el
-# catalogo de programas + sus datos a 0x20000 en RAM (ver boot32.asm).
+# El cargador lee LBAs 1..KERN_SECS (el nucleo) y despues la copia
+# baja [cat, 993) a 0x30000 y la alta [993, fin) a 0x1000000 (EDD).
 img[512:512 + kb] = (BLD / "kernel32.bin").read_bytes()
 assert kb <= KERN_SECS * 512, "nucleo > sectores del cargador"
-# F7-B: rutina de copia alta (tras el hueco VGA) en el sector de
-# relleno LBA 224 del area del nucleo (0x1000:0xBE00).
-assert kb <= 223 * 512, "nucleo invade el sector de copyalta"
-run([NASM, "-f", "bin", str(BASE / "tools" / "copyalta.asm"),
-     "-o", str(BLD / "copyalta.bin")])
-_cp = (BLD / "copyalta.bin").read_bytes()
-assert len(_cp) <= 512, "copyalta no cabe en un sector"
-img[224 * 512:225 * 512] = bytes(_cp) + bytes(512 - len(_cp))
-# El arranque: pay_secs en 496, cat_lba en 498, dat_lba en 500.
+# NOTA F8: copyalta.asm se conserva como historia (ISOs f7x); el nuevo
+# arranque carga la cola alta directo por EDD y ya no la usa/inyecta.
+# El arranque: pay_secs en 496, cat_lba en 498, dat_lba en 500;
+# iso_base (u32, LBA CD del logico 0) tras el marcador 'BFSX'
+# del sector 2 (busqueda, nunca offset fijo: antes pisaba codigo).
 _bs = bytearray((BLD / "boot32.bin").read_bytes())
+assert len(_bs) == 1024, "boot32 debe medir 1024 B (F8, 2 sectores)"
 struct.pack_into("<HHH", _bs, 496, 0, CAT_LBA, DATOS_LBA)  # pay luego
+_mag = bytes(_bs).find(b'BFSX')
+assert _mag >= 512 and _mag + 8 <= len(_bs), "sin marcador BFSX"
+struct.pack_into("<I", _bs, _mag + 4, PAYLOAD_LBA)
 assert _bs[510] == 0x55 and _bs[511] == 0xAA, "firma del arranque"
-img[0:512] = bytes(_bs)
+img[0:512] = bytes(_bs[0:512])
 # catalogo de programas (sector CAT_LBA) + datos alineados a 2048
 def cdcat_build(nombres):
     """Rellena el indice y los datos dentro de la imagen; devuelve LBA final."""
-    assert CAT_LBA > IMG_KERN, "catalogo solapado con el nucleo"
+    assert CAT_LBA > 2, "catalogo solapado con el nucleo"
     cab = bytearray(2048)
     cab[0:4] = b"F32C"
     cab[4] = 1
@@ -157,6 +158,10 @@ def cdcat_build(nombres):
         cab[off + 15] = 2
         struct.pack_into("<I", cab, off + 16, lba)
         struct.pack_into("<I", cab, off + 20, len(data))
+        # F8: la imagen crece con el contenido (sin tope de 2880).
+        need = lba * 512 + len(data)
+        if len(img) < need:
+            img.extend(bytes(need - len(img)))
         img[lba * 512:lba * 512 + len(data)] = data
         lba += (len(data) + 511) // 512
     img[CAT_LBA * 512:(CAT_LBA + CAT_SECS) * 512] = cab[:CAT_SECS * 512]
@@ -301,26 +306,42 @@ for _nom, _fs, _u, *_g in _apps3:
 # ---- escribir la ISO con el catalogo (todo dentro del CD) ----
 _todos = _programas + [a[0] for a in _apps3]
 _fin_img = cdcat_build(_todos)
-# F7-C: la cola del catalogo a partir del LBA 993 (tras la pila de
-# arranque en [0x90000,0xA0000)) vive en 0x1000000
-# (1 MB reservado en pag.c desde F7-C).
+# F8: cola alta [993, fin) en 0x1000000 (8 MB: pag.c mapea
+# 0x1000000-0x1800000). El tamano lo dicta el contenido.
 _cola = (_fin_img - 993) * 512
-assert _cola <= 0x100000 - 8192, "cola del catalogo > 1016K"
+assert _cola <= 0x800000 - 8192, "cola del catalogo > 8M-8K"
+pay = _fin_img - CAT_LBA
+assert pay <= 0xFFFF, "payload >32M: pasar params a u32 (ver F8)"
 # El arranque copia desde CAT_LBA hasta el final de los datos: eso son
-# (_fin_img - CAT_LBA) sectores de 512. Se lo parcheamos ahora.
-struct.pack_into("<H", img, 496, _fin_img - CAT_LBA)
+# (_fin_img - CAT_LBA) sectores de 512. Se parchea en el payload
+# (logico 0) y en el sector de arranque del CD (BOOT_LBA).
+struct.pack_into("<H", img, 496, pay)
+struct.pack_into("<H", _bs, 496, pay)
 _bs2 = bytearray(img[0:512])
 img[0:512] = bytes(_bs2)
-# meter la imagen completa (1.44 MB) en el LBA IMG_LBA
-_nimg = IMG_SECS
-iso[IMG_LBA * 2048:IMG_LBA * 2048 + _nimg * 512] = bytes(img)
-_fin = IMG_LBA + (_nimg * 512 + 2047) // 2048
+# Arranque (1024 B) en BOOT_LBA y payload empaquetado de 4 en 4
+# (4 logicos de 512 por sector CD de 2048) desde PAYLOAD_LBA.
+_ab = bytes(_bs)
+assert len(_ab) == 1024
+_bootsec = bytearray(2048)
+_bootsec[0:1024] = _ab
+wsec(BOOT_LBA, _bootsec)
+_ncd = (len(img) + 2047) // 2048
+for _k in range(_ncd):
+    _trozo = img[_k * 2048:(_k + 1) * 2048]
+    _sec = bytearray(2048)
+    _sec[0:len(_trozo)] = _trozo
+    wsec(PAYLOAD_LBA + _k, _sec)
+_fin = PAYLOAD_LBA + _ncd
 # el PVD declara el tamano real (si no, el BIOS lee mas alla del EOF)
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.3-red-f7c.iso"   # F7-C (f7b intacta)
-_iso = bytes(iso[:_fin * 2048])
+out_iso = ISO_DIR / "FacilOS-v2.3-f8.iso"   # F8 (f7c intacta)
+_iso = bytearray(_fin * 2048)
+for _k in range(_fin):
+    _iso[_k * 2048:(_k + 1) * 2048] = iso_sec.get(_k, bytes(2048))
+_iso = bytes(_iso)
 out_iso.write_bytes(_iso)
 print(f"OK {out_iso} {len(_iso)} bytes ({_fin} sectores, "
       f"{len(_todos)} programas dentro; util {kb + _fin_img * 512} B, "

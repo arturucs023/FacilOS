@@ -1,6 +1,7 @@
 #include "red_arp.h"
 #include "red.h"
 #include "drv_red.h"
+#include "nim.h"
 #include "libc.h"
 #include "irq.h"
 #include "proc.h"
@@ -170,7 +171,7 @@ void red_arp_entrada(const uint8_t *m, int tam) {
             r[39] = (uint8_t)((spa >> 8) & 0xFFu);
             r[40] = (uint8_t)((spa >> 16) & 0xFFu);
             r[41] = (uint8_t)((spa >> 24) & 0xFFu);
-            red_tx(r, 42);
+            nim_tx(0, r, 42);
         }
     }
 }
@@ -187,7 +188,7 @@ int red_arp_resolver(uint32_t ip, int espera_ms, uint8_t *mac) {
     if (busca(ip, mac)) return 0;
     if (red_mac(yo)) return -1;
     haz_peticion(pet, yo, red_cfg_ip(), ip);
-    tr = red_tx(pet, 42);
+    tr = nim_tx(0, pet, 42);
     if (tr != 42) return -1;
     fin = irq_ticks() + (uint32_t)espera_ms / 10u + 1u;
     {
@@ -201,7 +202,7 @@ int red_arp_resolver(uint32_t ip, int espera_ms, uint8_t *mac) {
             if ((int32_t)(ahora - ultimo_tx) >= 50) {
                 /* Reintento cada 0,5 s (la primera puede perderse);
                    espera total sigue acotada por `fin`. */
-                if (red_tx(pet, 42) == 42) ultimo_tx = ahora;
+                if (nim_tx(0, pet, 42) == 42) ultimo_tx = ahora;
             }
             proc_actual->modo = 0;
             proc_bloquea_ticks(irq_ticks() + 2u);
@@ -222,7 +223,7 @@ void red_arp_anuncia(void) {
     if (red_mac(yo)) return;
     /* Gratuito estilo sonda: spa==tpa==nuestra IP. */
     haz_peticion(pet, yo, mia, mia);
-    red_tx(pet, 42);
+    nim_tx(0, pet, 42);
 }
 
 int red_arp_n(void) {

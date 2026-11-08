@@ -116,26 +116,30 @@ inicio:
     mov ds, ax
     jmp .cargar
 .cargar:
-    ; El BIOS entrega DL = la disquete virtual de El Torito, que ES la
-    ; imagen que metimos en la ISO. Ahi esta el nucleo (LBA 1..128) y,
-    ; detras, el catalogo de programas. Se lee por CHS (AH=02) aqui, en
-    ; MODO REAL: desde 32 bits el int 0x13 del BIOS peta (#UD), y el
-    ; nucleo no lo necesita porque se lo copiamos ya en RAM.
-    ;   0x30000 = catalogo + programas (copia de la imagen)
+    ; El BIOS entrega DL = unidad de CD (no-emulacion El Torito).
+    ; El nucleo (LBA logicos 1..224) y el catalogo van empaquetados
+    ; en sectores de 2048 B del CD desde iso_base (sector 2).
+    ; Se leen por EDD (INT 13h AH=42h) aqui, en MODO REAL: desde
+    ; 32 bits el int 0x13 del BIOS peta (#UD), y el nucleo no lo
+    ; necesita porque se lo copiamos ya en RAM.
+    ;   0x30000 = catalogo + programas, copia baja [cat, 993)
+    ;   0x1000000 = cola alta [993, fin) (carga directa, sin copyalta)
     ;   0x10000 = nucleo (se copiara a 0x100000)
-    ; v2.2: el catalogo va a 0x30000 (el nucleo crecio y su carga de
-    ; 160 sectores llega a 0x23FFF: en 0x20000 lo pisaba).
-    ; F4: hasta 192 sectores (0x28000). F5 (TCP): hasta 224
-    ; sectores (0x2C000): sigue sin pisar 0x30000.
     ; Sin interrupciones: los IRQ del BIOS pisan la copia (probado).
     cli
+    call edd_ok
+    cmp ax, 0
+    jne sin_edd
     mov ax, 0x1000
     mov [p_seg], ax
     xor ax, ax
     mov [p_off], ax
     inc ax
     mov [p_lba], ax
-    mov ax, 224                     ; F5: nucleo hasta 224 sectores
+    mov ax, 240                     ; nucleo hasta 240 sectores logicos
+                                        ; (F8: debe coincidir con KERN_SECS de
+                                        ; build32.py; el assert kb<=240*512 lo
+                                        ; garantiza; si crece, subir ambos)
     mov [p_cnt], ax
     call leer
     mov ax, 0x3000
@@ -153,19 +157,24 @@ inicio:
     jbe .cnt_ok
     mov ax, bx
 .cnt_ok:
+    ; F8: cinturon y tirantes: aunque cat_lba fuese <225, la baja no
+    ; pasa de 768 sectores (0x30000->0x90000, pila/EBDA/VGA).
+    cmp ax, 768
+    jbe .cnt2_ok
+    mov ax, 768
+.cnt2_ok:
     mov [p_cnt], ax
     call leer
-    ; F7-C: la pila de arranque (64 KB en [0x90000,0xA0000)) y la EBDA
-    ; mas el hueco VGA (0xA0000) no retienen: lo copiado ahi se
-    ; pierde o lo pisa la pila (t1_lib se corrompia desde 9180).
-    ; La cola [993, fin) va alta (0x1000000) via copyalta.asm (sector de
-    ; relleno LBA 224 del nucleo; no-op si no hay cola).
-    call 0x2000:0xBE00
+    ; F8: la cola [993, fin) va directa a 0x1000000 por EDD (la vieja
+    ; copyalta por CHS ya no existe: la ISO no es disquete emulado).
+    call carga_alta
+.sin_cola:
 .ok:
     mov ax, [cat_lba]
     mov [0x7010], ax
     mov ax, [dat_lba]
     mov [0x7018], ax
+    mov dl, [unidad]
     mov [0x7000], dl        ; unidad de arranque
     cli
     lgdt [cs:gdt_ptr]
@@ -174,45 +183,6 @@ inicio:
     mov cr0, eax
     jmp 0x08:pm_entry
 
-; leer: copia p_cnt sectores (CHS) desde p_lba a p_seg:p_off.
-leer:
-    mov ax, [p_seg]
-    mov es, ax
-    mov bx, [p_off]
-    mov di, [p_lba]
-leer_bucle:
-    mov ax, di
-    mov cl, 36
-    div cl                       ; AL=cilindro (<256), AH=resto
-    push ax
-    mov al, ah
-    xor ah, ah
-    mov cl, 18
-    div cl                       ; AL=cabezal, AH=sector-1
-    mov dh, al
-    mov cl, ah
-    inc cl
-    pop ax
-    mov ch, al
-    mov dl, [unidad]
-    mov ax, 0x0201
-    int 0x13
-    jnc leer_ok
-    mov dx, 0x3F8                 ; error: '2' por serie (pantalla ya en
-    mov al, '2'                   ; grafico o el kernel ni arranco)
-    out dx, al
-    jmp inicio_error
-leer_ok:
-    add bx, 512
-    jnc leer_sin
-    mov ax, es
-    add ax, 0x1000
-    mov es, ax
-leer_sin:
-    inc di
-    dec word [p_cnt]
-    jnz leer_bucle
-    ret
 
 inicio_error:
     cli
@@ -261,3 +231,171 @@ p_off dw 0
 p_lba dw 0
 p_cnt dw 0
 dw 0xAA55
+; ---- sector 2 (F8: arranque EDD, sin limite de 1,44 MB) ----
+; Bloque de datos PRIMERO (offsets fijos): build32 localiza 'BFSX'.
+iso_magic dd 0x58534642    ; 'BFSX' + iso_base justo detras
+iso_base dd 22             ; LBA CD (2048 B) del logico 0 (parcheado)
+alta_lin dd 0x1000000
+cach_lo dd 0xFFFFFFFF
+cach_hi dd 0xFFFFFFFF
+edd_pkt db 16, 0
+edd_cnt dw 0
+edd_off dw 0
+edd_seg dw 0
+edd_lba dd 0, 0, 0, 0
+; GDT propia para el irreal de leer_alta (dato 32 bit 4 GB).
+gdt_u_ptr:
+    dw gdt_u_fin - gdt_u - 1
+    dd gdt_u
+gdt_u:
+    dd 0, 0
+    dd 0x0000FFFF, 0x00CF9A00   ; codigo 32 bit 4 GB (igual que copyalta)
+    dd 0x0000FFFF, 0x00CF9300   ; dato 32 bit 4 GB (igual que copyalta)
+gdt_u_fin:
+
+
+; edd_ok: F8: el chequeo AH=41h se cuelga con DL=0xE0 en este
+; SeaBIOS (probado); se asume EDD (la lectura AH=42h lo demostrara
+; o fallara con '4' por serie). Devuelve 0.
+edd_ok:
+    xor ax, ax
+    ret
+
+; carga_alta: si fin>993, copia [993, fin) a 0x1000000 por EDD.
+carga_alta:
+    mov ax, [cs:cat_lba]
+    add ax, [cs:pay_secs]          ; ax = fin (ultimo LBA + 1)
+    cmp ax, 993
+    jbe .no
+    sub ax, 993
+    mov [cs:p_cnt], ax
+    mov word [cs:p_lba], 993
+    mov dword [cs:alta_lin], 0x1000000
+    call leer_alta
+.no:
+    ret
+
+; leer: copia p_cnt sectores logicos (512 B) desde p_lba a p_seg:p_off
+; (<1 MB) por EDD con rebote 0x8000 y cache del ultimo sector CD.
+; edd_trae: DI=lba logico -> SI=origen en rebote (0x8000+((DI&3)*512)).
+; Preserva DI/BX/ES; deja DS=0.
+leer:
+    xor ax, ax
+    mov ds, ax
+    mov ax, [p_seg]
+    mov es, ax
+    mov bx, [p_off]
+    mov di, [p_lba]
+leer_bucle:
+    call edd_trae
+    push di
+    mov ax, bx              ; AX = destino viejo (para el acarreo 64K)
+    mov di, bx              ; DI = destino
+    mov cx, 256
+    rep movsw               ; DS:SI -> ES:DI (DS=0, SI=rebote)
+    mov bx, di
+    cmp di, ax
+    jae leer_sin
+    mov ax, es
+    add ax, 0x1000
+    mov es, ax
+leer_sin:
+    pop di
+    inc di
+    dec word [p_cnt]
+    jnz leer_bucle
+    ret
+
+; leer_alta: igual pero a [alta_lin] lineal (>=0x1000000) en irreal.
+; F8: DI es los 16 bits bajos de EDI: NO se puede usar DI como
+; contador y EDI como destino a la vez (el inc di corrompia ambos).
+; El LBA vive en [p_lba] y se recarga cada vuelta.
+leer_alta:
+    xor ax, ax
+    mov ds, ax
+    lgdt [cs:gdt_u_ptr]         ; GDT 4 GB propia (probada en copyalta)
+alta_bucle:
+    mov di, [cs:p_lba]
+    call edd_trae            ; SI = 0x8000+off, DS=0
+    mov eax, cr0
+    or al, 1
+    mov cr0, eax
+    mov bx, 0x10
+    mov ds, bx
+    mov es, bx
+    and al, 0xFE
+    mov cr0, eax
+    movzx esi, si
+    mov edi, [cs:alta_lin]
+    mov ecx, 128
+    a32 rep movsd
+    xor bx, bx
+    mov ds, bx
+    mov es, bx
+    mov eax, [cs:alta_lin]
+    add eax, 512
+    mov [cs:alta_lin], eax
+    inc word [cs:p_lba]
+    dec word [p_cnt]
+    jnz alta_bucle
+    ret
+
+; edd_trae: trae el sector CD que contiene el logico DI.
+; Entrada DI=lba (se preserva). Salida SI=0x8000+((DI&3)*512), DS=0.
+; Error EDD: '4' por serie y halt.
+edd_trae:
+    push ax
+    push dx
+    push bx
+    mov ax, di
+    shr ax, 2                ; AX = DI>>2 (relativo, 0..16383)
+    xor dx, dx
+    add ax, [cs:iso_base]
+    adc dx, [cs:iso_base+2]      ; DX:AX = sector CD absoluto
+    cmp ax, [cs:cach_lo]
+    jne .nuevo
+    cmp dx, [cs:cach_hi]
+    je .hit
+.nuevo:
+    mov [cs:cach_lo], ax
+    mov [cs:cach_hi], dx
+    mov word [cs:edd_cnt], 1
+    mov word [cs:edd_off], 0x8000
+    mov word [cs:edd_seg], 0
+    mov [cs:edd_lba], ax
+    mov [cs:edd_lba+2], dx
+    mov word [cs:edd_lba+4], 0
+    mov word [cs:edd_lba+6], 0
+    mov dl, [cs:unidad]
+    xor ax, ax
+    mov ds, ax
+    mov si, edd_pkt
+    sti                        ; F8: SeaBIOS/ATAPI necesita IRQ (ver log
+    mov ah, 0x42               ; EDD); sin esto el AH=42h no vuelve.
+    int 0x13
+    cli
+    jnc .hit
+    mov dx, 0x3F8            ; error EDD: '4' (la ISO nueva exige EDD)
+    mov al, '4'
+    out dx, al
+    jmp inicio_error
+
+.hit:
+    xor ax, ax
+    mov ds, ax
+    mov ax, di
+    and ax, 3
+    shl ax, 9                ; AX = (DI&3)*512
+    mov si, 0x8000
+    add si, ax
+    pop bx
+    pop dx
+    pop ax
+    ret
+
+sin_edd:
+    mov dx, 0x3F8            ; sin extensiones EDD: '4' y halt
+    mov al, '4'
+    out dx, al
+    jmp inicio_error
+times 1024-($-$$) db 0

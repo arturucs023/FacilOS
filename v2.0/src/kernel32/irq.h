@@ -12,6 +12,7 @@ void idt_init(void);
 void pit_init(void);
 int pit_drv_init(void);
 void irq_escucha(uint8_t irq, void (*h)(void));
+void irq_init(void);   /* F8: registra PIT/teclado en la HAL antes del sti */
 uint32_t irq_ticks(void);
 
 /* v1.6: PIT a 100 Hz (10 ms por tick) para temporizacion estable. */

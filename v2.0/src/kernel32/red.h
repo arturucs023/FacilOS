@@ -57,5 +57,7 @@ uint32_t red_cfg_ip(void);
 int red_rutas(uint8_t *dst, int max);
 /* 0 via puerta (gw), 1 directa, -1 sin ruta. */
 int red_ruta_para(uint32_t dst, uint32_t *gw);
+/* F8: variante con interfaz de salida (hoy siempre 0: cfg unica). */
+int red_ruta_oif(uint32_t dst, uint32_t *gw, int *oif);
 
 #endif

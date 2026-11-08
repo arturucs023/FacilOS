@@ -55,16 +55,27 @@ void kt_cancela(int id) {
 }
 
 void kt_tick(void) {
-    /* Corre en IRQ: solo descuenta y dispara callbacks triviales. */
+    /* Corre en IRQ: solo descuenta y dispara callbacks triviales.
+     * F8: foto local antes de llamar: si el callback registra/cancela,
+     * la tabla puede cambiar durante la llamada sin corromper el bucle. */
     for (int i = 0; i < KT_MAX; i++) {
         kt_fn cb;
         void *arg;
-        if (!tabla[i].activo) continue;
-        if (--tabla[i].falta > 0) continue;
+        uint32_t fl = cpu_eflags();
+        cli();
+        if (!tabla[i].activo) {
+            cpu_if_restaura(fl);
+            continue;
+        }
+        if (--tabla[i].falta > 0) {
+            cpu_if_restaura(fl);
+            continue;
+        }
         cb = tabla[i].cb;
         arg = tabla[i].arg;
         if (tabla[i].periodico) tabla[i].falta = tabla[i].periodo;
         else tabla[i].activo = 0;
+        cpu_if_restaura(fl);
         if (cb) cb(arg);
     }
 }

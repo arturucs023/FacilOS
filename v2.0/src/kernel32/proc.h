@@ -103,7 +103,8 @@ void proc_libera(proc_t *p);
 void proc_termina(proc_t *p, int rc);
 proc_t *proc_por_pid(int pid);
 proc_t *proc_por_indice(int i);
-void proc_anota_marco(proc_t *p, uint32_t fis);
+void proc_anota_marco(proc_t *p, uint32_t fis);   /* compatible: ignora lleno */
+int proc_anota_marco_w(proc_t *p, uint32_t fis);  /* F8: 0 ok, -1 lleno */
 /* Pila de anillo 0 por proceso, en la zona reservada 0xE00000. */
 uint32_t proc_toma_pila_kernel(void);
 int proc_slot_de_pila(uint32_t cima);
@@ -111,6 +112,8 @@ void proc_devuelve_pila_kernel(int slot);
 int proc_cuantos(void);
 int proc_ultimo_pid(void);
 void proc_fusiona(void);                /*回收: libera marcos de terminados */
+void proc_fusion_pendiente(void);     /* F8: marca fusion para tarea */
+void proc_fusion_si_toca(void);       /* F8: fusiona si hay pendiente */
 uint32_t proc_fugas(void);              /* desajustes destruccion detectados */
 int proc_vma_add(proc_t *p, uint32_t ini, uint32_t tam, uint32_t tipo);
 

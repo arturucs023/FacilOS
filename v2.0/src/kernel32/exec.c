@@ -183,6 +183,8 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
         return -102;
     }
     plano = tam < hc ? tam : tam - hc;
+    /* F8: el segundo tope (hc+plano+bss) es redundante con el primero
+     * (plano+bss), pero se conserva como guarda de cabecera. */
     if (tam != fr || ent >= plano || bss > 0x40000 ||
         plano + bss > 0xC0000 || hc + plano + bss > 0xE0000)
         return -102;
@@ -202,7 +204,11 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
         pag_libera_dir(di);
         return -105;
     }
-    /* argumentos del programa en la cima de la pila */
+    /* argumentos del programa en 0x2F0000 (u_args). El esp inicial
+     * apunta al inicio: el `call _main` de start.asm apila hacia abajo
+     * (0x2EFFFFC) y los args quedan intactos encima. Apuntar al final
+     * los pisaba con la direccion de retorno (dhcp leia basura). */
+    uint32_t esp_ini = 0x2F0000;
     if (args) {
         uint32_t k = 0;
         while (k < 255 && args[k]) k++;
@@ -239,7 +245,7 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
         pag_libera_dir(di);
         return -105;
     }
-    int pid = proc_crea(base, di, 0x200000 + ent, 0x2F0000);
+    int pid = proc_crea(base, di, 0x200000 + ent, esp_ini);
     if (pid < 0) {
         proc_devuelve_pila_kernel(proc_slot_de_pila(cima));
         pag_desmapa(di, 0x2E0000, PILA_USR_PAGS * PAG_MARCO);
@@ -254,12 +260,26 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
     p->cod_pags = (plano + bss + PAG_MARCO - 1) / PAG_MARCO;
     if (es_grafico) p->grafico = 1;
     /* los marcos que se han pedido hasta ahora quedan anotados para
-       poder devolverlos al terminar el proceso */
-    anota_rango(p, di, 0x200000, plano + bss);
-    anota_rango(p, di, 0x2E0000, PILA_USR_PAGS * PAG_MARCO);
+       poder devolverlos al terminar el proceso.
+       F8: si la anotacion o la VMA fallan, se aborta (transaccional):
+       antes se ignoraba y la fusion delataba FUGA con marcos huerfanos. */
+    if (anota_rango(p, di, 0x200000, plano + bss) ||
+        anota_rango(p, di, 0x2E0000, PILA_USR_PAGS * PAG_MARCO)) {
+        proc_devuelve_pila_kernel(proc_slot_de_pila(cima));
+        pag_desmapa(di, 0x2E0000, PILA_USR_PAGS * PAG_MARCO);
+        pag_desmapa(di, 0x200000, plano + bss);
+        pag_libera_dir(di);
+        return -105;
+    }
     /* regiones virtuales del proceso (v2.0) */
-    proc_vma_add(p, 0x200000, plano + bss, VMAR_CODIGO);
-    proc_vma_add(p, 0x2E0000, PILA_USR_PAGS * PAG_MARCO, VMAR_PILA);
+    if (proc_vma_add(p, 0x200000, plano + bss, VMAR_CODIGO) ||
+        proc_vma_add(p, 0x2E0000, PILA_USR_PAGS * PAG_MARCO, VMAR_PILA)) {
+        proc_devuelve_pila_kernel(proc_slot_de_pila(cima));
+        pag_desmapa(di, 0x2E0000, PILA_USR_PAGS * PAG_MARCO);
+        pag_desmapa(di, 0x200000, plano + bss);
+        pag_libera_dir(di);
+        return -105;
+    }
     /* Publicacion atomica: hasta aqui nadie podia verlo (NUEVO). */
     {
         uint32_t fl = cpu_eflags();
@@ -477,29 +497,64 @@ __attribute__((optimize("O0"))) static void sc_06(regs_t *r, int di)
 
 
 __attribute__((optimize("O0"))) static void sc_07(regs_t *r, int di)
- {   /* memoria(n): sbrk con paginas del proceso */
+ {   /* memoria(n): sbrk con paginas del proceso.
+     * F8: atomico. Antes mapeaba/anotaba a medias y aun asi avanzaba
+     * brk (fuga + FUGA espuria); con n==0 mapeaba una pagina gratis.
+     * La cota es el rango [UBRK_INI, UHEAP_FIN): la presencia se crea
+     * aqui, no se exige antes (pag_valida_usuario seria circular). */
         uint32_t n = r->ebx;
         uint32_t *b = user_brk();
         r->eax = (uint32_t)-1;
         if (di < 0) return;                    /* la shell usa kmalloc */
+        if (n == 0) { r->eax = *b; return; }
         if (n > UHEAP_FIN - *b) return;
-        uint32_t viejo = *b;
-        uint32_t nuevo = *b + n;
-        /* mapea las paginas nuevas que todavia no existan */
-        for (uint32_t v = viejo & ~(PAG_MARCO - 1); v < nuevo; v += PAG_MARCO) {
-            if (pag_presente((unsigned)di, v)) continue;
-            if (pag_mapa_nuevas((unsigned)di, v, PAG_MARCO,
-                                PAG_PRESENTE | PAG_ESCRITURA | PAG_USUARIO))
-                break;
-            uint32_t f;
-            if (!pag_translada((unsigned)di, v, &f))
-                proc_anota_marco(proc_actual, f & ~(PAG_MARCO - 1));
+        {
+            uint32_t viejo = *b;
+            uint32_t nuevo = viejo + n;
+            uint32_t ini = viejo & ~(PAG_MARCO - 1);
+            int nmarcos0 = proc_actual->nmarcos;
+            /* Solo las paginas aun no presentes necesitan marco nuevo;
+             * el rollback solo deshace esas (las previas se conservan). */
+            uint32_t nuevas[384];
+            int nn = 0;
+            for (uint32_t v = ini; v < nuevo; v += PAG_MARCO) {
+                if (pag_presente((unsigned)di, v)) continue;
+                if (nn < 384) nuevas[nn++] = v;
+                else { proc_actual->nmarcos = nmarcos0; return; }
+            }
+            for (int i = 0; i < nn; i++) {
+                uint32_t f;
+                uint32_t v = nuevas[i];
+                if (pag_mapa_nuevas((unsigned)di, v, PAG_MARCO,
+                                    PAG_PRESENTE | PAG_ESCRITURA |
+                                    PAG_USUARIO)) {
+                    for (int j = 0; j < i; j++)
+                        pag_desmapa((unsigned)di, nuevas[j], PAG_MARCO);
+                    proc_actual->nmarcos = nmarcos0;
+                    return;
+                }
+                if (pag_translada((unsigned)di, v, &f)) {
+                    for (int j = 0; j <= i; j++)
+                        pag_desmapa((unsigned)di, nuevas[j], PAG_MARCO);
+                    proc_actual->nmarcos = nmarcos0;
+                    return;
+                }
+                if (proc_anota_marco_w(proc_actual, f & ~(PAG_MARCO - 1))) {
+                    for (int j = 0; j <= i; j++)
+                        pag_desmapa((unsigned)di, nuevas[j], PAG_MARCO);
+                    proc_actual->nmarcos = nmarcos0;
+                    return;
+                }
+            }
+            if (proc_vma_add(proc_actual, ini, nuevo - ini, VMAR_HEAP)) {
+                for (int j = 0; j < nn; j++)
+                    pag_desmapa((unsigned)di, nuevas[j], PAG_MARCO);
+                proc_actual->nmarcos = nmarcos0;
+                return;
+            }
+            *b = nuevo;
+            r->eax = viejo;
         }
-        if (!pag_valida_usuario((unsigned)di, nuevo, 1, 1)) return;
-        *b = nuevo;
-        proc_vma_add(proc_actual, viejo & ~(PAG_MARCO - 1),
-                     nuevo - (viejo & ~(PAG_MARCO - 1)), VMAR_HEAP);
-        r->eax = viejo;
         return;
     }
 
@@ -1113,12 +1168,12 @@ __attribute__((optimize("O0"))) static void sc_45(regs_t *r, int di)
         uint32_t op = r->ebx;
         (void)di;
         if (op == 0) {
-            outb(0x70, 0x40);
+            outb(0x70, (uint8_t)(0x80 | 0x40));   /* F8: NMI inhibida */
             r->eax = (uint32_t)inb(0x71);
             return;
         }
         if (op == 1 && r->ecx <= 3) {
-            outb(0x70, 0x40);
+            outb(0x70, (uint8_t)(0x80 | 0x40));   /* F8: NMI inhibida */
             outb(0x71, (uint8_t)r->ecx);
             r->eax = 0;
             return;

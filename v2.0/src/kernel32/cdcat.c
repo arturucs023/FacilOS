@@ -77,6 +77,9 @@ int cdcat_leer(int i, uint32_t off, void *buf, uint32_t n) {
     int pedido;
     if (!listo || i < 0 || i >= n_ents) return 0;
     uint32_t tam = rd32(ents[i].tam);
+    /* F8: tam del catalogo sin verificar (ISO manipulada): el mismo
+     * tope que el cargador (plano+bss<=0xC0000 + 20 de cabecera). */
+    if (tam < 16 || tam > 0xC0014u) return 0;
     if (off >= tam) return 0;
     if (n > tam - off) n = tam - off;
     pedido = (int)n;

@@ -91,7 +91,13 @@ __attribute__((optimize("O0"))) void sc_ipc_recibir(regs_t *r, int di) {
     if (!proc_actual) return;
     proc_actual->modo = 0;      /* puede bloquearse dentro de la syscall */
     for (;;) {
-        if (proc_actual->buz_n > 0) {
+        uint32_t fl = cpu_eflags();
+        int hay;
+        cli();
+        hay = proc_actual->buz_n > 0;
+        if (!hay) proc_actual->espera_msg = 1;
+        cpu_if_restaura(fl);
+        if (hay) {
             int i = proc_actual->buz_ini;
             uint32_t len = proc_actual->buzon[i].len;
             uint32_t copia = len < max ? len : max;
@@ -109,7 +115,6 @@ __attribute__((optimize("O0"))) void sc_ipc_recibir(regs_t *r, int di) {
             r->eax = len;
             return;
         }
-        proc_actual->espera_msg = 1;
         proc_bloquea_msg();
     }
 }

@@ -2,6 +2,7 @@
 #include "cpu.h"
 #include "gfx.h"
 #include "bootinfo.h"
+#include "klog.h"
 
 static int usa_gfx = 0;
 
@@ -10,6 +11,7 @@ void cons_init(void) {
        siempre antes de aqui; solo se lee el estado. */
     usa_gfx = gfx_activo();
     if (!usa_gfx) vga_cls();
+    klog_consola(1);   /* F8: hay salida local (gfx o VGA) */
 }
 
 int cons_gfx(void) { return usa_gfx; }

@@ -12,6 +12,7 @@
 #include "proc.h"
 #include "bootinfo.h"
 #include "ktimer.h"
+#include "klog.h"
 #include "drv.h"
 #include "blk.h"
 #include "ps2.h"
@@ -44,6 +45,8 @@ void kmain(void)
 {
     uart_init();
     uart_puts("FacilOS32 v2.0 arranca.\r\n");
+    kprintf("build %s %s (F8)\r\n", __DATE__, __TIME__);
+    klog_init();
     mm_init();
     {
         uint32_t ku, kp, kd, kc;
@@ -57,21 +60,27 @@ void kmain(void)
     proc_inicia();
     idt_init();
     seg_init();
+    /* F8: PIT primero y drivers antes del sti (antes la IRQ0 corria a
+     * frecuencia heredada y el teclado encolaba sin driver listo). */
+    pit_drv_init();
+    /* v2.0-etapa3: deteccion de disco ANTES de montar (ramfs la necesita). */
+    blk_init();
+    /* F8: registro con recursos (PIO/IRQ) para detectar conflictos.
+     * Teclado y raton comparten el KBC (0x60/0x64): solo el teclado
+     * lo declara; la red declara tras el probe (sin recursos aqui). */
+    drv_registra_ex("pantalla", pantalla_init, 0, 0, 0x1CE, 2, 0, 0);
+    drv_registra_ex("teclado", teclado_init, 1, 1, 0x60, 1, 0, 0);
+    drv_registra_ex("raton", ps2_init, 12, 1, 0, 0, 0, 0);
+    drv_registra_ex("pit", pit_drv_init, 0, 1, 0x40, 4, 0, 0);
+    drv_registra("ramfs", ramfs_init);
+    drv_registra("red", red_init);
+    drv_init_todos();
+    irq_init();   /* F8: PIT/teclado a la HAL */
     sti();
     {
         int kta = kt_autoprueba();
         kprintf("ktimer: autoprueba=%d\r\n", kta);
     }
-    /* v2.0-etapa3: deteccion de disco ANTES de montar (ramfs la necesita). */
-    blk_init();
-    /* v2.0: drivers con contrato (pantalla, teclado, pit, ramfs). */
-    drv_registra("pantalla", pantalla_init);
-    drv_registra("teclado", teclado_init);
-    drv_registra("raton", ps2_init);
-    drv_registra("pit", pit_drv_init);
-    drv_registra("ramfs", ramfs_init);
-    drv_registra("red", red_init);
-    drv_init_todos();
     cons_init();
     cdcat_inicia();
     {
@@ -99,10 +108,10 @@ void kmain(void)
        el proximo arranque (el modo pedido no existe en este video). */
     if (!gfx_activo()) {
         uint8_t cv;
-        outb(0x70, 0x40);
+        outb(0x70, (uint8_t)(0x80 | 0x40));   /* F8: NMI inhibida */
         cv = inb(0x71);
         if (cv > 3) {
-            outb(0x70, 0x40);
+            outb(0x70, (uint8_t)(0x80 | 0x40));   /* F8: NMI inhibida */
             outb(0x71, 0);
             kprintf("video: modo %u no soportado, restablecido 800x600\r\n",
                     (unsigned)cv);
@@ -149,6 +158,7 @@ void kmain(void)
        vivos y da la consola de texto. Mientras tanto, los procesos de
        usuario usan la CPU solos. */
     for (;;) {
+        proc_fusion_si_toca();   /* F8: reaper diferido en tarea */
         if (!proc_hay_graficos()) break;
         proc_bloquea_ticks(irq_ticks() + 5);
     }

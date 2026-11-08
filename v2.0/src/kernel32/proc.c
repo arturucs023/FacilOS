@@ -7,6 +7,7 @@
 #include "cpu.h"
 #include "seg.h"
 #include "irq.h"
+#include "klog.h"
 
 /* FacilOS32 v1.9: procesos de usuario y planificador Round Robin.
  *
@@ -94,6 +95,16 @@ static void anota_marco(proc_t *p, uint32_t f) {
 
 void proc_anota_marco(proc_t *p, uint32_t fis) { anota_marco(p, fis); }
 
+/* F8: variante fallible para rutas transaccionales (sbrk, carga). */
+int proc_anota_marco_w(proc_t *p, uint32_t fis) {
+    if (!p) return -1;
+    if (p->nmarcos >= MARCOS_MAX) return -1;
+    p->marcos[p->nmarcos++] = fis;
+    if ((uint32_t)p->nmarcos > p->pico_marcos)
+        p->pico_marcos = (uint32_t)p->nmarcos;
+    return 0;
+}
+
 /* Pila de anillo 0 por proceso. Vive en 0xE00000 (1 MB, 32 ranuras de
    32 KB) porque el nucleo la usa por direccion directa y la identidad solo
    cubre sus propias zonas. */
@@ -153,7 +164,20 @@ int proc_crea(const char *nombre, unsigned di, uint32_t eip, uint32_t esp) {
     proc_t *p = &proc_tareas[slot];
     libc_memset(p, 0, sizeof(*p));
     p->usado = 1;
-    p->pid = ++ultimo_pid;
+    /* F8: evita pid<=0 al envolver INT_MAX (romperia sc_31 y la tarea 0). */
+    if (++ultimo_pid <= 0) ultimo_pid = 1;
+    {
+        proc_t *q = proc_por_pid(ultimo_pid);
+        if (q) {
+            /* Colision improbable: avanza hasta un pid libre. */
+            int intentos = 0;
+            while (q && intentos++ < MAXPROC + 2) {
+                if (++ultimo_pid <= 0) ultimo_pid = 1;
+                q = proc_por_pid(ultimo_pid);
+            }
+        }
+    }
+    p->pid = ultimo_pid;
     int k = 0;
     while (nombre && nombre[k] && k < 15) { p->nombre[k] = nombre[k]; k++; }
     p->nombre[k] = 0;
@@ -180,16 +204,12 @@ int proc_crea(const char *nombre, unsigned di, uint32_t eip, uint32_t esp) {
 }
 
 void proc_libera(proc_t *p) {
-    /* Marcos de usuario y de kernel: todos los que apunto el proceso. */
-    for (int i = 0; i < p->nmarcos; i++) pag_devuelve_marco(p->marcos[i]);
-    p->nmarcos = 0;
-    if (p->di) {
-        /* Desmapear antes de devolver el directorio al pool. */
-        pag_desmapa(p->di, 0x200000, PAG_TAMANO);   /* codigo, pila, heap 1 */
-        pag_desmapa(p->di, 0x400000, PAG_MARCO * 128); /* heap 2 */
-    }
-    p->usado = 0;
-    p->estado = EST_NUEVO;
+    /* F8: funcion heredada peligrosa (desmapeaba 0x200000+4MB y alcanzaba
+     * copias supervisor). Sin llamadas en el arbol. Se conserva la firma
+     * pero ya no desmapea por rangos: el unico liberador es proc_fusiona.
+     * Si alguien la llama, avisa y no corrompe. */
+    (void)p;
+    klog(KLOG_WARN, "proc", "proc_libera obsoleta (usar fusion)");
 }
 
 /* Recoge los procesos terminados: devuelve sus marcos al pool. Nunca se
@@ -224,6 +244,18 @@ int proc_vma_add(proc_t *p, uint32_t ini, uint32_t tam, uint32_t tipo) {
     return 0;
 }
 
+/* F8: la fusion ya no corre en IRQ. La IRQ marca pendiente y las
+ * tareas la ejecutan (cede/bloquea/bucle de tarea 0). */
+static volatile int fusion_pend = 0;
+
+void proc_fusion_pendiente(void) { fusion_pend = 1; }
+
+void proc_fusion_si_toca(void) {
+    if (!fusion_pend) return;
+    fusion_pend = 0;
+    proc_fusiona();
+}
+
 void proc_fusiona(void) {
     for (int i = 1; i <= MAXPROC; i++) {
         proc_t *p = &proc_tareas[i];
@@ -243,14 +275,13 @@ void proc_fusiona(void) {
                                               p->vmars[v].tam);
             if (presentes != (uint32_t)p->nmarcos) {
                 fugas_detectadas++;
-                kprintf("FUGA pid=%d presentes=%u anotados=%d nvmars=%d\n",
-                        p->pid, presentes, p->nmarcos, p->nvmars);
-                for (int v = 0; v < p->nvmars; v++)
-                    kprintf("  vma%d tipo=%u ini=%x tam=%x pres=%u\n", v,
-                            p->vmars[v].tipo, p->vmars[v].ini,
-                            p->vmars[v].tam,
-                            pag_cuenta_rango(p->di, p->vmars[v].ini,
-                                             p->vmars[v].tam));
+                /* F8: antes kprintf aqui (en IRQ colgaba con EOI pendiente).
+                 * Ahora klog por serie+buffer, sin consola/gfx. */
+                klog(KLOG_WARN, "proc", "fuga marcos (ver sc_36)");
+                klog_hex(KLOG_WARN, "proc", "pid", (uint32_t)p->pid);
+                klog_hex(KLOG_WARN, "proc", "presentes", presentes);
+                klog_hex(KLOG_WARN, "proc", "anotados",
+                         (uint32_t)p->nmarcos);
             }
         }
         if (p->pila_kern >= 0) {
@@ -281,9 +312,26 @@ void proc_despierta_hijos(int pid) {
 }
 
 void proc_termina(proc_t *p, int rc) {
+    /* F8: antes no liberaba nada y nadie la usaba. Ahora marca FIN de
+     * forma segura; la limpieza real la hace proc_fusiona en tarea. */
+    uint32_t fl;
+    if (!p) return;
+    fl = cpu_eflags();
+    cli();
+    if (!p->usado || p->estado == EST_FIN) {
+        cpu_if_restaura(fl);
+        return;
+    }
     p->rc = rc;
     p->estado = EST_FIN;
-    if (p->ppid >= 0) proc_despierta_hijos(p->ppid);
+    if (p->ppid >= 0) {
+        proc_t *padre = proc_por_pid(p->ppid);
+        if (padre &&
+            (padre->estado == EST_BLOQ || padre->estado == EST_LISTO))
+            padre->estado = EST_LISTO;
+    }
+    cpu_if_restaura(fl);
+    proc_fusion_pendiente();
 }
 
 /* ---- contexto --------------------------------------------------------- */
@@ -400,6 +448,7 @@ __attribute__((optimize("O0"))) static void cede_a(proc_t *p) {
    Etapa2: no pisa un LISTO concurrente (un despertar entre el preset del
    llamante y esta funcion debe sobrevivir; el llamante revalida). */
 static void bloquea(void) {
+    proc_fusion_si_toca();
     if (proc_actual && proc_actual->estado != EST_LISTO)
         proc_actual->estado = EST_BLOQ;
     for (;;) {
@@ -417,6 +466,7 @@ static void bloquea(void) {
 }
 
 void proc_cede(void) {
+    proc_fusion_si_toca();
     if (proc_actual) proc_actual->estado = EST_LISTO;
     int i = elige_otra();
     if (i < 0) {
@@ -444,10 +494,17 @@ void proc_bloquea_tecla(void) {
 }
 
 void proc_bloquea_ticks(uint32_t hasta) {
+    /* F8: preset bajo cli como tecla/raton (tarea 0 corre con IF=1). */
+    uint32_t fl = cpu_eflags();
+    cli();
     if (proc_actual) {
         proc_actual->dormir_hasta = hasta;
         proc_actual->modo = 0;
+        if (proc_actual->estado == EST_EJECUTO)
+            proc_actual->estado = EST_BLOQ;
     }
+    cpu_if_restaura(fl);
+    if (proc_actual && proc_actual->estado != EST_BLOQ) return;
     bloquea();
     if (proc_actual) proc_actual->dormir_hasta = 0;
 }
@@ -457,6 +514,8 @@ void proc_bloquea_ticks(uint32_t hasta) {
    es otra syscall: en mononucleo no se intercala aqui (necesita la CPU que
    tiene el que espera), asi que basta el BLOQ normal de bloquea(). */
 void proc_bloquea_msg(void) {
+    /* F8: el flag espera_msg lo pone el llamante; aqui solo se entra
+     * con seccion critica del llamante o IF=0 (syscall). */
     bloquea();
 }
 
@@ -475,15 +534,23 @@ void proc_bloquea_raton(void) {
 }
 
 int proc_espera_hijo(int pid) {
+    uint32_t fl = cpu_eflags();
+    cli();
     if (proc_actual) proc_actual->modo = 0;
+    cpu_if_restaura(fl);
     for (;;) {
-        proc_t *hijo = proc_por_pid(pid);
+        proc_t *hijo;
+        fl = cpu_eflags();
+        cli();
+        hijo = proc_por_pid(pid);
         if (!hijo || hijo->estado == EST_FIN) {
-            if (hijo) {
-                return hijo->rc;
-            }
-            return -1;
+            int rc = hijo ? hijo->rc : -1;
+            cpu_if_restaura(fl);
+            return rc;
         }
+        /* F8: revalidado bajo cli: si el hijo termino entre el test y
+         * el bloqueo, ya habriamos retornado arriba. */
+        cpu_if_restaura(fl);
         bloquea();
     }
 }

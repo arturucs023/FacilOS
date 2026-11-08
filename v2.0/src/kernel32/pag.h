@@ -8,24 +8,23 @@
  *   0x000000-0x0FFFFF  BIOS, fuente 0x6000, bootinfo 0x7000, E820 0x5000,
  *                      pila de arranque 0x90000, copias temporales
  *   0x100000-0x1FFFFF  nucleo (codigo, datos, BSS)          supervisor
- *   0x200000-0x2DFFFF  usuario: codigo+BSS y pila           usuario
- *   0x2E0000-0x2EFFFF  cima de la pila de usuario (0x2F0000 argumentos)
+ *   0x200000-0x2CFFFF  usuario: codigo+BSS (plano+bss<=0xC0000) usuario
  *   0x2D0000           pagina de guardia bajo la pila (no presente)
+ *   0x2E0000-0x2FFFFF  pila de usuario 32 pags (args al final) usuario
  *   0x300000-0x47FFFF  usuario: heap (sbrk)                  usuario
- *   0x480000-0x5FFFFF  pilas de anillo 0                    supervisor
- *   0x600000-0x63FFFF  pool de datos del FS en RAM          supervisor
- *   0x800000-0x9FFFFF  heap del kernel                      supervisor
- *   0xA00000-0xBFFFFF  dorso grafico (modos de hasta 2 MB)    supervisor
- *   0xC00000-0xC5A000  tablas de pagina (PDs y PTs)         supervisor
+ *   0x480000-0x63FFFF  pilas de anillo 0 + pool FS 0x60000    supervisor
+ *   0x800000-0xCFFFFF  heap del kernel 2MB + dorso 2MB        supervisor
+ *   (tablas PD/PT en .bss del nucleo, no en 0xC00000)
  *   0x40000000         ventana del kernel para tocar memoria de usuario
  *   LFB (VESA)         ventana de 12 MB                      supervisor
  *   dorso grande       bloque alto de 9 MB detectado por E820
  *                      (pantalla completa a 1920x1080x32)   supervisor
   *
  * Cada proceso tiene su propio directorio y sus propias paginas de
- * usuario; el nucleo (0-0x1FFFFF, 0x480000-0x7FFFFF, 0x800000-0xCFFFFF y el
- * LFB) se comparte como supervisor, asi que un proceso de usuario no
- * puede escribirlo (bits de privilegio 0 y CR0.WP mas adelante).
+ * usuario; el nucleo (0-0x1FFFFF, 0x480000-0x63FFFF, 0x800000-0xDFFFFF,
+ * 0xE00000-0xF00000, 0x1000000-0x1800000 y el LFB) se comparte como
+ * supervisor, asi que un proceso de usuario no puede escribirlo
+ * (bits de privilegio 0 y CR0.WP mas adelante).
  */
 
 #define PAG_MARCO 4096u

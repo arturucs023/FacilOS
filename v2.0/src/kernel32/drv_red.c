@@ -4,6 +4,7 @@
 #include "libc.h"
 #include "irq.h"
 #include "red.h"
+#include "nim.h"
 #include "red_arp.h"
 #include "red_ip.h"
 #include "red_icmp.h"
@@ -122,18 +123,21 @@ int red_init(void) {
     if (pci_busca(0x10EC, 0x8139, &bus, &dev, &fun)) {
         kprintf("red: sin adaptador (arranque sin red)\r\n");
         presente = 0;
+        nim_init();
         return 0;
     }
     bar0 = pci_cfg_lee(bus, dev, fun, 0x10);
     if (!(bar0 & 1u)) {
         kprintf("red: BAR de memoria no soportado en F1\r\n");
         presente = 0;
+        nim_init();
         return 0;
     }
     iob = (uint16_t)(bar0 & 0xFFFFFFFCu);
     if (!iob) {
         kprintf("red: BAR PIO vacio\r\n");
         presente = 0;
+        nim_init();
         return 0;
     }
     /* IO + bus mastering, sin tocar lo demas. */
@@ -148,6 +152,7 @@ int red_init(void) {
     if (espera_cero(R_CR, CR_RST)) {
         kprintf("red: reset sin respuesta\r\n");
         presente = 0;
+        nim_init();
         return 0;
     }
     /* Anillo Rx 16K alineado a 8K (kheap identidad: virt==fis). */
@@ -155,6 +160,7 @@ int red_init(void) {
     if (!crudo) {
         kprintf("red: sin memoria para anillo Rx\r\n");
         presente = 0;
+        nim_init();
         return 0;
     }
     rx_anillo = (uint8_t *)(((uint32_t)crudo + 8191u) & ~8191u);
@@ -176,6 +182,7 @@ int red_init(void) {
         if (i < 5) kprintf(":");
     }
     kprintf("\r\n");
+    nim_init();   /* F8: fija presente/activo tras el probe */
     return 0;
 }
 

@@ -217,32 +217,39 @@ static const tecla_t *tabla_ext(void) {
 }
 
 int kbd_hay(void) {
+    uint32_t fl = cpu_eflags();
     int hay;
     cli();
     hay = tk_ini != tk_fin;
-    sti();
+    cpu_if_restaura(fl);
     return hay;
 }
 
 int kbd_tecla(void) {
     for (;;) {
+        uint32_t fl = cpu_eflags();
         cli();
         if (tk_ini != tk_fin) {
             int v = tk_cola[tk_ini];
             tk_ini = (tk_ini + 1) % TK_N;
-            sti();
+            cpu_if_restaura(fl);
             return v;
         }
+        /* F8: la espera con hlt exige IF=1 para despertar con la IRQ.
+         * Si se entro con IF=0 (tarea 0 tras bloquea), restaurar solo
+         * no basta: se habilita explicito como hace bloquea/ktimer. */
         sti();
         hlt();
         cli();
+        fl = cpu_eflags();
+        cli();
         if (tk_ini != tk_fin) {
             int v = tk_cola[tk_ini];
             tk_ini = (tk_ini + 1) % TK_N;
-            sti();
+            cpu_if_restaura(fl);
             return v;
         }
-        sti();
+        cpu_if_restaura(fl);
         {
             extern void proc_bloquea_tecla(void);
             proc_bloquea_tecla();
@@ -251,6 +258,8 @@ int kbd_tecla(void) {
 }
 
 void teclado_irq(void) {
+    extern volatile int ps2_sondeo;
+    if (ps2_sondeo) return;   /* F8: sondeo PS/2 en curso, no consumir 0x60 */
     uint8_t sc = inb(0x60);
     if (sc == 0xE0) { tk_ext = 1; return; }
     int suelto = sc & 0x80;
