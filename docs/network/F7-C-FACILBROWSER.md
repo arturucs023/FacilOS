@@ -63,10 +63,19 @@ Con fin 2277, cola 1284 sectores (657 KB < 1 MB). `t1_lib`
 - `t1_lib`: 258 pruebas 0 fallos (antes: `#PF` determinista).
 - `t_red`: 97/0 (sin red y KAT).
 - `tutf8`: 26/0. `mem32`: 15/0.
-- `t_fb`: 94/0 sin red; con `dhcp` + stub: 100/0
+- `t_fb`: 94/0 sin red; con `dhcp` + stub: 105/0
   (`viva-pagina-200/enlaces/titulo`, `malformada-dibuja`,
-  `grande-tope`), stub recibe `/pagina`, `/malformada`,
-  `/grande-html`.
+  `grande-tope`, `viva-busca-200/enlaces`,
+  `viva-busca-abre-200/cuerpo`, `viva-cfg-escribe`),
+  stub recibe `/pagina`, `/malformada`, `/grande-html`,
+  `/busca?q=hola`, `/pagina`.
+- Buscador propio HTTP: `t_fb` escribe `/fbrowser.cfg` con
+  `http://10.0.2.2:18080/busca?q=`; en `fbrowser` escribir
+  `hola` busca ahi (sin punto/espacio tras `es_busqueda`) y
+  muestra 2 enlaces; `Tab` + `Intro` abre `/pagina`.
+  Capturas en `v2.0/build/images`: `s_menu`, `s_fb0`,
+  `s_busca` (resultados de hola), `s_abre` (pagina abierta).
+  Gmail sigue fuera: exige HTTPS, JS, POST y cookies.
 - Catálogo: 46 programas, `F32X`, LBAs 229..2049.
 - Gráfico: menú con `fbrowser` e icono; `lanza fbrowser
   pid=2 / reg id=0` sin excepción; ventana `FacilBrowser`

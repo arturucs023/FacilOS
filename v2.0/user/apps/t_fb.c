@@ -410,6 +410,78 @@ static void prueba_viva(const char *base) {
         ok(k == -8, "viva-grande-tope");
         (void)n;
     }
+    {
+        char u[128];
+        char cfg[128];
+        int i = 0;
+        while (base[i] && i < 110) {
+            u[i] = base[i];
+            cfg[i] = base[i];
+            i++;
+        }
+        u[i++] = '/';
+        u[i++] = 'b';
+        u[i++] = 'u';
+        u[i++] = 's';
+        u[i++] = 'c';
+        u[i++] = 'a';
+        u[i++] = '?';
+        u[i++] = 'q';
+        u[i++] = '=';
+        u[i++] = 'h';
+        u[i++] = 'o';
+        u[i++] = 'l';
+        u[i++] = 'a';
+        u[i] = 0;
+        cfg[i - 13] = 0;
+        {
+            int j = 0;
+            const char *suf = "/busca?q=";
+            while (cfg[j]) j++;
+            {
+                int t = 0;
+                while (suf[t] && j < 120) cfg[j++] = suf[t++];
+            }
+            cfg[j] = 0;
+        }
+        k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+        ok(k == 0 && r.codigo == 200, "viva-busca-200");
+        if (k == 0) {
+            int pr;
+            if (u_html_crea(&d)) {
+                ok(0, "viva-mem3");
+                return;
+            }
+            pr = u_html_parse(&d, cpo, (int)r.cuerpo_n, u);
+            ok(pr >= 0 && d.nenl >= 2, "viva-busca-enlaces");
+            if (pr >= 0 && d.nenl >= 1) {
+                char u2[U_HTML_URL];
+                int t = 0;
+                while (d.enl[0].url[t] && t < 120) {
+                    u2[t] = d.enl[0].url[t];
+                    t++;
+                }
+                u2[t] = 0;
+                k = u_http_trae(u2, &r, cpo, (int)sizeof(cpo),
+                    15000);
+                ok(k == 0 && r.codigo == 200,
+                    "viva-busca-abre-200");
+                if (k == 0)
+                    ok(r.cuerpo_n > 0, "viva-busca-abre-cuerpo");
+            }
+            u_html_libera(&d);
+        }
+        {
+            UFILE *f = u_fopen("/fbrowser.cfg", "w");
+            if (f) {
+                int L = u_strlen(cfg);
+                ok(u_fwrite(cfg, L, f) == L, "viva-cfg-escribe");
+                u_fclose(f);
+            } else {
+                ok(0, "viva-cfg-crea");
+            }
+        }
+    }
 }
 
 int main(void) {

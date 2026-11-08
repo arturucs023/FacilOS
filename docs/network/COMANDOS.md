@@ -39,6 +39,11 @@
   automatica (301/302 hasta 3 saltos manuales con aviso).
   Requiere escritorio (servidor); la URL inicial es opcional.
   Ejemplo: `fbrowser http://10.0.2.2:18080/pagina`.
+  Buscador propio: si existe `/fbrowser.cfg` con una base
+  `http://.../...?q=`, escribir una palabra (p. ej. `hola`)
+  la busca ahi; el stub trae `/busca?q=hola` con 2 enlaces
+  (`/pagina`, `/lista`). Gmail queda fuera: exige HTTPS,
+  JS, POST y cookies (no soportados por diseno).
 - Sin adaptador: `red`/`mostrar_interfaz` informan
   `sin adaptador`; `configurar_ip`/`mostrar_rutas` funcionan igual
   (la configuracion no exige hardware); `configurar_dhcp`,
