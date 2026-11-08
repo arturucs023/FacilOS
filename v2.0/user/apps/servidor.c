@@ -1153,6 +1153,25 @@ static void frame(void) {
     }
 }
 
+/* Fin de arrastre/redimension: repintado total + espera acotada a
+   que la app vacie sus DRAW pendientes + repintado final. El camino
+   incremental por union puede dejar restos (un DRAW tardio pinta
+   fuera de su union ya reparada); al soltar no hay mas lotes que lo
+   curen. La espera esta acotada (25 x 100 ms max) y el pase extra es
+   unico: sin bucle sobre ACKs (evita tormenta con apps lentas). */
+static void repara_suelta(int rid) {
+    int w2;
+    bg_dirty = 1;
+    frame();
+    for (w2 = 0; w2 < 25 && rid >= 0 && rid < NVENT &&
+         vents[rid].usado && vents[rid].ack_pend; w2++)
+        espera_ack(rid);
+    if (w2 > 0 && rid >= 0 && rid < NVENT && vents[rid].usado) {
+        bg_dirty = 1;
+        frame();
+    }
+}
+
 /* Maximizar/restaurar (v2.1-p1): guarda geometria, ocupa el area de
    trabajo (0,0,PANT_W,AREA_H); restaurar devuelve la previa. */
 static void conmuta_max(int id) {
@@ -1471,10 +1490,12 @@ int main(void) {
                 frame();
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
-                /* ACK tardio: reanuda + repinta (el contenido llego tarde
-                   y nadie lo redibuja si no). Con cromo incluido: si el
-                   ACK se perdio un frame con geometria nueva, solo
-                   contenido dejaba el marco rancio para siempre. */
+                /* ACK tardio: reanuda (el contenido llego tarde y nadie
+                   lo redibuja si no). Sin frame aqui: enmarcar ahora
+                   reenviaria DRAW y, con una app lenta, encadenaria
+                   DRAW->espera->ACK->frame para siempre. El repintado
+                   lo hace el proximo frame con dano (lote de raton,
+                   tick, tecla) o el repintado de suelta. */
                 int k;
                 for (k = 0; k < NVENT; k++) {
                     if (vents[k].usado && vents[k].pid == de) {
@@ -1612,7 +1633,11 @@ int main(void) {
                 }
                 frame();
             } else {
-                if (arr_id >= 0 && !(mb & 1)) arr_id = -1;
+                if (arr_id >= 0 && !(mb & 1)) {
+                    int rid = arr_id;
+                    arr_id = -1;
+                    repara_suelta(rid);
+                }
                 /* hover del menu */
                 if (menu_abierto) {
                     int mi = menu_en(mx, my);
