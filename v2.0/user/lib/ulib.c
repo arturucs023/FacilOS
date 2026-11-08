@@ -2137,3 +2137,1333 @@ int u_http_trae(const char *url, u_http_res_t *r, unsigned char *cuerpo,
         return 0;
     }
 }
+
+/* ---- F7-C: HTML minimo (parser + URL + layout; sin JS/CSS) ----
+   Sin libc: solo u_* y bucles acotados. Sin recursion. Todo
+   truncado se avisa (d->truncado / retorno 1), nunca silencioso. */
+
+static int html_mini(int c) {
+    if (c >= 'A' && c <= 'Z') return c + ('a' - 'A');
+    return c;
+}
+
+static int html_es_blanco(int c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+        c == '\f' || c == '\v';
+}
+
+/* Copia s[0..n) a d (cap) decodificando UTF-8; lo invalido se
+   sustituye por U+FFFD (EF BF BD). Devuelve bytes escritos. */
+static int html_utf8_copia(const unsigned char *s, int n, char *d,
+                           int cap) {
+    int i = 0, t = 0;
+    while (i < n && t < cap) {
+        unsigned char c0 = s[i];
+        if (c0 < 0x80) {
+            d[t++] = (char)c0;
+            i++;
+        } else if (c0 >= 0xC2 && c0 <= 0xDF && i + 1 < n &&
+            (s[i + 1] & 0xC0) == 0x80) {
+            if (t + 1 >= cap) break;
+            d[t++] = (char)s[i];
+            d[t++] = (char)s[i + 1];
+            i += 2;
+        } else if (c0 >= 0xE0 && c0 <= 0xEF && i + 2 < n &&
+            (s[i + 1] & 0xC0) == 0x80 &&
+            (s[i + 2] & 0xC0) == 0x80) {
+            unsigned int cp =
+                ((unsigned int)(c0 & 0x0F) << 12) |
+                ((unsigned int)(s[i + 1] & 0x3F) << 6) |
+                (unsigned int)(s[i + 2] & 0x3F);
+            if ((c0 == 0xE0 && s[i + 1] < 0xA0) || c0 == 0xED ||
+                cp < 0x800) {
+                if (t + 2 >= cap) break;
+                d[t++] = (char)0xEF;
+                d[t++] = (char)0xBF;
+                d[t++] = (char)0xBD;
+                i++;
+            } else {
+                if (t + 2 >= cap) break;
+                d[t++] = (char)s[i];
+                d[t++] = (char)s[i + 1];
+                d[t++] = (char)s[i + 2];
+                i += 3;
+            }
+        } else if (c0 >= 0xF0 && c0 <= 0xF4 && i + 3 < n &&
+            (s[i + 1] & 0xC0) == 0x80 &&
+            (s[i + 2] & 0xC0) == 0x80 &&
+            (s[i + 3] & 0xC0) == 0x80) {
+            unsigned int cp =
+                ((unsigned int)(c0 & 0x07) << 18) |
+                ((unsigned int)(s[i + 1] & 0x3F) << 12) |
+                ((unsigned int)(s[i + 2] & 0x3F) << 6) |
+                (unsigned int)(s[i + 3] & 0x3F);
+            if (cp < 0x10000 || cp > 0x10FFFF) {
+                if (t + 2 >= cap) break;
+                d[t++] = (char)0xEF;
+                d[t++] = (char)0xBF;
+                d[t++] = (char)0xBD;
+                i++;
+            } else {
+                if (t + 3 >= cap) break;
+                d[t++] = (char)s[i];
+                d[t++] = (char)s[i + 1];
+                d[t++] = (char)s[i + 2];
+                d[t++] = (char)s[i + 3];
+                i += 4;
+            }
+        } else {
+            if (t + 2 >= cap) break;
+            d[t++] = (char)0xEF;
+            d[t++] = (char)0xBF;
+            d[t++] = (char)0xBD;
+            i++;
+        }
+    }
+    return t;
+}
+
+/* Decodifica una entidad en s[0..max) (s[0] == '&'). Escribe en
+   sal (cap>=4) y devuelve consumidos de s (minimo 1). Desconocida
+   o sin ';' se deja literal ('&'). */
+static int html_entidad(const unsigned char *s, int max,
+                        unsigned char *sal) {
+    int i;
+    unsigned int v;
+    if (max < 3 || s[0] != '&') {
+        sal[0] = '&';
+        return 1;
+    }
+    if (s[1] == '#') {
+        int hex = 0;
+        v = 0;
+        i = 2;
+        if (i < max && (s[i] == 'x' || s[i] == 'X')) {
+            hex = 1;
+            i++;
+        }
+        if (i >= max) {
+            sal[0] = '&';
+            return 1;
+        }
+        if (hex) {
+            int nd = 0;
+            while (i < max && s[i] != ';' && nd < 8) {
+                int c = s[i];
+                int d = -1;
+                if (c >= '0' && c <= '9') d = c - '0';
+                else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+                else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+                else break;
+                v = v * 16 + (unsigned int)d;
+                nd++;
+                i++;
+            }
+            if (!nd || i >= max || s[i] != ';') {
+                sal[0] = '&';
+                return 1;
+            }
+        } else {
+            int nd = 0;
+            while (i < max && s[i] != ';' && nd < 10) {
+                int c = s[i];
+                if (c < '0' || c > '9') break;
+                v = v * 10 + (unsigned int)(c - '0');
+                nd++;
+                i++;
+            }
+            if (!nd || i >= max || s[i] != ';') {
+                sal[0] = '&';
+                return 1;
+            }
+        }
+        if (v == 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF))
+            v = 0xFFFD;
+        if (v < 0x80) {
+            sal[0] = (unsigned char)v;
+            return i + 1;
+        } else if (v < 0x800) {
+            sal[0] = (unsigned char)(0xC0 | (v >> 6));
+            sal[1] = (unsigned char)(0x80 | (v & 0x3F));
+            return i + 1;
+        } else if (v < 0x10000) {
+            sal[0] = (unsigned char)(0xE0 | (v >> 12));
+            sal[1] = (unsigned char)(0x80 | ((v >> 6) & 0x3F));
+            sal[2] = (unsigned char)(0x80 | (v & 0x3F));
+            return i + 1;
+        }
+        sal[0] = (unsigned char)(0xF0 | (v >> 18));
+        sal[1] = (unsigned char)(0x80 | ((v >> 12) & 0x3F));
+        sal[2] = (unsigned char)(0x80 | ((v >> 6) & 0x3F));
+        sal[3] = (unsigned char)(0x80 | (v & 0x3F));
+        return i + 1;
+    }
+    {
+        struct {
+            const char *nom;
+            unsigned char b0, b1;
+            int nb;
+        } tab[] = {
+            { "amp;", '&', 0, 1 }, { "lt;", '<', 0, 1 },
+            { "gt;", '>', 0, 1 }, { "quot;", '"', 0, 1 },
+            { "apos;", '\'', 0, 1 },
+            { "nbsp;", 0xC2, 0xA0, 2 }, { 0, 0, 0, 0 }
+        };
+        int k = 0;
+        while (tab[k].nom) {
+            int q = 0;
+            while (tab[k].nom[q] && 1 + q < max &&
+                s[1 + q] == (unsigned char)tab[k].nom[q]) q++;
+            if (tab[k].nom[q] == 0) {
+                sal[0] = tab[k].b0;
+                if (tab[k].nb > 1) sal[1] = tab[k].b1;
+                return 1 + q;
+            }
+            k++;
+        }
+        sal[0] = '&';
+        return 1;
+    }
+}
+
+/* Identificadores de etiqueta (solo subset F7-C). */
+#define HT_DES 0
+#define HT_HTML 1
+#define HT_HEAD 2
+#define HT_BODY 3
+#define HT_TITLE 4
+#define HT_H 5
+#define HT_P 6
+#define HT_BR 7
+#define HT_HR 8
+#define HT_DIV 9
+#define HT_SPAN 10
+#define HT_B 11
+#define HT_I 12
+#define HT_UL 13
+#define HT_OL 14
+#define HT_LI 15
+#define HT_A 16
+#define HT_IMG 17
+#define HT_SCRIPT 18
+#define HT_STYLE 19
+#define HT_OBJECT 20
+
+static int html_tag_id(const char *s, int n, int *nh) {
+    static const char *noms[] = {
+        "html", "head", "body", "title", "h", "p", "br", "hr",
+        "div", "span", "b", "i", "ul", "ol", "li", "a", "img",
+        "script", "style", "object", "embed", 0
+    };
+    static const int ids[] = {
+        HT_HTML, HT_HEAD, HT_BODY, HT_TITLE, HT_H, HT_P, HT_BR,
+        HT_HR, HT_DIV, HT_SPAN, HT_B, HT_I, HT_UL, HT_OL, HT_LI,
+        HT_A, HT_IMG, HT_SCRIPT, HT_STYLE, HT_OBJECT, HT_OBJECT
+    };
+    int k = 0;
+    *nh = 0;
+    if (n >= 2 && s[0] == 'h' && s[1] >= '1' && s[1] <= '6' &&
+        (n == 2)) {
+        *nh = s[1] - '0';
+        return HT_H;
+    }
+    if (n >= 2 && s[0] == 's') {
+        if (n == 6 && s[1] == 't' && s[2] == 'r' && s[3] == 'o' &&
+            s[4] == 'n' && s[5] == 'g')
+            return HT_B;
+        if (n == 2 && s[1] == 'm')
+            return HT_I;
+    }
+    while (noms[k]) {
+        int q = 0;
+        while (noms[k][q] && q < n && noms[k][q] == s[q]) q++;
+        if (!noms[k][q] && q == n) return ids[k];
+        k++;
+    }
+    return HT_DES;
+}
+
+/* Estado del parser (solo pila; el documento es el destino). */
+typedef struct {
+    u_html_doc_t *d;
+    const char *base;
+    int pila_b[U_HTML_MAX_PILA]; /* negrita */
+    int pila_i[U_HTML_MAX_PILA]; /* enfasis */
+    int pila_e[U_HTML_MAX_PILA]; /* enlace o -1 */
+    int pila_t[U_HTML_MAX_PILA]; /* id de etiqueta */
+    int npila;
+    int cur;                    /* tramo en curso o -1 (o -2 gota) */
+    int curb;                   /* bloque en curso o -1 (o -2 gota) */
+    int titulo;                 /* 1 dentro de <title> */
+    int salto;                  /* id en skip (script/style/object) */
+    int lista;                  /* profundidad de lista 0..8 */
+    int ord[8];                 /* 1 si el nivel es ol */
+    int nnum[8];                /* siguiente numero por nivel ol */
+} html_st_t;
+
+static int html_attr(const unsigned char *pg, int ini, int fin,
+                     const char *nom, unsigned char *sal, int cap);
+
+static int html_est(html_st_t *e) {
+    if (e->npila <= 0) return U_HTML_E_NORMAL;
+    if (e->pila_e[e->npila - 1] >= 0) return U_HTML_E_ENLACE;
+    if (e->pila_b[e->npila - 1]) return U_HTML_E_NEGRITA;
+    if (e->pila_i[e->npila - 1]) return U_HTML_E_ENFASIS;
+    return U_HTML_E_NORMAL;
+}
+
+static int html_enl(html_st_t *e) {
+    if (e->npila <= 0) return -1;
+    return e->pila_e[e->npila - 1];
+}
+
+/* Abre tramo si hace falta (0 almacenable, -1 gota). */
+static int html_seg(html_st_t *e) {
+    int est, en;
+    if (e->cur == -2) return -1;
+    est = html_est(e);
+    en = html_enl(e);
+    if (e->cur >= 0) {
+        u_html_seg_t *s = &e->d->seg[e->cur];
+        if (s->est == est && s->enlace == en) return 0;
+        if (s->len == 0) {
+            e->d->nseg--;
+            e->cur = -1;
+        } else {
+            e->cur = -1;
+        }
+    }
+    if (e->d->nseg >= U_HTML_MAX_SEG) {
+        e->d->truncado = 1;
+        e->cur = -2;
+        return -1;
+    }
+    e->cur = e->d->nseg;
+    e->d->seg[e->cur].ini = e->d->texto_n;
+    e->d->seg[e->cur].len = 0;
+    e->d->seg[e->cur].est = est;
+    e->d->seg[e->cur].enlace = en;
+    e->d->nseg++;
+    return 0;
+}
+
+static void html_seg_cierra(html_st_t *e) {
+    if (e->cur >= 0) {
+        if (e->d->seg[e->cur].len == 0)
+            e->d->nseg--;
+        e->cur = -1;
+    }
+}
+
+/* Abre bloque (cierra el anterior con sus punteros inline).
+   -1 ok, -2 gota. */
+static int html_bloque(html_st_t *e, int tipo, int nivel, int img) {
+    int i;
+    if (e->curb == -2) return -2;
+    if (e->curb >= 0) {
+        u_html_bloq_t *b = &e->d->bloq[e->curb];
+        for (i = e->npila - 1; i >= 0; i--) {
+            if (e->pila_e[i] >= 0 &&
+                e->pila_e[i] < e->d->nenl &&
+                e->d->enl[e->pila_e[i]].len < 0)
+                e->d->enl[e->pila_e[i]].len =
+                    e->d->texto_n - e->d->enl[e->pila_e[i]].ini;
+            if (e->pila_t[i] == HT_A) e->pila_e[i] = -1;
+        }
+        html_seg_cierra(e);
+        b->seg_n = e->d->nseg - b->seg_ini;
+        if (b->seg_n == 0 && (tipo == U_HTML_B_TXT ||
+                tipo == U_HTML_B_P || tipo == U_HTML_B_LI ||
+                (tipo >= U_HTML_B_H1 && tipo <= U_HTML_B_H6)))
+            e->d->nbloq--;
+        e->curb = -1;
+    }
+    if (e->d->nbloq >= U_HTML_MAX_BLOQ) {
+        e->d->truncado = 1;
+        e->curb = -2;
+        return -2;
+    }
+    e->curb = e->d->nbloq;
+    e->d->bloq[e->curb].tipo = tipo;
+    e->d->bloq[e->curb].nivel = nivel;
+    e->d->bloq[e->curb].seg_ini = e->d->nseg;
+    e->d->bloq[e->curb].seg_n = 0;
+    e->d->bloq[e->curb].img = img;
+    e->d->nbloq++;
+    return -1;
+}
+
+static void html_bloque_cierra(html_st_t *e) {
+    if (e->curb >= 0) {
+        u_html_bloq_t *b = &e->d->bloq[e->curb];
+        int i;
+        for (i = e->npila - 1; i >= 0; i--) {
+            if (e->pila_e[i] >= 0 &&
+                e->pila_e[i] < e->d->nenl &&
+                e->d->enl[e->pila_e[i]].len < 0)
+                e->d->enl[e->pila_e[i]].len =
+                    e->d->texto_n - e->d->enl[e->pila_e[i]].ini;
+            if (e->pila_t[i] == HT_A) e->pila_e[i] = -1;
+        }
+        html_seg_cierra(e);
+        b->seg_n = e->d->nseg - b->seg_ini;
+        if (b->seg_n == 0 && (b->tipo == U_HTML_B_TXT ||
+                b->tipo == U_HTML_B_P || b->tipo == U_HTML_B_LI ||
+                (b->tipo >= U_HTML_B_H1 && b->tipo <= U_HTML_B_H6)))
+            e->d->nbloq--;
+        e->curb = -1;
+    }
+}
+
+/* Un byte decodificado al documento (texto o titulo). */
+static void html_txt_byte(html_st_t *e, unsigned char c) {
+    if (e->titulo) {
+        int n = u_strlen(e->d->titulo);
+        if (n < 126) {
+            e->d->titulo[n] = (char)c;
+            e->d->titulo[n + 1] = 0;
+        }
+        return;
+    }
+    if (e->curb == -2) return;
+    if (e->curb < 0)
+        html_bloque(e, U_HTML_B_TXT, 0, -1);
+    if (e->curb == -2) return;
+    if (html_seg(e)) return;
+    if (e->d->texto_n >= U_HTML_MAX_TXT) {
+        e->d->truncado = 1;
+        return;
+    }
+    e->d->texto[e->d->texto_n++] = (char)c;
+    e->d->seg[e->cur].len++;
+    if (e->d->seg[e->cur].len >= 2048)
+        html_seg_cierra(e);
+}
+
+/* Apila estilo inline (0 si pila llena: se ignora con aviso). */
+static void html_empuja(html_st_t *e, int tag) {
+    int b, i, en;
+    if (e->npila <= 0) {
+        b = 0;
+        i = 0;
+        en = -1;
+    } else {
+        b = e->pila_b[e->npila - 1];
+        i = e->pila_i[e->npila - 1];
+        en = e->pila_e[e->npila - 1];
+    }
+    if (tag == HT_B) b = 1;
+    else if (tag == HT_I) i = 1;
+    if (e->npila >= U_HTML_MAX_PILA) {
+        e->d->truncado = 1;
+        return;
+    }
+    e->pila_b[e->npila] = b;
+    e->pila_i[e->npila] = i;
+    e->pila_e[e->npila] = en;
+    e->pila_t[e->npila] = tag;
+    e->npila++;
+    html_seg_cierra(e);
+}
+
+/* Etiqueta de apertura ya identificada (con atributos). */
+static void html_abre(html_st_t *e, int tag, int nh,
+                      const unsigned char *pg, int ini, int fin) {
+    int k;
+    unsigned char hv[U_HTML_URL];
+    int hn;
+    unsigned char sv[U_HTML_URL];
+    int sn;
+    unsigned char av[U_HTML_ALT];
+    if (tag == HT_H) {
+        if (nh < 1 || nh > 6) return;
+        html_bloque(e, U_HTML_B_H1 + (nh - 1), nh, -1);
+        return;
+    }
+    if (tag == HT_P || tag == HT_DIV) {
+        html_bloque(e, U_HTML_B_P, 0, -1);
+        return;
+    }
+    if (tag == HT_BR) {
+        html_bloque(e, U_HTML_B_BR, 0, -1);
+        html_bloque_cierra(e);
+        return;
+    }
+    if (tag == HT_HR) {
+        html_bloque(e, U_HTML_B_HR, 0, -1);
+        html_bloque_cierra(e);
+        return;
+    }
+    if (tag == HT_UL || tag == HT_OL) {
+        html_bloque_cierra(e);
+        if (e->lista < 8) {
+            e->ord[e->lista] = (tag == HT_OL);
+            e->nnum[e->lista] = 1;
+            e->lista++;
+        } else {
+            e->d->truncado = 1;
+        }
+        return;
+    }
+    if (tag == HT_LI) {
+        int nv = e->lista > 8 ? 8 : e->lista;
+        int lvl;
+        if (e->lista > 0 && e->ord[e->lista - 1])
+            nv = -nv;
+        lvl = nv < 0 ? -nv : nv;
+        html_bloque(e, U_HTML_B_LI, nv, -1);
+        if (nv == 0) {
+            html_txt_byte(e, (unsigned char)'\xE2');
+            html_txt_byte(e, (unsigned char)'\x80');
+            html_txt_byte(e, (unsigned char)'\xA2');
+            html_txt_byte(e, ' ');
+        } else if (nv < 0) {
+            char nb[12];
+            int q2 = 0, m2;
+            u_itoa(e->nnum[lvl - 1], nb);
+            e->nnum[lvl - 1]++;
+            while (nb[q2]) {
+                html_txt_byte(e, (unsigned char)nb[q2]);
+                q2++;
+            }
+            m2 = 0;
+            while (m2 < 1) {
+                html_txt_byte(e, '.');
+                m2++;
+            }
+            html_txt_byte(e, ' ');
+        } else {
+            html_txt_byte(e, (unsigned char)'\xE2');
+            html_txt_byte(e, (unsigned char)'\x80');
+            html_txt_byte(e, (unsigned char)'\xA2');
+            html_txt_byte(e, ' ');
+        }
+        return;
+    }
+    if (tag == HT_B || tag == HT_I || tag == HT_SPAN) {
+        html_empuja(e, tag);
+        return;
+    }
+    if (tag == HT_A) {
+        int idx = -1;
+        hn = html_attr(pg, ini, fin, "href", hv, U_HTML_URL);
+        if (hn >= 0) {
+            char abs[U_HTML_URL];
+            if (u_html_resuelve_url(e->base, (const char *)hv,
+                    abs) == 0) {
+                if (e->d->nenl < U_HTML_MAX_ENL) {
+                    idx = e->d->nenl;
+                    u_strcpy(e->d->enl[idx].url, abs);
+                    e->d->enl[idx].ini = e->d->texto_n;
+                    e->d->enl[idx].len = -1;
+                    e->d->nenl++;
+                } else {
+                    e->d->truncado = 1;
+                }
+            }
+        }
+        html_empuja(e, HT_A);
+        if (idx >= 0)
+            e->pila_e[e->npila - 1] = idx;
+        html_seg_cierra(e);
+        return;
+    }
+    if (tag == HT_IMG) {
+        int gi = -1;
+        sn = html_attr(pg, ini, fin, "src", sv, U_HTML_URL);
+        html_attr(pg, ini, fin, "alt", av, U_HTML_ALT);
+        if (e->d->nimg < U_HTML_MAX_IMG) {
+            char asrc[U_HTML_URL];
+            asrc[0] = 0;
+            if (sn >= 0)
+                u_html_resuelve_url(e->base, (const char *)sv,
+                    asrc);
+            gi = e->d->nimg;
+            u_strcpy(e->d->img[gi].src, asrc);
+            {
+                int q = 0;
+                while (av[q] && q < U_HTML_ALT - 1) {
+                    e->d->img[gi].alt[q] = (char)av[q];
+                    q++;
+                }
+                e->d->img[gi].alt[q] = 0;
+            }
+            e->d->nimg++;
+        } else {
+            e->d->truncado = 1;
+        }
+        if (gi >= 0) {
+            html_bloque(e, U_HTML_B_IMG, 0, gi);
+            html_bloque_cierra(e);
+        }
+        return;
+    }
+    if (tag == HT_TITLE) {
+        e->titulo = 1;
+        return;
+    }
+    if (tag == HT_SCRIPT || tag == HT_STYLE || tag == HT_OBJECT) {
+        e->salto = tag;
+        return;
+    }
+    for (k = 0; k < e->npila; k++) {
+        (void)k;
+    }
+}
+
+/* Etiqueta de cierre ya identificada. */
+static void html_cierra(html_st_t *e, int tag, int nh) {
+    int i, h;
+    (void)nh;
+    if (tag == HT_TITLE) {
+        e->titulo = 0;
+        return;
+    }
+    if (tag == HT_H || tag == HT_P || tag == HT_DIV ||
+        tag == HT_LI || tag == HT_UL || tag == HT_OL ||
+        tag == HT_BODY || tag == HT_HTML || tag == HT_HEAD) {
+        if (tag == HT_UL || tag == HT_OL) {
+            html_bloque_cierra(e);
+            if (e->lista > 0) e->lista--;
+            return;
+        }
+        html_bloque_cierra(e);
+        return;
+    }
+    if (tag == HT_BR || tag == HT_HR || tag == HT_IMG)
+        return;
+    h = -1;
+    for (i = e->npila - 1; i >= 0; i--) {
+        if (e->pila_t[i] == tag) {
+            h = i;
+            break;
+        }
+    }
+    if (h < 0) return;
+    for (i = e->npila - 1; i >= h; i--) {
+        if (e->pila_e[i] >= 0 && e->pila_e[i] < e->d->nenl &&
+            e->d->enl[e->pila_e[i]].len < 0)
+            e->d->enl[e->pila_e[i]].len =
+                e->d->texto_n - e->d->enl[e->pila_e[i]].ini;
+    }
+    html_seg_cierra(e);
+    e->npila = h;
+}
+
+/* Busca atributo nom en el tag pg[ini..fin) (ya en minusculas).
+   Lo decodifica (entidades+UTF-8) en sal (cap). Devuelve long
+   (0 puede ser vacio) o -1 si no existe. */
+static int html_attr(const unsigned char *pg, int ini, int fin,
+                     const char *nom, unsigned char *sal, int cap) {
+    int p = ini, t = 0, q;
+    sal[0] = 0;
+    while (p < fin) {
+        char an[40];
+        int an_n = 0;
+        while (p < fin &&
+            (pg[p] == ' ' || pg[p] == '\t' || pg[p] == '\r' ||
+             pg[p] == '\n'))
+            p++;
+        if (p < fin && pg[p] == '/') p++;
+        if (p >= fin || pg[p] == '>') break;
+        while (p < fin && an_n < 39 &&
+            ((pg[p] >= 'a' && pg[p] <= 'z') ||
+             (pg[p] >= '0' && pg[p] <= '9') || pg[p] == '-' ||
+             pg[p] == '_' || pg[p] == ':')) {
+            an[an_n++] = (char)pg[p++];
+        }
+        an[an_n] = 0;
+        if (!an_n) {
+            while (p < fin && pg[p] != ' ' && pg[p] != '\t' &&
+                pg[p] != '>' && pg[p] != '=')
+                p++;
+            continue;
+        }
+        while (p < fin && (pg[p] == ' ' || pg[p] == '\t')) p++;
+        if (p < fin && pg[p] == '=') {
+            unsigned char tmp[U_HTML_URL + 16];
+            int tn = 0;
+            int com = 0;
+            int cerrado = 0;
+            p++;
+            while (p < fin && (pg[p] == ' ' || pg[p] == '\t')) p++;
+            if (p < fin && (pg[p] == '"' || pg[p] == '\'')) {
+                com = pg[p];
+                p++;
+            }
+            while (p < fin && tn < U_HTML_URL + 15) {
+                if (com) {
+                    if (pg[p] == com) {
+                        p++;
+                        cerrado = 1;
+                        break;
+                    }
+                } else if (pg[p] == ' ' || pg[p] == '\t' ||
+                    pg[p] == '\r' || pg[p] == '\n' ||
+                    pg[p] == '>') {
+                    break;
+                }
+                tmp[tn++] = pg[p++];
+            }
+            if (com && !cerrado) {
+                while (p < fin && pg[p] != com && pg[p] != '>')
+                    p++;
+                if (p < fin && pg[p] == com) p++;
+            }
+            if (!u_strcmp(an, nom)) {
+                int k = 0;
+                t = 0;
+                while (k < tn && t < cap - 1) {
+                    if (tmp[k] == '&') {
+                        unsigned char dec[4];
+                        int cs, dl;
+                        cs = html_entidad(tmp + k, tn - k, dec);
+                        if (cs < 1) cs = 1;
+                        if (dec[0] < 0x80) dl = 1;
+                        else if ((dec[0] & 0xE0) == 0xC0) dl = 2;
+                        else if ((dec[0] & 0xF0) == 0xE0) dl = 3;
+                        else dl = 4;
+                        {
+                            int m = 0;
+                            while (m < dl && t < cap - 1) {
+                                sal[t++] = dec[m++];
+                            }
+                        }
+                        k += cs;
+                    } else {
+                        sal[t++] = tmp[k++];
+                    }
+                }
+                {
+                    char cvt[U_HTML_ALT + U_HTML_URL];
+                    int cn;
+                    if (t >= cap) t = cap - 1;
+                    sal[t] = 0;
+                    cn = html_utf8_copia(sal, t, cvt,
+                        (int)sizeof(cvt));
+                    q = 0;
+                    while (q < cn && q < cap - 1) {
+                        sal[q] = (unsigned char)cvt[q];
+                        q++;
+                    }
+                    sal[q] = 0;
+                    return q;
+                }
+            }
+        } else if (!u_strcmp(an, nom)) {
+            sal[0] = 0;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int u_html_resuelve_url(const char *base, const char *ref,
+                        char *sal) {
+    u_http_url_t u;
+    const char *p;
+    int t;
+    if (!base || !ref || !sal) return -1;
+    while (*ref == ' ' || *ref == '\t') ref++;
+    p = ref + u_strlen(ref);
+    while (p > ref &&
+        (*(p - 1) == ' ' || *(p - 1) == '\t' || *(p - 1) == '\r' ||
+         *(p - 1) == '\n'))
+        p--;
+    if (p == ref) {
+        if (!base[0] || u_http_url(base, &u)) return -3;
+        u_strcpy(sal, base);
+        return 0;
+    }
+    {
+        int i = 0, esc = -1;
+        while (ref + i < p) {
+            if (ref[i] == ':') {
+                esc = i;
+                break;
+            }
+            if (ref[i] == '/' || ref[i] == '?' || ref[i] == '#')
+                break;
+            if ((unsigned char)ref[i] < 32 ||
+                (unsigned char)ref[i] == 127)
+                return -1;
+            i++;
+        }
+        if (esc >= 0) {
+            char esq[16];
+            int q = 0;
+            while (q < esc && q < 15) {
+                esq[q] = (char)html_mini(ref[q]);
+                q++;
+            }
+            esq[q] = 0;
+            if (!u_strcmp(esq, "http")) {
+                char tmp[U_HTML_URL + 32];
+                int j = 0;
+                while (ref + j < p && j < U_HTML_URL + 31) {
+                    tmp[j] = ref[j];
+                    j++;
+                }
+                tmp[j] = 0;
+                {
+                    int f = 0;
+                    while (tmp[f] && tmp[f] != '#') f++;
+                    tmp[f] = 0;
+                }
+                if (u_http_url(tmp, &u)) return -1;
+                u_strcpy(sal, tmp);
+                return 0;
+            }
+            return -2;
+        }
+    }
+    if (!base[0] || u_http_url(base, &u)) return -3;
+    if (ref[0] == '#') {
+        u_strcpy(sal, base);
+        return 0;
+    }
+    if (ref[0] == '?') {
+        t = 0;
+        while (u.host[t]) {
+            sal[t] = u.host[t];
+            t++;
+        }
+        {
+            int j = 0, q = t;
+            char pre[600];
+            int pt = 0;
+            pre[pt++] = 'h';
+            pre[pt++] = 't';
+            pre[pt++] = 't';
+            pre[pt++] = 'p';
+            pre[pt++] = ':';
+            pre[pt++] = '/';
+            pre[pt++] = '/';
+            while (u.host[j]) pre[pt++] = u.host[j++];
+            if (u.puerto != 80) {
+                char nb[12];
+                int r2 = 0;
+                pre[pt++] = ':';
+                u_itoa((int)u.puerto, nb);
+                while (nb[r2]) pre[pt++] = nb[r2++];
+            }
+            j = 0;
+            while (u.ruta[j] && pt < 590) pre[pt++] = u.ruta[j++];
+            j = 0;
+            while (ref + j < p && pt < 599) pre[pt++] = ref[j++];
+            pre[pt] = 0;
+            if (u_http_url(pre, &u)) return -3;
+            u_strcpy(sal, pre);
+            (void)q;
+            return 0;
+        }
+    }
+    {
+        char pre[600];
+        int pt = 0, j;
+        pre[pt++] = 'h';
+        pre[pt++] = 't';
+        pre[pt++] = 't';
+        pre[pt++] = 'p';
+        pre[pt++] = ':';
+        pre[pt++] = '/';
+        pre[pt++] = '/';
+        j = 0;
+        while (u.host[j] && pt < 590) pre[pt++] = u.host[j++];
+        if (u.puerto != 80) {
+            char nb[12];
+            int r2 = 0;
+            pre[pt++] = ':';
+            u_itoa((int)u.puerto, nb);
+            while (nb[r2] && pt < 590) pre[pt++] = nb[r2++];
+        }
+        if (ref[0] == '/') {
+            j = 0;
+            while (ref + j < p && ref[j] != '#' && pt < 599)
+                pre[pt++] = ref[j++];
+        } else {
+            j = 0;
+            while (u.ruta[j] && pt < 590) pre[pt++] = u.ruta[j++];
+            while (pt > 8 && pre[pt - 1] != '/') pt--;
+            j = 0;
+            while (ref + j < p && ref[j] != '#' && pt < 599)
+                pre[pt++] = ref[j++];
+        }
+        pre[pt] = 0;
+        {
+            char norm[600];
+            int sgm[64];
+            int ns = 0, w = 0, r3 = 0;
+            int raiz = 0;
+            while (pre[raiz] && pre[raiz] != ':' && raiz < 599)
+                raiz++;
+            if (pre[raiz] == ':' && pre[raiz + 1] == '/' &&
+                pre[raiz + 2] == '/') {
+                raiz += 3;
+                while (pre[raiz] && pre[raiz] != '/' && raiz < 599)
+                    raiz++;
+            }
+            w = 0;
+            while (w < raiz && w < 599) {
+                norm[w] = pre[w];
+                w++;
+            }
+            norm[w] = 0;
+            r3 = raiz;
+            while (pre[r3] && ns < 64) {
+                int f3 = r3;
+                while (pre[f3] && pre[f3] != '/') f3++;
+                {
+                    int ln = f3 - r3;
+                    if ((ln == 1 && pre[r3] == '.') ||
+                        ln == 0) {
+                        /* nada */
+                    } else if (ln == 2 && pre[r3] == '.' &&
+                        pre[r3 + 1] == '.') {
+                        if (ns > 0) {
+                            ns--;
+                            w = sgm[ns];
+                            norm[w] = 0;
+                        }
+                    } else {
+                        if (w + ln + 1 < 599) {
+                            sgm[ns++] = w;
+                            norm[w++] = '/';
+                            {
+                                int z = 0;
+                                while (z < ln) {
+                                    norm[w++] = pre[r3 + z];
+                                    z++;
+                                }
+                            }
+                            norm[w] = 0;
+                        }
+                    }
+                }
+                r3 = pre[f3] ? f3 + 1 : f3;
+            }
+            if (w + 1 < 599) {
+                norm[w] = 0;
+            }
+            if (u_http_url(norm[0] ? norm : pre, &u)) return -3;
+            u_strcpy(sal, norm[0] ? norm : pre);
+            return 0;
+        }
+    }
+}
+
+int u_html_crea(u_html_doc_t *d) {
+    if (!d) return -1;
+    d->texto = (char *)u_malloc(U_HTML_MAX_TXT);
+    d->seg = (u_html_seg_t *)u_malloc(
+        U_HTML_MAX_SEG * (int)sizeof(u_html_seg_t));
+    d->bloq = (u_html_bloq_t *)u_malloc(
+        U_HTML_MAX_BLOQ * (int)sizeof(u_html_bloq_t));
+    d->enl = (u_html_enl_t *)u_malloc(
+        U_HTML_MAX_ENL * (int)sizeof(u_html_enl_t));
+    d->img = (u_html_img_t *)u_malloc(
+        U_HTML_MAX_IMG * (int)sizeof(u_html_img_t));
+    if (!d->texto || !d->seg || !d->bloq || !d->enl || !d->img) {
+        if (d->texto) u_free(d->texto);
+        if (d->seg) u_free(d->seg);
+        if (d->bloq) u_free(d->bloq);
+        if (d->enl) u_free(d->enl);
+        if (d->img) u_free(d->img);
+        d->texto = 0;
+        d->seg = 0;
+        d->bloq = 0;
+        d->enl = 0;
+        d->img = 0;
+        return -1;
+    }
+    d->texto_n = 0;
+    d->nseg = 0;
+    d->nbloq = 0;
+    d->nenl = 0;
+    d->nimg = 0;
+    d->titulo[0] = 0;
+    d->truncado = 0;
+    return 0;
+}
+
+void u_html_libera(u_html_doc_t *d) {
+    if (!d) return;
+    if (d->texto) u_free(d->texto);
+    if (d->seg) u_free(d->seg);
+    if (d->bloq) u_free(d->bloq);
+    if (d->enl) u_free(d->enl);
+    if (d->img) u_free(d->img);
+    d->texto = 0;
+    d->seg = 0;
+    d->bloq = 0;
+    d->enl = 0;
+    d->img = 0;
+    d->texto_n = 0;
+    d->nseg = 0;
+    d->nbloq = 0;
+    d->nenl = 0;
+    d->nimg = 0;
+    d->titulo[0] = 0;
+    d->truncado = 0;
+}
+
+int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
+                 const char *base) {
+    html_st_t e;
+    int p = 0;
+    if (!d || !d->texto || !pg || n < 0 || !base) return -1;
+    e.d = d;
+    e.base = base;
+    e.npila = 0;
+    e.cur = -1;
+    e.curb = -1;
+    e.titulo = 0;
+    e.salto = 0;
+    e.lista = 0;
+    {
+        int z = 0;
+        while (z < 8) {
+            e.ord[z] = 0;
+            e.nnum[z] = 1;
+            z++;
+        }
+    }
+    d->texto_n = 0;
+    d->nseg = 0;
+    d->nbloq = 0;
+    d->nenl = 0;
+    d->nimg = 0;
+    d->titulo[0] = 0;
+    d->truncado = 0;
+    if (n <= 0) return 0;
+    while (p < n) {
+        /* Contenido ignorado (script/style/object). */
+        if (e.salto) {
+            int q = p, id = e.salto;
+            while (q < n) {
+                if (pg[q] == '<' && q + 2 < n && pg[q + 1] == '/') {
+                    int r3 = q + 2, s3 = 0;
+                    char nb[16];
+                    while (r3 < n && s3 < 15 &&
+                        ((pg[r3] >= 'a' && pg[r3] <= 'z') ||
+                         (pg[r3] >= 'A' && pg[r3] <= 'Z'))) {
+                        nb[s3++] = (char)html_mini(pg[r3]);
+                        r3++;
+                    }
+                    nb[s3] = 0;
+                    {
+                        int got = html_tag_id(nb, s3,
+                            &s3) == id;
+                        if (got) {
+                            while (r3 < n && pg[r3] != '>') r3++;
+                            p = r3 < n ? r3 + 1 : n;
+                            e.salto = 0;
+                            break;
+                        }
+                    }
+                }
+                q++;
+            }
+            if (e.salto) p = n;
+            continue;
+        }
+        if (pg[p] != '<') {
+            /* Texto hasta el proximo '<' (con entidades). */
+            int q = p;
+            while (q < n && pg[q] != '<') q++;
+            while (p < q) {
+                if (pg[p] == '&') {
+                    unsigned char dec[4];
+                    int cs = html_entidad(pg + p, q - p, dec);
+                    int dl;
+                    if (cs < 1) cs = 1;
+                    if (dec[0] < 0x80) dl = 1;
+                    else if ((dec[0] & 0xE0) == 0xC0) dl = 2;
+                    else if ((dec[0] & 0xF0) == 0xE0) dl = 3;
+                    else dl = 4;
+                    {
+                        int m = 0;
+                        while (m < dl) {
+                            html_txt_byte(&e, dec[m++]);
+                        }
+                    }
+                    p += cs;
+                } else if ((pg[p] & 0x80) == 0) {
+                    if (pg[p] == '\r' || pg[p] == '\n' ||
+                        pg[p] == '\t')
+                        html_txt_byte(&e, ' ');
+                    else
+                        html_txt_byte(&e, pg[p]);
+                    p++;
+                } else {
+                    int q2 = p + 1;
+                    while (q2 < q && q2 < p + 4 &&
+                        (pg[q2] & 0xC0) == 0x80)
+                        q2++;
+                    {
+                        char cvt[8];
+                        int cn = html_utf8_copia(pg + p, q2 - p,
+                            cvt, 5);
+                        int m = 0;
+                        if (!cn) {
+                            html_txt_byte(&e, 0xEF);
+                            html_txt_byte(&e, 0xBF);
+                            html_txt_byte(&e, 0xBD);
+                            p++;
+                        } else {
+                            while (m < cn) {
+                                html_txt_byte(&e,
+                                    (unsigned char)cvt[m++]);
+                            }
+                            p += q2 - p;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        /* Tag o texto literal. */
+        if (p + 1 < n && pg[p + 1] == '!') {
+            /* Comentario o doctype: hasta '>'. */
+            int q = p + 2;
+            if (q + 1 < n && pg[q] == '-' && pg[q + 1] == '-') {
+                q += 2;
+                while (q + 2 < n && !(pg[q] == '-' &&
+                        pg[q + 1] == '-' && pg[q + 2] == '>'))
+                    q++;
+                p = (q + 2 < n) ? q + 3 : n;
+            } else {
+                while (q < n && pg[q] != '>') {
+                    if (q - p > 512) break;
+                    q++;
+                }
+                p = q < n ? q + 1 : n;
+            }
+            continue;
+        }
+        if (p + 1 < n && pg[p + 1] == '?') {
+            int q = p + 2;
+            while (q < n && pg[q] != '>') {
+                if (q - p > 512) break;
+                q++;
+            }
+            p = q < n ? q + 1 : n;
+            continue;
+        }
+        {
+            int q = p + 1, cierre = 0;
+            if (q < n && pg[q] == '/') {
+                cierre = 1;
+                q++;
+            }
+            while (q < n &&
+                (pg[q] == ' ' || pg[q] == '\t' || pg[q] == '\r' ||
+                 pg[q] == '\n'))
+                q++;
+            {
+                int r3 = q;
+                char nb[24];
+                int nn = 0;
+                while (r3 < n && nn < 23 &&
+                    ((pg[r3] >= 'a' && pg[r3] <= 'z') ||
+                     (pg[r3] >= 'A' && pg[r3] <= 'Z') ||
+                     (pg[r3] >= '0' && pg[r3] <= '9'))) {
+                    nb[nn++] = (char)html_mini(pg[r3]);
+                    r3++;
+                }
+                if (!nn) {
+                    html_txt_byte(&e, '<');
+                    p++;
+                    continue;
+                }
+                {
+                    int f3 = r3, id, nh = 0, selfclose = 0;
+                    while (f3 < n && pg[f3] != '>') {
+                        if (f3 - p > 512) break;
+                        f3++;
+                    }
+                    if (f3 >= n || pg[f3] != '>') {
+                        html_txt_byte(&e, '<');
+                        p++;
+                        continue;
+                    }
+                    {
+                        int f4 = f3 - 1;
+                        while (f4 > r3 && (pg[f4] == ' ' ||
+                                pg[f4] == '\t'))
+                            f4--;
+                        if (pg[f4] == '/') selfclose = 1;
+                    }
+                    id = html_tag_id(nb, nn, &nh);
+                    if (cierre) {
+                        html_cierra(&e, id, nh);
+                    } else {
+                        html_abre(&e, id, nh, pg, r3, f3);
+                        if (selfclose)
+                            html_cierra(&e, id, nh);
+                    }
+                    p = f3 + 1;
+                }
+            }
+        }
+    }
+    html_bloque_cierra(&e);
+    if (d->truncado) return 1;
+    return 0;
+}
+
+static int html_ancho(const u_html_doc_t *d, int ini, int len) {
+    int i = 0, c = 0;
+    while (i < len) {
+        unsigned char b = (unsigned char)d->texto[ini + i];
+        if ((b & 0xC0) != 0x80) c++;
+        i++;
+    }
+    return c;
+}
+
+int u_html_maqueta(const u_html_doc_t *d, int cols,
+                   u_html_fila_t *filas, int maxfilas) {
+    int nf = 0, b;
+    if (!d || cols < 10 || !filas || maxfilas <= 0) return -1;
+    for (b = 0; b < d->nbloq && nf < maxfilas; b++) {
+        const u_html_bloq_t *bl = &d->bloq[b];
+        int s, sang = 0;
+        if (b > 0 && nf < maxfilas) {
+            filas[nf].ini = 0;
+            filas[nf].len = 0;
+            filas[nf].x = 0;
+            filas[nf].estilo = U_HTML_E_VACIA;
+            filas[nf].enlace = -1;
+            filas[nf].img = -1;
+            nf++;
+        }
+        if (nf >= maxfilas) break;
+        if (bl->tipo == U_HTML_B_HR) {
+            filas[nf].ini = 0;
+            filas[nf].len = 0;
+            filas[nf].x = 0;
+            filas[nf].estilo = U_HTML_E_HR;
+            filas[nf].enlace = -1;
+            filas[nf].img = -1;
+            nf++;
+            continue;
+        }
+        if (bl->tipo == U_HTML_B_BR) {
+            filas[nf].ini = 0;
+            filas[nf].len = 0;
+            filas[nf].x = 0;
+            filas[nf].estilo = U_HTML_E_VACIA;
+            filas[nf].enlace = -1;
+            filas[nf].img = -1;
+            nf++;
+            continue;
+        }
+        if (bl->tipo == U_HTML_B_IMG) {
+            filas[nf].ini = 0;
+            filas[nf].len = 0;
+            filas[nf].x = 2;
+            filas[nf].estilo = U_HTML_E_IMG;
+            filas[nf].enlace = -1;
+            filas[nf].img = bl->img;
+            nf++;
+            continue;
+        }
+        if (bl->tipo == U_HTML_B_LI) {
+            int nv = bl->nivel < 0 ? -bl->nivel : bl->nivel;
+            if (nv < 0) nv = 0;
+            if (nv > 8) nv = 8;
+            sang = 2 + nv * 2;
+        }
+        for (s = bl->seg_ini;
+            s < bl->seg_ini + bl->seg_n && nf < maxfilas;
+            s++) {
+            const u_html_seg_t *sg = &d->seg[s];
+            int off = sg->ini, rest = sg->len;
+            int est = sg->est;
+            int x = sang;
+            if (bl->tipo >= U_HTML_B_H1 &&
+                bl->tipo <= U_HTML_B_H6 && est != U_HTML_E_ENLACE)
+                est = U_HTML_E_TITULO;
+            if (rest <= 0) continue;
+            while (rest > 0 && nf < maxfilas) {
+                int w0 = off, wl = 0;
+                int av = cols - x;
+                if (av < 4) {
+                    if (x == sang) {
+                        filas[nf].ini = off;
+                        filas[nf].len = 0;
+                        filas[nf].x = x;
+                        filas[nf].estilo = U_HTML_E_VACIA;
+                        filas[nf].enlace = -1;
+                        filas[nf].img = -1;
+                        nf++;
+                        if (nf >= maxfilas) break;
+                    }
+                    x = sang;
+                    av = cols - x;
+                }
+                while (wl < rest) {
+                    int wn = 0;
+                    while (w0 + wl + wn < off + rest &&
+                        d->texto[w0 + wl + wn] != ' ')
+                        wn++;
+                    if (!wn) break;
+                    if (html_ancho(d, w0, wl + wn) <= av) {
+                        wl += wn;
+                        if (w0 + wl < off + rest &&
+                            d->texto[w0 + wl] == ' ')
+                            wl++;
+                    } else if (!wl) {
+                        int take = 0, cw2 = 0;
+                        while (take < wn && cw2 < av) {
+                            unsigned char bb =
+                                (unsigned char)d->texto[w0 + take];
+                            if ((bb & 0xC0) != 0x80) {
+                                if (cw2 + 1 > av) break;
+                                cw2++;
+                            }
+                            take++;
+                        }
+                        if (!take) take = 1;
+                        wl = take;
+                        if (w0 + wl < off + rest &&
+                            d->texto[w0 + wl] == ' ')
+                            wl++;
+                    } else {
+                        break;
+                    }
+                }
+                if (!wl) {
+                    if (d->texto[w0] == ' ') {
+                        off++;
+                        rest--;
+                        continue;
+                    }
+                    break;
+                }
+                filas[nf].ini = w0;
+                filas[nf].len = wl;
+                filas[nf].x = x;
+                filas[nf].estilo = est;
+                filas[nf].enlace = sg->enlace;
+                filas[nf].img = -1;
+                nf++;
+                x += html_ancho(d, w0, wl);
+                off = w0 + wl;
+                rest = (sg->ini + sg->len) - off;
+            }
+        }
+        if ((bl->tipo == U_HTML_B_H1 || bl->tipo == U_HTML_B_H2) &&
+            nf < maxfilas) {
+            filas[nf].ini = 0;
+            filas[nf].len = 0;
+            filas[nf].x = 0;
+            filas[nf].estilo = U_HTML_E_HR;
+            filas[nf].enlace = -1;
+            filas[nf].img = -1;
+            nf++;
+        }
+    }
+    return nf;
+}

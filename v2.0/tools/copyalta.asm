@@ -1,4 +1,4 @@
-; F7-B: copia la cola alta del catalogo (tras el hueco VGA 0xA0000).
+; F7-C: copia la cola alta del catalogo (tras la pila 0x90000).
 ; Vive en el sector de relleno LBA 224 del area del nucleo
 ; (cargado en 0x1000:0x1BE00); el arranque la llama con call far
 ; (call 0x1000:0x1BE00) y vuelve con retf. Autocontenida.
@@ -7,7 +7,7 @@
 [BITS 16]
 [org 0xBE00]
 
-CORTE_LBA equ 1121
+CORTE_LBA equ 993
 ALTO_BASE equ 0x1000000
 
 copy_alta:

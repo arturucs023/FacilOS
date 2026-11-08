@@ -368,6 +368,10 @@ static const cmd_t CMDS[] = {
       "Trae una pagina web (HTTP/1.0, solo GET).",
       "Descarga por HTTP/1.0 y muestra codigo, cabeceras y cuerpo.",
       "http <url>", "http http://example.com/", 1, 1, 0, 0 },
+    { "fbrowser", "sistema",
+      "Abre el navegador grafico FacilBrowser.",
+      "Crea una ventana de FacilBrowser (pide la URL dentro).",
+      "fbrowser [url]", "fbrowser http://10.0.2.2:18080/pagina", 0, 1, 0, 0 },
     { "mostrar_dns", "sistema",
       "Muestra el servidor DNS configurado.",
       "Indica el servidor (DHCP o manual) y la ausencia de cache.",
@@ -2144,6 +2148,40 @@ static void op_http(const cmd_t *c) {
     else perr(33, "HTTP no disponible (revisa la red).");
 }
 
+static void op_fbrowser(ug_win_t *v, const cmd_t *c) {
+    char args[272];
+    int t = 0, i, pid;
+    char rb[32];
+    (void)c;
+    if (npos > 1) {
+        perr(10, "Uso: fbrowser [url].");
+        return;
+    }
+    u_itoa(v->srv, args);
+    while (args[t]) t++;
+    if (npos == 1) {
+        if (t < 260) args[t++] = ' ';
+        i = 0;
+        while (pos_arg[0][i] && t < 270) args[t++] = pos_arg[0][i++];
+    }
+    args[t] = 0;
+    pid = u_crear("fbrowser", args);
+    {
+        char nb[12];
+        int w = 0, q = 0;
+        rb[w++] = 'p';
+        rb[w++] = 'i';
+        rb[w++] = 'd';
+        rb[w++] = '=';
+        u_itoa(pid, nb);
+        while (nb[q] && w < 30) rb[w++] = nb[q++];
+        rb[w] = 0;
+    }
+    pon(rb);
+    if (pid > 0) pon("FacilBrowser abierto en una ventana nueva.");
+    else perr(33, "No se pudo abrir FacilBrowser.");
+}
+
 static void op_mostrar_dns(const cmd_t *c) {
     red_cfg_t cfg;
     int i;
@@ -3132,6 +3170,8 @@ static void ejecuta(ug_win_t *v, const char *ln) {
         op_consultar_dns(&CMDS[id]);
     } else if (!u_strcmp(cmd, "http")) {
         op_http(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "fbrowser")) {
+        op_fbrowser(v, &CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_dns")) {
         op_mostrar_dns(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {

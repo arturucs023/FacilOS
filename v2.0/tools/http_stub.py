@@ -26,6 +26,15 @@ Rutas:
   /corte                : cabeceras parciales y cierre (malformada).
   /corte-cuerpo         : cabeceras CL:100, 10 bytes, cierre.
   /eco/<resto>          : 200 con cuerpo "visto: <resto>".
+  F7-C (FacilBrowser): paginas HTML de prueba (todas text/html).
+  /pagina               : portada con titulo, parrafos, enlace.
+  /enlaces              : enlaces absolutos y relativos.
+  /lista                : listas ul/ol, anidada.
+  /entidades            : entidades HTML y UTF-8.
+  /malformada           : tags sin cerrar, desconocidos, script.
+  /img-pagina           : imagenes con/sin alt.
+  /busca[?q=...]        : resultados de busqueda de ejemplo.
+  /grande-html          : 70 KB (supera el tope de 64K).
 """
 import socket
 import sys
@@ -156,6 +165,100 @@ def atiende(cn):
             body = ("visto: " + path[5:]).encode("latin1")
             cn.sendall(resp(200, "OK",
                              [("Content-Type", "text/plain"),
+                              ("Content-Length", str(len(body)))],
+                             body))
+        elif path == "/pagina" or path == "/":
+            body = ("<!DOCTYPE html><html><head>"
+                    "<title>Inicio Facil</title></head><body>"
+                    "<h1>FacilBrowser</h1>"
+                    "<p>Pagina de <b>prueba</b> con "
+                    "<a href=\"/enlaces\">enlaces</a>.</p>"
+                    "<p>Segunda linea con entidad &amp; y e\xc3\xb1e.</p>"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
+                              ("Content-Length", str(len(body)))],
+                             body))
+        elif path == "/enlaces":
+            body = ("<html><head><title>Enlaces</title></head><body>"
+                    "<h2>Enlaces</h2><ul>"
+                    "<li><a href=\"http://10.0.2.2:18080/pagina\">"
+                    "absoluto</a></li>"
+                    "<li><a href=\"/pagina\">raiz</a></li>"
+                    "<li><a href=\"pagina\">relativo</a></li>"
+                    "<li><a href=\"../pagina\">padre</a></li>"
+                    "<li><a href=\"/lista\">lista</a></li>"
+                    "<li><a href=\"https://example.com/\">seguro</a></li>"
+                    "</ul></body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
+                              ("Content-Length", str(len(body)))],
+                             body))
+        elif path == "/lista":
+            body = ("<html><head><title>Listas</title></head><body>"
+                    "<h2>Compra</h2><ul><li>pan</li><li>leche<ul>"
+                    "<li>entera</li></ul></li></ul>"
+                    "<h2>Pasos</h2><ol><li>primero</li>"
+                    "<li>segundo</li></ol></body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
+                              ("Content-Length", str(len(body)))],
+                             body))
+        elif path == "/entidades":
+            body = ("<html><head><title>Entidades</title></head><body>"
+                    "<p>&amp;&lt;&gt;&quot;&apos;&#65;&#x41;&nbsp;fin</p>"
+                    "<p>ca\xc3\xb1a \xe6\x97\xa5</p></body></html>"
+                    ).encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
+                              ("Content-Length", str(len(body)))],
+                             body))
+        elif path == "/malformada":
+            body = ("<html><head><title>Rota</title></head><body>"
+                    "<p>uno<p>dos<foo>misterio</foo>"
+                    "<!-- comentario -->"
+                    "<script>if(a<b){mala();}</script>"
+                    "<b><i>cruce</b></i>"
+                    "<p>fin sin cerrar").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
+                              ("Content-Length", str(len(body)))],
+                             body))
+        elif path == "/img-pagina":
+            body = ("<html><head><title>Fotos</title></head><body>"
+                    "<h2>Fotos</h2>"
+                    "<img src=\"/img1.png\" alt=\"amanecer\">"
+                    "<p>Texto entre fotos.</p>"
+                    "<img src=\"foto.png\">"
+                    "<img src=\"/noexiste.png\" alt=\"rota\">"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
+                              ("Content-Length", str(len(body)))],
+                             body))
+        elif path == "/busca" or path.startswith("/busca?"):
+            q = ""
+            if "?" in path:
+                q = path.split("?", 1)[1]
+                if q.startswith("q="):
+                    q = q[2:]
+            body = ("<html><head><title>Busca</title></head><body>"
+                    "<h2>Resultados de " + q + "</h2><ul>"
+                    "<li><a href=\"/pagina\">Inicio Facil</a> "
+                    "portada de ejemplo</li>"
+                    "<li><a href=\"/lista\">Listas</a> "
+                    "listas de ejemplo</li>"
+                    "</ul></body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
+                              ("Content-Length", str(len(body)))],
+                             body))
+        elif path == "/grande-html":
+            trozo = "<p>relleno de prueba para superar el tope</p>"
+            body = ("<html><head><title>Grande</title></head><body>" +
+                    trozo * 1600 + "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
                               ("Content-Length", str(len(body)))],
                              body))
         else:

@@ -426,4 +426,114 @@ int u_http_trae(const char *url, u_http_res_t *r,
                 unsigned char *cuerpo, int capcuerpo,
                 unsigned int espera_ms);
 
+/* F7-C: HTML minimo en Ring 3 (sin JS ni CSS; patron codec DNS/HTTP).
+   Todo acotado; la pagina vive en cuerpo<=65536 (tope F7-B) y el
+   documento reparte un area propia (heap) sin duplicar la pagina.
+   Parser permisivo con el contenido, estricto con los limites:
+   truncados se avisan (retorno 1 / d->truncado), nunca silenciosos. */
+#define U_HTML_MAX_TXT 49152    /* texto decodificado del documento */
+#define U_HTML_MAX_SEG 1024     /* tramos inline (texto+estilo+enlace) */
+#define U_HTML_MAX_BLOQ 512     /* bloques (titulo/parrafo/lista/img) */
+#define U_HTML_MAX_ENL 128      /* enlaces distintos */
+#define U_HTML_MAX_IMG 64       /* imagenes estructurales */
+#define U_HTML_MAX_PILA 16      /* anidamiento inline */
+#define U_HTML_URL 512          /* URL resuelta (como U_HTTP_MAX_URL) */
+#define U_HTML_ALT 128          /* texto alternativo de imagen */
+
+/* Tipos de bloque (u_html_bloq_t.tipo). */
+#define U_HTML_B_TXT 0          /* texto suelto (fuera de bloque) */
+#define U_HTML_B_H1 1           /* ... hasta H6 = 6 */
+#define U_HTML_B_H2 2
+#define U_HTML_B_H3 3
+#define U_HTML_B_H4 4
+#define U_HTML_B_H5 5
+#define U_HTML_B_H6 6
+#define U_HTML_B_P 7
+#define U_HTML_B_LI 8
+#define U_HTML_B_HR 9
+#define U_HTML_B_IMG 10
+#define U_HTML_B_BR 11          /* salto explicito (fila vacia) */
+
+/* Estilos de tramo/fila (u_html_seg_t.est, u_html_fila_t.estilo). */
+#define U_HTML_E_NORMAL 0
+#define U_HTML_E_NEGRITA 1      /* strong/b */
+#define U_HTML_E_ENFASIS 2      /* em/i */
+#define U_HTML_E_ENLACE 3       /* a (siempre distinguible) */
+#define U_HTML_E_TITULO 4       /* h1..h6 */
+#define U_HTML_E_HR 5           /* separador (fila, sin texto) */
+#define U_HTML_E_IMG 6          /* placeholder (fila, sin texto) */
+#define U_HTML_E_VACIA 7        /* espaciado entre bloques */
+
+typedef struct {
+    int ini;                    /* offset en d->texto */
+    int len;                    /* bytes (UTF-8 valido o FF FD) */
+    int est;                    /* U_HTML_E_* */
+    int enlace;                 /* indice a d->enl o -1 */
+} u_html_seg_t;
+
+typedef struct {
+    int tipo;                   /* U_HTML_B_* */
+    int nivel;                  /* h:1..6; li: sangria 0.. */
+    int seg_ini;                /* primer tramo del bloque */
+    int seg_n;                  /* tramos del bloque */
+    int img;                    /* indice a d->img o -1 */
+} u_html_bloq_t;
+
+typedef struct {
+    char url[U_HTML_URL];       /* absoluta http, sin fragmento */
+    int ini;                    /* offset del ancla en d->texto */
+    int len;                    /* bytes del ancla */
+} u_html_enl_t;
+
+typedef struct {
+    char src[U_HTML_URL];       /* absoluta http (puede ser "") */
+    char alt[U_HTML_ALT];       /* alternativa (puede ser "") */
+} u_html_img_t;
+
+typedef struct {
+    char *texto;                /* area de texto (heap) */
+    int texto_n;                /* bytes usados */
+    u_html_seg_t *seg;          /* tramos (heap) */
+    int nseg;
+    u_html_bloq_t *bloq;        /* bloques (heap) */
+    int nbloq;
+    u_html_enl_t *enl;          /* enlaces (heap) */
+    int nenl;
+    u_html_img_t *img;          /* imagenes (heap) */
+    int nimg;
+    char titulo[128];           /* <title> (puede ser "") */
+    int truncado;               /* 1 si algun tope recorto contenido */
+} u_html_doc_t;
+
+/* Crea/libera el documento (reserva heap). 0 ok, -1 sin memoria. */
+int u_html_crea(u_html_doc_t *d);
+void u_html_libera(u_html_doc_t *d);
+/* Interpreta pg[0..n) contra base (URL absoluta http, "" = sin base
+   para relativas). 0 ok completo, 1 ok con truncado (d->truncado),
+   -1 args. Nunca se cuelga con documentos malformados. */
+int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
+                 const char *base);
+/* Resuelve ref contra base (absoluta http). sale[U_HTML_URL].
+   0 ok; -1 args; -2 esquema no navegable (https/javascript/mailto/
+   vacio con blancos); -3 largo o base invalida. */
+int u_html_resuelve_url(const char *base, const char *ref, char *sal);
+
+/* Fila de layout (u_html_maqueta): tramo de texto ya ajustado al
+   ancho. ini/len referencian d->texto (len 0 en VACIA/HR/IMG).
+   x = sangria en celdas; enlace = indice o -1; img = indice o -1. */
+typedef struct {
+    int ini;
+    int len;
+    int x;
+    int estilo;                 /* U_HTML_E_* */
+    int enlace;
+    int img;
+} u_html_fila_t;
+
+#define U_HTML_MAX_FILA 2048    /* filas por documento */
+/* Distribuye el documento en filas de cols celdas (cols>=10).
+   Devuelve nfilas (0 = documento vacio) o -1 por args. */
+int u_html_maqueta(const u_html_doc_t *d, int cols,
+                   u_html_fila_t *filas, int maxfilas);
+
 #endif

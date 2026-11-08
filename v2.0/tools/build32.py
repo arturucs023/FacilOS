@@ -225,8 +225,9 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
     else:
         # v2.2-editor: el editor avanzado (multidoc, undo, buscar, iconos)
         # supera los 64K clasicos; el nucleo admite plano+bss<=768K
-        # (ver kern_crea_proceso), asi que el tope real es 128K plano.
-        assert len(plano) + 20 <= 131071, nom + " no cabe en 128K"
+        # (ver kern_crea_proceso). F7-C: fbrowser roza los 140K
+        # (ulib HTTP+DNS+HTML+UGFX); tope 192K plano.
+        assert len(plano) + 20 <= 196607, nom + " no cabe en 192K"
         assert bss_tam <= 0x40000, nom + " bss enorme"
         assert len(plano) + bss_tam <= 0xC0000, nom + " +bss > 768K"
     cab = b"F32X" + _st.pack("<IIII", ver, 0, len(plano) + 20, bss_tam)
@@ -290,6 +291,8 @@ _apps3 = [
     ("calculadora", ["calculadora.c"], True),
     ("reloj", ["reloj.c"], True),
     ("adivina", ["adivina.c"], True),
+    ("fbrowser", ["fbrowser.c"], True, True),
+    ("t_fb", ["t_fb.c"], True),
 ]
 for _nom, _fs, _u, *_g in _apps3:
     haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK,
@@ -298,10 +301,11 @@ for _nom, _fs, _u, *_g in _apps3:
 # ---- escribir la ISO con el catalogo (todo dentro del CD) ----
 _todos = _programas + [a[0] for a in _apps3]
 _fin_img = cdcat_build(_todos)
-# F7-B: la cola del catalogo a partir del LBA 1121 (tras el hueco
-# VGA) vive en 0x300000 (256 KB reservados en pag.c:reserva_fijas).
-_cola = (_fin_img - 1121) * 512
-assert _cola <= 0x40000 - 8192, "cola del catalogo > 248K"
+# F7-C: la cola del catalogo a partir del LBA 993 (tras la pila de
+# arranque en [0x90000,0xA0000)) vive en 0x1000000
+# (1 MB reservado en pag.c desde F7-C).
+_cola = (_fin_img - 993) * 512
+assert _cola <= 0x100000 - 8192, "cola del catalogo > 1016K"
 # El arranque copia desde CAT_LBA hasta el final de los datos: eso son
 # (_fin_img - CAT_LBA) sectores de 512. Se lo parcheamos ahora.
 struct.pack_into("<H", img, 496, _fin_img - CAT_LBA)
@@ -315,7 +319,7 @@ _fin = IMG_LBA + (_nimg * 512 + 2047) // 2048
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.3-red-f7b.iso"   # F7-B (f5 intacta)
+out_iso = ISO_DIR / "FacilOS-v2.3-red-f7c.iso"   # F7-C (f7b intacta)
 _iso = bytes(iso[:_fin * 2048])
 out_iso.write_bytes(_iso)
 print(f"OK {out_iso} {len(_iso)} bytes ({_fin} sectores, "

@@ -1,4 +1,4 @@
-# Comandos de red (castellano; F1+F2+F3+F4+F7-B implementados)
+# Comandos de red (castellano; F1+F2+F3+F4+F7-B+F7-C implementados)
 
 - `red` -> una linea de estado. `red estado` -> detalle completo
   (adaptador, MAC, MTU, contadores, IP, mascara, puerta, DNS,
@@ -31,6 +31,14 @@
   tamano, tiempo, cuerpo). Sin redirecciones automaticas.
   rc 0 ok; 1 sin respuesta; 2 URL invalida; 3 NXDOMAIN;
   4 respuesta no valida o no soportada.
+- `fbrowser [url]` -> abre el navegador grafico FacilBrowser
+  (Ring 3, HTTP/1.0 sin TLS, solo `http://`). Historial
+  atras/adelante, recarga, detencion, barra de direccion,
+  enlaces navegables, imagenes como marcador, maqueta por
+  filas y estado con codigo/tamano/tiempo. Sin redireccion
+  automatica (301/302 hasta 3 saltos manuales con aviso).
+  Requiere escritorio (servidor); la URL inicial es opcional.
+  Ejemplo: `fbrowser http://10.0.2.2:18080/pagina`.
 - Sin adaptador: `red`/`mostrar_interfaz` informan
   `sin adaptador`; `configurar_ip`/`mostrar_rutas` funcionan igual
   (la configuracion no exige hardware); `configurar_dhcp`,
