@@ -718,6 +718,28 @@ static void envia_inf(int de) {
    - cliente vivo pero lento -> espera hasta 2 s y marca ack_pend (se
      salta su DRAW hasta el ACK tardio).
    Sin esto, un cliente bloqueado congela todo el escritorio. */
+
+/* Cubre con las de encima lo que pinto tarde la ventana k (su ACK
+   llego cuando otra ya ocupaba su sitio): marca contenido de las que
+   la tapan con z mayor. Devuelve cuantas marco. Sin frame aqui. */
+static int cubre_encima(int k) {
+    int r2, n = 0;
+    if (k < 0 || k >= NVENT || !vents[k].usado) return 0;
+    for (r2 = 0; r2 < NVENT; r2++) {
+        ventana_t *a = &vents[r2];
+        if (r2 != k && a->usado && !a->minimizada && a->visible &&
+            a->z > vents[k].z &&
+            a->x < vents[k].x + vents[k].w &&
+            vents[k].x < a->x + a->w &&
+            a->y < vents[k].y + vents[k].h &&
+            vents[k].y < a->y + a->h) {
+            win_dirty[r2] = 1;
+            n++;
+        }
+    }
+    return n;
+}
+
 static void espera_ack(int idx) {
     char b[64];
     int de = 0, t = 0, pid;
@@ -733,6 +755,21 @@ static void espera_ack(int idx) {
                 if (vents[idx].usado && vents[idx].pid == pid)
                     vents[idx].ack_pend = 0;
                 return;
+            }
+            if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
+                b[2] == 'K') {
+                /* ACK ajeno en espera ajena: no perderlo (antes se
+                   tragaba y la ventana quedaba congelada para siempre,
+                   con basura de solape persistente). Se cubre encima
+                   y se pide marco extra al salir de la espera. */
+                int kk;
+                for (kk = 0; kk < NVENT; kk++) {
+                    if (vents[kk].usado && vents[kk].pid == de) {
+                        vents[kk].ack_pend = 0;
+                        if (cubre_encima(kk)) nuevo_marco = 1;
+                    }
+                }
+                continue;
             }
             if (r >= 3 && b[0] == 'B' && b[1] == 'Y' && b[2] == 'E') {
                 int k;
@@ -1502,27 +1539,14 @@ int main(void) {
                        b[2] == 'K') {
                 /* ACK tardio: la app pinto tarde y presento ella misma:
                    lo que haya encima queda tapado (la app solo repinta
-                   su rectangulo, sin orden Z). Reponen las ventanas de
-                   encima que la pisen; a esta no se le reenvia DRAW
-                   (acaba de pintar: reenviar encadenaria
-                   DRAW->espera->ACK->frame con apps lentas). */
+                   su rectangulo, sin orden Z). Reponen encima las que
+                   la pisen (ver cubre_encima); a esta no se le reenvia
+                   DRAW (acaba de pintar). */
                 int urge = 0, k;
                 for (k = 0; k < NVENT; k++) {
                     if (vents[k].usado && vents[k].pid == de) {
-                        int r2;
                         vents[k].ack_pend = 0;
-                        for (r2 = 0; r2 < NVENT; r2++) {
-                            ventana_t *a = &vents[r2];
-                            if (r2 != k && a->usado && !a->minimizada &&
-                                a->visible && a->z > vents[k].z &&
-                                a->x < vents[k].x + vents[k].w &&
-                                vents[k].x < a->x + a->w &&
-                                a->y < vents[k].y + vents[k].h &&
-                                vents[k].y < a->y + a->h) {
-                                win_dirty[r2] = 1;
-                                urge = 1;
-                            }
-                        }
+                        if (cubre_encima(k)) urge = 1;
                     }
                 }
                 if (urge) frame();
