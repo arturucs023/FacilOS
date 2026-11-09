@@ -1043,21 +1043,6 @@ static void frame(void) {
         if (!v->usado || !v->visible || v->minimizada) continue;
         if (v->ack_pend) continue;   /* congelada: nada (cromo intacto) */
         if (!win_dirty[ids[q]] && !win_cromo[ids[q]]) continue;
-        if (ids[q] == arr_id && arr_movido) {
-            /* Arrastre en curso con geometria cambiada: solo cromo.
-               La app no sigue al raton (sus pintados tardios caian
-               fuera de la union ya reparada: restos y parpadeo); el
-               contenido vuelve de una pieza al soltar. Sin DRAW ni
-               espera: los lotes van fluidos. win_dirty intacto. */
-            asegura_propiedad();
-            if (win_cromo[ids[q]]) {
-                sombra(v);
-                cromo(v);
-                win_cromo[ids[q]] = 0;
-            }
-            if (vents[ids[q]].usado) dibuja_agarre(&vents[ids[q]]);
-            continue;
-        }
         asegura_propiedad();
         if (win_cromo[ids[q]]) {
             sombra(v);
@@ -1150,9 +1135,16 @@ static void frame(void) {
         /* v2.1-p1: si el buzon esta lleno (rafaga de MOU) el DRAW se
            pierde; no se limpia el flag para reintentarlo (antes quedaba
            la ventana en blanco para siempre). */
-        if (!u_ipc_enviar(v->pid, m, u_strlen(m) + 1))
-            win_dirty[ids[q]] = 0;
-        espera_ack(ids[q]);
+        /* Arrastre en curso con geometria cambiada: contenido diferido
+           al soltar (ver repara_suelta). Ninguna app pinta a medias de
+           un movimiento: ni restos fuera de la union ni parpadeo por
+           espera/ACK. El cromo de arriba ya se dibujo; win_dirty queda
+           puesto para el repintado de suelta. */
+        if (!(arr_id >= 0 && arr_movido)) {
+            if (!u_ipc_enviar(v->pid, m, u_strlen(m) + 1))
+                win_dirty[ids[q]] = 0;
+            espera_ack(ids[q]);
+        }
         if (vents[ids[q]].usado) dibuja_agarre(&vents[ids[q]]);
     }
     asegura_propiedad();
