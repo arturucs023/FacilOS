@@ -1840,7 +1840,26 @@ __attribute__((optimize("O0"))) static void sc_61(regs_t *r, int di)
  }
 
 
-__attribute__((optimize("O0"))) static void sc_63(regs_t *r, int di)
+__attribute__((optimize("O0"))) __attribute__((optimize("O0"))) static void sc_62(regs_t *r, int di)
+ {   /* fija_clip(x,y,w,h): recorte de dibujo del proceso llamante
+       (0,0,0,0 = sin recorte). Lo usa ug_comienza con el rectangulo
+       de su ventana; el servidor nunca lo fija (acceso total). */
+    int x = (int)r->ebx, y = (int)r->ecx;
+    int w = (int)r->edx, h = (int)r->esi;
+    r->eax = (uint32_t)-1;
+    if (di < 0) { g_clip_fija(0, 0, 0, 0); r->eax = 0; return; }
+    if (!proc_actual) return;
+    if (w < 0 || h < 0 || w > 4096 || h > 4096) return;
+    if (x < -4096 || x > 4096 || y < -4096 || y > 4096) return;
+    proc_actual->clip_x = x;
+    proc_actual->clip_y = y;
+    proc_actual->clip_w = w;
+    proc_actual->clip_h = h;
+    r->eax = 0;
+    return;
+}
+
+static void sc_63(regs_t *r, int di)
  {
         /* v2.3-red F2: tabla de rutas (conectada + defecto derivadas
            de la configuracion). op 0: vuelca hasta max bytes (12 por
@@ -1936,6 +1955,7 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [59] = sc_59,
     [60] = sc_60,
     [61] = sc_61,   /* F5: TCP multiplexado (op 0..7) */
+    [62] = sc_62,   /* F8-compositor: recorte por arrendamiento */
     /* 62 reservada */
     [63] = sc_63,
 };
@@ -2002,6 +2022,7 @@ static const char *const sc_nombre[SC_N] = {
     [59] = "red_udp_enviar",
     [60] = "red_udp_recibir",
     [61] = "red_tcp",
+    [62] = "fija_clip",
     [63] = "red_rutas",
 };
 static uint32_t sc_count[SC_N];
@@ -2016,6 +2037,16 @@ __attribute__((optimize("O0"))) void syscall_c(regs_t *r) {
     uint32_t n = r->eax;
     if (n >= SC_N || !sc_tabla[n]) { r->eax = (uint32_t)-1; return; }
     sc_count[n]++;
+    /* Recorte por arrendamiento (solo dibujo; presentar/limpiar y la
+       consola van sin recorte). Las syscalls de dibujo no bloquean. */
+    if (di >= 0 && proc_actual &&
+        (n == 10 || n == 11 || n == 12 || n == 13 ||
+         n == 20 || n == 21 || n == 22) &&
+        proc_actual->clip_w > 0 && proc_actual->clip_h > 0)
+        g_clip_fija(proc_actual->clip_x, proc_actual->clip_y,
+                    proc_actual->clip_w, proc_actual->clip_h);
+    else
+        g_clip_fija(0, 0, 0, 0);
     sc_tabla[n](r, di);
 }
 

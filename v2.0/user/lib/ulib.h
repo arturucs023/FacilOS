@@ -110,6 +110,7 @@ typedef struct {
 } USPRITE;
 
 void u_destino(int d);
+void u_fija_clip(int x, int y, int w, int h);
 void u_presentar(int x, int y, int w, int h);
 void u_pixel(int x, int y, int color);
 void u_linea(int x1, int y1, int x2, int y2, int color);

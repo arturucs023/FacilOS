@@ -28,6 +28,8 @@ int ug_abre(ug_win_t *v, int srv, int w, int h, const char *titulo) {
     v->y = 0;
     v->foco = 0;
     v->vivo = 1;
+    v->hay_pend = 0;
+    v->pend_len = 0;
     m[t++] = 'R';
     m[t++] = 'E';
     m[t++] = 'G';
@@ -76,19 +78,29 @@ void ug_cierra(ug_win_t *v) {
 int ug_evento(ug_win_t *v, ug_ev_t *ev, int bloquear) {
     char b[64];
     int de = 0;
+    int primera = 1;
     ev->tipo = UG_EV_NADA;
     if (!v || !v->vivo) {
         ev->tipo = UG_EV_SALIR;
         return UG_EV_SALIR;
     }
-    if (!bloquear && !u_ipc_hay()) return UG_EV_NADA;
+    if (!bloquear && !v->hay_pend && !u_ipc_hay()) return UG_EV_NADA;
     for (;;) {
-        int r = u_ipc_recibir(b, 64, &de);
-        int k;
-        if (r < 0) {
-            if (!bloquear) return UG_EV_NADA;
-            continue;
+        int r, k;
+        if (primera && v->hay_pend) {
+            /* Inspeccionado antes: se entrega ahora sin tocar el buzon. */
+            r = v->pend_len;
+            de = v->pend_de;
+            for (k = 0; k < r && k < 64; k++) b[k] = v->pend_msg[k];
+            v->hay_pend = 0;
+        } else {
+            r = u_ipc_recibir(b, 64, &de);
+            if (r < 0) {
+                if (!bloquear) return UG_EV_NADA;
+                continue;
+            }
         }
+        primera = 0;
         if (de != v->srv) continue;
         if (r >= 4 && b[0] == 'D' && b[1] == 'R' && b[2] == 'A') {
             k = 4;
@@ -99,6 +111,38 @@ int ug_evento(ug_win_t *v, ug_ev_t *ev, int bloquear) {
                 int h = w >= 0 && k < r ? lee_num(b, r, &k) : -1;
                 if (w > 0) v->w = w;
                 if (h > 0) v->h = h;
+            }
+            /* Coalescencia (F8-compositor): si ya espera otro DRAW, el
+               actual quedaria rancio antes de pintarse; se confirma
+               sin pintar y se sigue con el nuevo. El primero no-DRAW
+               se guarda para la proxima llamada (no se pierde). */
+            for (;;) {
+                char b2[64];
+                int de2 = 0, r2, k2;
+                if (!u_ipc_hay()) break;
+                r2 = u_ipc_recibir(b2, 64, &de2);
+                if (r2 < 0) break;
+                if (de2 != v->srv) continue;
+                if (!(r2 >= 4 && b2[0] == 'D' && b2[1] == 'R' &&
+                      b2[2] == 'A')) {
+                    if (r2 > 64) r2 = 64;
+                    for (k2 = 0; k2 < r2; k2++)
+                        v->pend_msg[k2] = b2[k2];
+                    v->pend_len = r2;
+                    v->pend_de = de2;
+                    v->hay_pend = 1;
+                    break;
+                }
+                u_ipc_enviar(v->srv, "ACK", 4);
+                k = 4;
+                v->x = lee_num(b2, r2, &k);
+                v->y = lee_num(b2, r2, &k);
+                if (k < r2) {
+                    int w = lee_num(b2, r2, &k);
+                    int h = w >= 0 && k < r2 ? lee_num(b2, r2, &k) : -1;
+                    if (w > 0) v->w = w;
+                    if (h > 0) v->h = h;
+                }
             }
             ev->tipo = UG_EV_DRAW;
             ev->x = v->x;
@@ -146,6 +190,19 @@ int ug_pide_info(ug_win_t *v, int *w, int *h) {
     char b[64];
     int de = 0;
     if (!v || !v->vivo) return -1;
+    if (v->hay_pend && v->pend_len >= 3 &&
+        v->pend_msg[0] == 'I' && v->pend_msg[1] == 'N' &&
+        v->pend_msg[2] == 'F') {
+        /* Respuesta inspeccionada antes: usarla sin pedir otra. */
+        int k = 3, ww, hh, q;
+        for (q = 0; q < v->pend_len && q < 64; q++) b[q] = v->pend_msg[q];
+        v->hay_pend = 0;
+        ww = lee_num(b, v->pend_len, &k);
+        hh = lee_num(b, v->pend_len, &k);
+        if (w) *w = ww;
+        if (h) *h = hh;
+        return 0;
+    }
     if (u_ipc_enviar(v->srv, "INF", 4)) return -1;
     for (;;) {
         int r = u_ipc_recibir(b, 64, &de);
@@ -225,15 +282,22 @@ void ug_edit(ug_win_t *v, int on) {
 
 void ug_comienza(ug_win_t *v) {
     /* Toma el lease (precedente: asegura_propiedad del servidor). */
+    int ch;
     u_texto(0, 0, "", C_NEGRO);
     u_destino(1);   /* v2.2-post: los clientes tambien componen en el
                        dorso (el present de ug_fin ya lo vuelca) */
     v->ox = v->x;
     v->oy = v->y + UG_CHROME;
+    /* Recorte por arrendamiento (F8-compositor): ni un pixel fuera
+       de su rectangulo de contenido, aunque la geometria cacheada
+       este rancia. */
+    ch = v->h - UG_CHROME;
+    u_fija_clip(v->ox, v->oy, v->w, ch < 1 ? 1 : ch);
 }
 
 void ug_fin(ug_win_t *v) {
     u_presentar(v->x, v->y, v->w, v->h);
+    u_fija_clip(0, 0, 0, 0);
     u_ipc_enviar(v->srv, "ACK", 4);
 }
 

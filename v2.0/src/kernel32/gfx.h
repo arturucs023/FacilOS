@@ -21,7 +21,12 @@ uint16_t gfx_w(void);
 uint16_t gfx_h(void);
 
 /* Primitivas v1.5 (requieren gfx activo). Coords con signo, clipping.
-   v2.1-P0: color u32; bit24=1 -> RGB crudo, si no paleta 0-15 (compat). */
+   v2.1-P0: color u32; bit24=1 -> RGB crudo, si no paleta 0-15 (compat).
+   Recorte por arrendamiento (F8-compositor): lo fija la syscall 62 por
+   proceso llamante; 0,0,0,0 lo desactiva. Solo afecta a las primitivas
+   de dibujo (pixel/rect/linea/texto/sprite/blit), nunca a presentar,
+   limpiar ni a la consola (di<0). */
+void g_clip_fija(int x, int y, int w, int h);
 void g_pixel(int x, int y, uint32_t color);
 void g_rect(int x, int y, int w, int h, uint32_t color);
 void g_linea(int x1, int y1, int x2, int y2, uint32_t color);

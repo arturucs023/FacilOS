@@ -92,6 +92,12 @@ typedef struct {
     int buz_ini, buz_fin, buz_n;
     int espera_msg;             /* bloqueado esperando mensaje */
     int espera_raton;           /* bloqueado esperando raton (etapa 4) */
+
+    /* Recorte de dibujo (F8-compositor): rectangulo en pixeles de
+       pantalla que limita las primitivas graficas de este proceso
+       (0,0,0,0 = sin recorte). Lo fija el propio proceso con la
+       syscall 62 (lease de su ventana); el servidor nunca lo usa. */
+    int clip_x, clip_y, clip_w, clip_h;
 } proc_t;
 
 extern proc_t proc_tareas[1 + MAXPROC];

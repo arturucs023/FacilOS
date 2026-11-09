@@ -20,6 +20,55 @@ static uint16_t GW = 0, GH = 0, GP = 0;
 static uint16_t gcx = 0, gcy = 0;
 static int cur_vis = 0;
 
+/* Recorte por arrendamiento (F8-compositor): lo fija la syscall 62 por
+   proceso llamante; aqui vive el del dibujo en curso (las syscalls de
+   dibujo no bloquean ni ceden: no hay carrera). 0,0,0,0 = sin recorte. */
+static int clip_x0 = 0, clip_y0 = 0, clip_x1 = 0, clip_y1 = 0;
+static int clip_on = 0;
+
+void g_clip_fija(int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0) {
+        clip_on = 0;
+        return;
+    }
+    clip_x0 = x < 0 ? 0 : x;
+    clip_y0 = y < 0 ? 0 : y;
+    clip_x1 = x + w;
+    clip_y1 = y + h;
+    clip_on = 1;
+}
+
+/* Interseccion de [x,x+w)x[y,y+h) con pantalla y arrendamiento.
+   Devuelve 1 con el rectangulo ya recortado, 0 si queda vacio. */
+static int clip_rect(int *x, int *y, int *w, int *h) {
+    int gw = GW, gh = GH;
+    int x0 = *x, y0 = *y, x1 = *x + *w, y1 = *y + *h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > gw) x1 = gw;
+    if (y1 > gh) y1 = gh;
+    if (clip_on) {
+        if (x0 < clip_x0) x0 = clip_x0;
+        if (y0 < clip_y0) y0 = clip_y0;
+        if (x1 > clip_x1) x1 = clip_x1;
+        if (y1 > clip_y1) y1 = clip_y1;
+    }
+    if (x1 <= x0 || y1 <= y0) return 0;
+    *x = x0;
+    *y = y0;
+    *w = x1 - x0;
+    *h = y1 - y0;
+    return 1;
+}
+
+static int clip_punto(int x, int y) {
+    if (x < 0 || y < 0 || x >= GW || y >= GH) return 0;
+    if (clip_on && (x < clip_x0 || y < clip_y0 ||
+                    x >= clip_x1 || y >= clip_y1))
+        return 0;
+    return 1;
+}
+
 /* v2.1-P0: color extendido. Si el bit 24 viene a 1, los 24 bits bajos
    son RGB crudo (0x01000000|rrggbb); si no, paleta VGA 0-15 (compat). */
 static uint32_t color32(uint32_t c) {
@@ -469,10 +518,17 @@ void g_presentar(int x, int y, int w, int h) {
                              en frente es no-op (antes tapaba en negro la
                              ventana recien dibujada cuando el dorso existe
                              por otro cliente). */
-    int x0 = x < 0 ? 0 : x;
-    int y0 = y < 0 ? 0 : y;
-    int x1 = x + w > GW ? GW : x + w;
-    int y1 = y + h > GH ? GH : y + h;
+    int x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > GW) x1 = GW;
+    if (y1 > GH) y1 = GH;
+    if (clip_on) {
+        if (x0 < clip_x0) x0 = clip_x0;
+        if (y0 < clip_y0) y0 = clip_y0;
+        if (x1 > clip_x1) x1 = clip_x1;
+        if (y1 > clip_y1) y1 = clip_y1;
+    }
     if (x0 >= x1 || y0 >= y1) return;
     for (int yy = y0; yy < y1; yy++) {
         uint32_t *d = (uint32_t *)(lfb + (uint32_t)yy * GP +
@@ -487,10 +543,17 @@ void g_presentar(int x, int y, int w, int h) {
 void g_sprite(int x, int y, int w, int h, const uint32_t *pix) {
     uint32_t b = base_dib();
     if (!lfb || !pix || w <= 0 || h <= 0) return;
-    int x0 = x < 0 ? 0 : x;
-    int y0 = y < 0 ? 0 : y;
-    int x1 = x + w > GW ? GW : x + w;
-    int y1 = y + h > GH ? GH : y + h;
+    int x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > GW) x1 = GW;
+    if (y1 > GH) y1 = GH;
+    if (clip_on) {
+        if (x0 < clip_x0) x0 = clip_x0;
+        if (y0 < clip_y0) y0 = clip_y0;
+        if (x1 > clip_x1) x1 = clip_x1;
+        if (y1 > clip_y1) y1 = clip_y1;
+    }
     if (x0 >= x1 || y0 >= y1) return;
     for (int yy = y0; yy < y1; yy++) {
         volatile uint32_t *d = (volatile uint32_t *)
@@ -534,6 +597,24 @@ void g_blit(int x0, int y0, int w, int h, int x1, int y1) {
     if (y0 + h > GH) { int e = y0 + h - GH; h -= e; }
     if (x1 + w > GW) { int e = x1 + w - GW; w -= e; }
     if (y1 + h > GH) { int e = y1 + h - GH; h -= e; }
+    /* arrendamiento: solo el destino (el origen puede leerse del
+       dorso; lo visible queda dentro de la ventana igual). */
+    if (clip_on) {
+        if (x1 < clip_x0) {
+            int d = clip_x0 - x1;
+            w -= d;
+            x0 += d;
+            x1 += d;
+        }
+        if (y1 < clip_y0) {
+            int d = clip_y0 - y1;
+            h -= d;
+            y0 += d;
+            y1 += d;
+        }
+        if (x1 + w > clip_x1) w = clip_x1 - x1;
+        if (y1 + h > clip_y1) h = clip_y1 - y1;
+    }
     if (w <= 0 || h <= 0) return;
     int dy = (y1 > y0 || (y1 == y0 && x1 > x0)) ? -1 : 1;
     for (int i = 0; i < h; i++) {
@@ -573,22 +654,19 @@ static void p_pixel(int x, int y, uint32_t fg) {
 
 void g_pixel(int x, int y, uint32_t color) {
     if (!lfb) return;
+    if (!clip_punto(x, y)) return;
     p_pixel(x, y, color32(color));
 }
 
 void g_rect(int x, int y, int w, int h, uint32_t color) {
     if (!lfb || w <= 0 || h <= 0) return;
     uint32_t b = base_dib();
-    int x0 = x < 0 ? 0 : x;
-    int y0 = y < 0 ? 0 : y;
-    int x1 = x + w > GW ? GW : x + w;
-    int y1 = y + h > GH ? GH : y + h;
-    if (x0 >= x1 || y0 >= y1) return;
+    if (!clip_rect(&x, &y, &w, &h)) return;
     uint32_t fg = color32(color);
-    for (int yy = y0; yy < y1; yy++) {
+    for (int yy = y; yy < y + h; yy++) {
         volatile uint32_t *p =
-            (volatile uint32_t *)(b + (uint32_t)yy * GP + (uint32_t)x0 * 4);
-        for (int xx = x0; xx < x1; xx++) p[xx - x0] = fg;
+            (volatile uint32_t *)(b + (uint32_t)yy * GP + (uint32_t)x * 4);
+        for (int xx = 0; xx < w; xx++) p[xx] = fg;
     }
 }
 
@@ -603,7 +681,7 @@ void g_linea(int x1, int y1, int x2, int y2, uint32_t color) {
     int err = dx - dy;
     int x = x1, y = y1;
     for (;;) {
-        if (x >= 0 && y >= 0 && x < GW && y < GH) {
+        if (clip_punto(x, y)) {
             volatile uint32_t *p =
                 (volatile uint32_t *)(b + (uint32_t)y * GP + (uint32_t)x * 4);
             *p = fg;
@@ -634,11 +712,20 @@ void g_texto(int x, int y, const char *s, uint32_t color) {
                 v = 0x100u | (unsigned char)s[0];
             }
             f = glifo_de(v);
-            if (cx + 8 > 0 && cy + 16 > 0 && cx < GW && cy < GH) {
+            if (cx + 8 > 0 && cy + 16 > 0 && cx < GW && cy < GH &&
+                (!clip_on || (cx + 8 > clip_x0 && cy + 16 > clip_y0 &&
+                               cx < clip_x1 && cy < clip_y1))) {
                 int c0 = cx < 0 ? -cx : 0;
                 int r0 = cy < 0 ? -cy : 0;
                 int c1 = cx + 8 > GW ? GW - cx : 8;
                 int r1 = cy + 16 > GH ? GH - cy : 16;
+                if (clip_on) {
+                    if (cx + c0 < clip_x0) c0 = clip_x0 - cx;
+                    if (cy + r0 < clip_y0) r0 = clip_y0 - cy;
+                    if (cx + c1 > clip_x1) c1 = clip_x1 - cx;
+                    if (cy + r1 > clip_y1) r1 = clip_y1 - cy;
+                    if (c1 <= c0 || r1 <= r0) continue;
+                }
                 for (int r = r0; r < r1; r++) {
                     volatile uint32_t *p = (volatile uint32_t *)
                         (b + (uint32_t)(cy + r) * GP + (uint32_t)(cx + c0) * 4);

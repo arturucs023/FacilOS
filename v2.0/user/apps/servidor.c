@@ -77,6 +77,40 @@ static void pantalla_recarga(void);   /* VIDEO: relee tamano y reencaja */
 
 /* Repintado por dano (etapa 6, Fase P): ver definicion junto a frame(). */
 static int bg_dirty = 1;
+
+/* Region danada del dorso (F8-compositor): union de lo repintado en
+   este frame; al final solo se vuelca eso en vez de toda la pantalla.
+   Sin esto cada frame movia 2 MB aunque solo cambiara el cursor. */
+static int dmg_hay = 0, dmg_x0 = 0, dmg_y0 = 0, dmg_x1 = 0, dmg_y1 = 0;
+
+static void marca_dano(int x, int y, int w, int h) {
+    int x1 = x + w, y1 = y + h;
+    if (w <= 0 || h <= 0) return;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x1 > PANT_W) x1 = PANT_W;
+    if (y1 > PANT_H) y1 = PANT_H;
+    if (x1 <= x || y1 <= y) return;
+    if (!dmg_hay) {
+        dmg_x0 = x;
+        dmg_y0 = y;
+        dmg_x1 = x1;
+        dmg_y1 = y1;
+        dmg_hay = 1;
+    } else {
+        if (x < dmg_x0) dmg_x0 = x;
+        if (y < dmg_y0) dmg_y0 = y;
+        if (x1 > dmg_x1) dmg_x1 = x1;
+        if (y1 > dmg_y1) dmg_y1 = y1;
+    }
+}
+
+/* Espera adaptativa (F8-compositor): presupuesto normal 100 ms; si la
+   ventana dio un planton (ack_pend), el siguiente se espera hasta
+   300 ms antes de rendirse. Las apps rapidas nunca notan el tope
+   (el ACK llega y se vuelve al instante); las lentas dejan de
+   parpadear a cambio de una pausa acotada. */
+static int espera_paciencia[NVENT];
 static int win_dirty[NVENT];
 static int win_cromo[NVENT];
 
@@ -171,6 +205,7 @@ static void fondo_clip(int cx, int cy, int cw, int ch) {
     frect(560, 300, 140, 2, T_FONDO_LINEA, cx, cy, cw, ch);
     frect(120, 380, 220, 60, banda, cx, cy, cw, ch);
     frect(120, 438, 220, 2, T_FONDO_LINEA, cx, cy, cw, ch);
+    marca_dano(cx, cy, cw, ch);
 }
 
 /* Icono 16x16 propio en (x,y); '.' y letras ajenas = transparente. */
@@ -556,6 +591,7 @@ static int registra(int pid, int w, int h, const char *tit) {
     vents[i].edit = 0;
     vents[i].foco = 0;
     vents[i].ack_pend = 0;
+    espera_paciencia[i] = 0;
     tick_sec[i] = 0;
     win_dirty[i] = 1;
     win_cromo[i] = 1;
@@ -722,6 +758,14 @@ static void envia_inf(int de) {
 /* Cubre con las de encima lo que pinto tarde la ventana k (su ACK
    llego cuando otra ya ocupaba su sitio): marca contenido de las que
    la tapan con z mayor. Devuelve cuantas marco. Sin frame aqui. */
+/* Espera con presupuesto adaptativo: normal 100 ms; 300 ms si la
+   ventana dio un planton reciente. Las apps rapidas nunca esperan. */
+static void espera_ack_h(int idx, int tope);
+static void espera_ack(int idx) {
+    int tope = (idx >= 0 && idx < NVENT && espera_paciencia[idx]) ? 30 : 10;
+    espera_ack_h(idx, tope);
+}
+
 static int cubre_encima(int k) {
     int r2, n = 0;
     if (k < 0 || k >= NVENT || !vents[k].usado) return 0;
@@ -740,7 +784,7 @@ static int cubre_encima(int k) {
     return n;
 }
 
-static void espera_ack(int idx) {
+static void espera_ack_h(int idx, int tope) {
     char b[64];
     int de = 0, t = 0, pid;
     unsigned int st[5];
@@ -752,8 +796,10 @@ static void espera_ack(int idx) {
             if (r < 0) continue;
             if (de == pid && r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                 b[2] == 'K') {
-                if (vents[idx].usado && vents[idx].pid == pid)
+                if (vents[idx].usado && vents[idx].pid == pid) {
                     vents[idx].ack_pend = 0;
+                    if (t <= 10) espera_paciencia[idx] = 0;
+                }
                 return;
             }
             if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
@@ -853,11 +899,14 @@ static void espera_ack(int idx) {
                No se marca pendiente: el bucle reenvia cada frame. */
             return;
         }
-        if (++t > 10) {    /* ~100 ms: si no confirmo rapido se sigue
-                             sin el (carrera de planificacion); el ACK
-                             tardio reanuda + repinta (ver bucle ppal) */
-            if (vents[idx].usado && vents[idx].pid == pid)
+        if (++t > tope) {
+            /* Sin confirmacion: se sigue sin el (carrera de
+               planificacion); el ACK tardio reanuda + repinta (ver
+               bucle ppal). Con paciencia se anota para la proxima. */
+            if (vents[idx].usado && vents[idx].pid == pid) {
                 vents[idx].ack_pend = 1;
+                espera_paciencia[idx] = 1;
+            }
             return;
         }
         u_dormir(10);
@@ -1061,6 +1110,9 @@ static void frame(void) {
         }
     }
     asegura_propiedad();
+    dmg_hay = 0;
+    if (cur_sx >= 0 && cur_sy >= 0)
+        marca_dano(cur_sx, cur_sy, 12, 16);
     cursor_borra();
     if (bg_dirty) {
         int w;
@@ -1070,6 +1122,7 @@ static void frame(void) {
            las hacia desaparecer). */
         for (w = 0; w < NVENT; w++) marca_sucia(w);
         fondo();
+        marca_dano(0, 0, PANT_W, PANT_H);
         bg_dirty = 0;
     }
     for (q = 0; q < nn; q++) {
@@ -1085,6 +1138,7 @@ static void frame(void) {
             sombra(v);
             cromo(v);
             win_cromo[ids[q]] = 0;
+            marca_dano(v->x - 6, v->y - 6, v->w + 12, v->h + 12);
         }
         if (!win_dirty[ids[q]]) continue;
         /* La de abajo repinta: las de encima que la toquen tambien,
@@ -1186,10 +1240,17 @@ static void frame(void) {
     }
     asegura_propiedad();
     barra();
+    marca_dano(0, AREA_H, PANT_W, PANT_H - AREA_H);
     dibuja_menu();
-    /* v2.2-post: vuelco atomico del dorso (sin esto cada primitiva se
-       veia pintar: parpadeo al escribir/arrastrar/redimensionar). */
-    u_presentar(0, 0, PANT_W, PANT_H);
+    if (menu_abierto)
+        marca_dano(0, AREA_H - (CROMO_H + NMENU * 26) - 2,
+                   224, CROMO_H + NMENU * 26 + 4);
+    /* v2.2-post: vuelco atomico del dorso (sin esto cada primitiva
+       se veia pintar: parpadeo al escribir/arrastrar/redimensionar).
+       F8-compositor: solo la region danada (fondo completo si hubo
+       bg_dirty); el cursor tiene su propio volcado tras esto. */
+    if (dmg_hay)
+        u_presentar(dmg_x0, dmg_y0, dmg_x1 - dmg_x0, dmg_y1 - dmg_y0);
     cursor_show();
     cursor_volcar(-1, -1);   /* el fullscreen ya cubre; solo la nueva */
     if (nuevo_marco) {
@@ -1210,7 +1271,7 @@ static void repara_suelta(int rid) {
     frame();
     for (w2 = 0; w2 < 25 && rid >= 0 && rid < NVENT &&
          vents[rid].usado && vents[rid].ack_pend; w2++)
-        espera_ack(rid);
+        espera_ack_h(rid, 10);
     if (w2 > 0 && rid >= 0 && rid < NVENT && vents[rid].usado) {
         bg_dirty = 1;
         frame();

@@ -42,6 +42,13 @@ typedef struct {
     int foco;               /* ultimo FOCO conocido */
     int vivo;               /* 0 tras SALIR */
     int ox, oy;             /* origen del contenido (lease activo) */
+    /* Coalescencia de DRAW (F8-compositor): mensaje inspeccionado que
+       llego tras el DRAW en curso; se entrega en la proxima llamada
+       en vez de perderse (antes se descartaba al mirar el buzon). */
+    char pend_msg[64];
+    int pend_len;
+    int pend_de;
+    int hay_pend;
 } ug_win_t;
 
 /* Conexion/registro: envia REG y espera ID (bloquea). 0 ok, <0 error. */

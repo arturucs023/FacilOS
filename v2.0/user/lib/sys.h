@@ -12,7 +12,9 @@
    v2.2: 46-49 video/teclado, 50=apagar, 51=reiniciar.
    v2.3-red: 52=red_interfaz, 53/54=trama cruda, 55=configurar,
    56=consultar, 57=comprobar, 58-60=UDP (ligar/enviar/recibir),
-   61=tcp multiplexado (op 0..7), 63=rutas (62 reservada).
+   61=tcp multiplexado (op 0..7), 63=rutas.
+ * F8-compositor: 62=fija_clip (recorte de dibujo por
+ * arrendamiento; 0,0,0,0 lo desactiva).
    leer/escribir usan el offset del fd (buscar lo mueve); escribir
    extiende pero no trunca (usar truncar). */
 
@@ -134,6 +136,10 @@ static inline int sys_blit(const void *op) {
 
 static inline int sys_leer_pixel(int x, int y) {
     return sys_llama(23, x, y, 0);
+}
+
+static inline int sys_fija_clip(int x, int y, int w, int h) {
+    return sys_llama5(62, x, y, w, h, 0);
 }
 
 static inline int sys_truncar(int fd, int tam) {

@@ -460,6 +460,13 @@ void u_destino(int d) {
     sys_destino(d);
 }
 
+/* Recorte de dibujo por arrendamiento (F8-compositor): limita todos
+   los primitivas graficas de este proceso al rectangulo dado
+   (0,0,0,0 lo desactiva). */
+void u_fija_clip(int x, int y, int w, int h) {
+    sys_fija_clip(x, y, w, h);
+}
+
 void u_presentar(int x, int y, int w, int h) {
     sys_presentar(x, y, w, h);
 }
