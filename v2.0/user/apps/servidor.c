@@ -43,6 +43,7 @@ static int mx = 400, my = 300, mb = 0, mb_antes = 0;
 static int mou_id = -1, mou_bot = 0;
 static int giro_lote = 0;   /* giro de rueda acumulado del lote */
 static int arr_id = -1, arr_dx = 0, arr_dy = 0, arr_modo = 0;
+static int arr_movido = 0;   /* el arrastre cambio geometria al menos una vez */
 static int menu_abierto = 0, menu_sel = -1, ultimo_min = -1;
 
 /* Si durante la espera de ACK llega un REG/SYNC, la ventana entra en la
@@ -1042,6 +1043,21 @@ static void frame(void) {
         if (!v->usado || !v->visible || v->minimizada) continue;
         if (v->ack_pend) continue;   /* congelada: nada (cromo intacto) */
         if (!win_dirty[ids[q]] && !win_cromo[ids[q]]) continue;
+        if (ids[q] == arr_id && arr_movido) {
+            /* Arrastre en curso con geometria cambiada: solo cromo.
+               La app no sigue al raton (sus pintados tardios caian
+               fuera de la union ya reparada: restos y parpadeo); el
+               contenido vuelve de una pieza al soltar. Sin DRAW ni
+               espera: los lotes van fluidos. win_dirty intacto. */
+            asegura_propiedad();
+            if (win_cromo[ids[q]]) {
+                sombra(v);
+                cromo(v);
+                win_cromo[ids[q]] = 0;
+            }
+            if (vents[ids[q]].usado) dibuja_agarre(&vents[ids[q]]);
+            continue;
+        }
         asegura_propiedad();
         if (win_cromo[ids[q]]) {
             sombra(v);
@@ -1367,12 +1383,14 @@ static void clic_izquierdo(void) {
         if (mx >= v->x + v->w - 14 && my >= v->y + v->h - 14) {
             arr_id = id;
             arr_modo = 1;
+            arr_movido = 0;
             frame();
             return;
         }
         /* titulo: arrastrar (si esta maximizada, primero restaura) */
         if (my < v->y + CROMO_H) {
             arr_id = id;
+            arr_movido = 0;
             if (v->max) {
                 v->x = v->px;
                 v->y = v->py;
@@ -1609,6 +1627,7 @@ int main(void) {
                     }
                     if (v->x != ox || v->y != oy ||
                         v->w != ow || v->h != oh) {
+                        arr_movido = 1;
                         /* Solo la union viejo/nuevo (+sombra): fondo
                            recortado y repintan las que la pisan. Sin
                            el bg_dirty global, que borraba todas las
@@ -1635,8 +1654,12 @@ int main(void) {
             } else {
                 if (arr_id >= 0 && !(mb & 1)) {
                     int rid = arr_id;
+                    int mov = arr_movido;
                     arr_id = -1;
-                    repara_suelta(rid);
+                    arr_movido = 0;
+                    /* Solo si hubo movimiento: un clic sin
+                       desplazar no necesita repintado total. */
+                    if (mov) repara_suelta(rid);
                 }
                 /* hover del menu */
                 if (menu_abierto) {
