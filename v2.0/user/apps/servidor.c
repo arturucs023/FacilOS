@@ -1508,19 +1508,32 @@ int main(void) {
                 frame();
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
-                /* ACK tardio: reanuda (el contenido llego tarde y nadie
-                   lo redibuja si no). Sin frame aqui: enmarcar ahora
-                   reenviaria DRAW y, con una app lenta, encadenaria
-                   DRAW->espera->ACK->frame para siempre. El repintado
-                   lo hace el proximo frame con dano (lote de raton,
-                   tick, tecla) o el repintado de suelta. */
-                int k;
+                /* ACK tardio: la app pinto tarde y presento ella misma:
+                   lo que haya encima queda tapado (la app solo repinta
+                   su rectangulo, sin orden Z). Reponen las ventanas de
+                   encima que la pisen; a esta no se le reenvia DRAW
+                   (acaba de pintar: reenviar encadenaria
+                   DRAW->espera->ACK->frame con apps lentas). */
+                int urge = 0, k;
                 for (k = 0; k < NVENT; k++) {
                     if (vents[k].usado && vents[k].pid == de) {
+                        int r2;
                         vents[k].ack_pend = 0;
-                        marca_sucia(k);
+                        for (r2 = 0; r2 < NVENT; r2++) {
+                            ventana_t *a = &vents[r2];
+                            if (r2 != k && a->usado && !a->minimizada &&
+                                a->visible && a->z > vents[k].z &&
+                                a->x < vents[k].x + vents[k].w &&
+                                vents[k].x < a->x + a->w &&
+                                a->y < vents[k].y + vents[k].h &&
+                                vents[k].y < a->y + a->h) {
+                                win_dirty[r2] = 1;
+                                urge = 1;
+                            }
+                        }
                     }
                 }
+                if (urge) frame();
             }
             /* ACK y otros se consumen sin mas */
         } else if (!modal_pid && u_hay_tecla()) {
