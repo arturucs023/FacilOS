@@ -100,16 +100,35 @@ static void isr_limpia(void) {
     }
 }
 
-/* Reinicio suave del receptor (desbordes): offsets a cero. */
+/* Reinicio del receptor tras desborde/RER o desync persistente.
+   v2.4.3: el reset ligero (solo CAPR/rx_pos) NO resincroniza: el
+   puntero interno de escritura del chip sigue donde estaba y el
+   driver ya no vuelve a ver tramas (atasco mudo tras rafagas que
+   superan el anillo, visto con 200K locales: ISR=ROK fijo, sin
+   errores y sin progreso). CR_RST deja el chip al inicio; la pila
+   TCP reanuda por retransmision (sin tocar TCBs ni TX pendiente
+   mas alla de un ACK que se reemite solo). */
 static void rx_repara(void) {
     uint8_t cr;
     int i;
     c_rx_err++;
+    outb_b(R_CR, 0x00);
+    outb_b(R_CR, CR_RST);
+    if (!espera_cero(R_CR, CR_RST)) {
+        rx_pos = 0;
+        for (i = 0; i < RX_ANILLO; i++) rx_anillo[i] = 0;
+        outw_b(R_CAPR, 0);
+        outl_b(R_RBSTART, (uint32_t)rx_anillo);
+        outw_b(R_RCR, RCR_VAL);
+        outw_b(R_IMR, (uint16_t)(INT_ROK | INT_RER | INT_TOK | INT_TER));
+        isr_limpia();
+        outb_b(R_CR, (uint8_t)(CR_RE | CR_TE));
+        tx_ocupado = 0;
+        return;
+    }
     cr = inb((uint16_t)(iob + R_CR));
     outb_b(R_CR, (uint8_t)(cr & (uint8_t)~CR_RE));
     rx_pos = 0;
-    /* v2.4.3: invalida cabeceras stale; si no, tras el reset se
-       releerian como nuevas (duplicados) o desync de nuevo. */
     for (i = 0; i < RX_ANILLO; i++) rx_anillo[i] = 0;
     outw_b(R_CAPR, 0);
     isr_limpia();
