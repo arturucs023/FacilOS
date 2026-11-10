@@ -44,6 +44,12 @@ if os.environ.get("QRUN_RED") == "1":
         args += ["-object",
                  "filter-dump,id=pcap,netdev=red0,file=%s" %
                  os.environ["QRUN_PCAP"]]
+if os.environ.get("QRUN_USB") == "1":
+    # v2.4-USB: OHCI + teclado y raton USB (qemu los expone; el
+    # invitado los enumera por sondeo sin IRQ nueva).
+    args += ["-device", "pci-ohci",
+             "-device", "usb-kbd",
+             "-device", "usb-mouse"]
 if os.environ.get("QRUN_DEBUG"):
     # Traza de interrupciones y reinicios de QEMU (depuracion del kernel).
     args += ["-d", "int,cpu_reset,guest_errors", "-D",

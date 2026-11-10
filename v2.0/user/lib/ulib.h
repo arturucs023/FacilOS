@@ -427,7 +427,9 @@ int u_http_trae(const char *url, u_http_res_t *r,
                 unsigned char *cuerpo, int capcuerpo,
                 unsigned int espera_ms);
 
-/* F7-C: HTML minimo en Ring 3 (sin JS ni CSS; patron codec DNS/HTTP).
+/* F7-C: HTML minimo en Ring 3 (patron codec DNS/HTTP). v2.4: CSS
+   basico (color/background + negrita/cursiva; sin cascada completa)
+   y formularios GET (para buscadores tipo SearXNG). Sin JS.
    Todo acotado; la pagina vive en cuerpo<=65536 (tope F7-B) y el
    documento reparte un area propia (heap) sin duplicar la pagina.
    Parser permisivo con el contenido, estricto con los limites:
@@ -470,6 +472,8 @@ typedef struct {
     int len;                    /* bytes (UTF-8 valido o FF FD) */
     int est;                    /* U_HTML_E_* */
     int enlace;                 /* indice a d->enl o -1 */
+    int fg;                     /* RGB 0xRRGGBB, -1 = defecto */
+    int bg;                     /* RGB 0xRRGGBB, -1 = defecto */
 } u_html_seg_t;
 
 typedef struct {
@@ -504,6 +508,9 @@ typedef struct {
     int nimg;
     char titulo[128];           /* <title> (puede ser "") */
     int truncado;               /* 1 si algun tope recorto contenido */
+    char forma[U_HTML_URL];     /* v2.4: action absoluta (GET) o "" */
+    char campo[64];             /* v2.4: nombre del input de texto o "" */
+    int hay_forma;              /* v2.4: 1 si hay formulario GET usable */
 } u_html_doc_t;
 
 /* Crea/libera el documento (reserva heap). 0 ok, -1 sin memoria. */
@@ -529,6 +536,8 @@ typedef struct {
     int estilo;                 /* U_HTML_E_* */
     int enlace;
     int img;
+    int fg;                     /* RGB 0xRRGGBB, -1 = defecto */
+    int bg;                     /* RGB 0xRRGGBB, -1 = defecto */
 } u_html_fila_t;
 
 #define U_HTML_MAX_FILA 2048    /* filas por documento */

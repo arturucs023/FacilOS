@@ -319,8 +319,67 @@ static void prueba_layout(void) {
         "layout-args-nul");
 }
 
-static void prueba_viva(const char *base) {
-    static unsigned char cpo[8192];
+static void prueba_css(void) {
+    int nf;
+    u_print("t_fb: css...\n");
+    ok(parsea("<style>p{color:red}</style><p>hola</p>",
+        "http://a/") == 0, "css-regla");
+    ok(d.truncado == 0, "css-sin-truncar");
+    ok(texto_igual("hola"), "css-texto-fuera");
+    nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+    ok(nf > 0 && filas[0].fg == 0xFF0000, "css-rojo");
+    suelta();
+    ok(parsea("<p style=\"color:#00ff00\">x</p>",
+        "http://a/") == 0, "css-inline");
+    nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+    ok(nf > 0 && filas[0].fg == 0x00FF00, "css-inline-verde");
+    suelta();
+    ok(parsea("<style>.c{background:#0000ff}</style>"
+        "<p class=\"c\">y</p>", "http://a/") == 0, "css-clase");
+    nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+    ok(nf > 0 && filas[0].bg == 0x0000FF, "css-clase-fondo");
+    suelta();
+    ok(parsea("<style>p{color:red} p{color:blue}</style><p>z</p>",
+        "http://a/") == 0, "css-ultima-gana");
+    nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+    ok(nf > 0 && filas[0].fg == 0x0000FF, "css-azul-final");
+    suelta();
+    ok(parsea("<style>p{color:red</style><p>w</p>",
+        "http://a/") == 0, "css-mal-cerrado");
+    ok(texto_igual("w"), "css-mal-texto");
+    suelta();
+    ok(parsea("<p style=\"color:raro\">q</p>",
+        "http://a/") == 0, "css-valor-malo");
+    nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+    ok(nf > 0 && filas[0].fg < 0, "css-malo-defecto");
+    suelta();
+    ok(parsea("<style>p{font-weight:bold}</style><p>T</p>",
+        "http://a/") == 0, "css-negrita");
+    ok(d.seg[0].est == U_HTML_E_NEGRITA, "css-negrita-est");
+    suelta();
+}
+
+static void prueba_forma(void) {
+    u_print("t_fb: formularios...\n");
+    ok(parsea("<form action=\"/busca\" method=\"get\">"
+        "<input name=\"q\"></form>", "http://a/") == 0,
+        "forma-get");
+    ok(d.hay_forma == 1, "forma-hay");
+    ok(!u_strcmp(d.forma, "http://a/busca"), "forma-accion");
+    ok(!u_strcmp(d.campo, "q"), "forma-campo");
+    suelta();
+    ok(parsea("<form action=\"/x\" method=\"post\">"
+        "<input name=\"q\"></form>", "http://a/") == 0,
+        "forma-post");
+    ok(d.hay_forma == 0, "forma-post-no");
+    suelta();
+    ok(parsea("<p>sin forma</p>", "http://a/") == 0,
+        "forma-ausente");
+    ok(d.hay_forma == 0, "forma-ausente-no");
+    suelta();
+}
+
+static void prueba_viva(const char *base) {    static unsigned char cpo[8192];
     u_http_res_t r;
     int k, n;
     u_print("t_fb: viva (stub)...\n");
@@ -497,6 +556,8 @@ int main(void) {
     prueba_urls();
     prueba_topes();
     prueba_layout();
+    prueba_css();
+    prueba_forma();
     for (i = 0; i < 32; i++) ((unsigned char *)&rif)[i] = 0;
     if (u_red_interfaz(&rif) == 0 && rif.presente) {
         for (i = 0; i < 16; i++) ((unsigned char *)&cfg)[i] = 0;

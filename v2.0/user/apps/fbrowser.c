@@ -160,24 +160,55 @@ static void navegar(const char *entrada, int empujar) {
     }
     if (es_busqueda(entrada)) {
         char q[U_HTML_URL + 1];
-        if (!base_busca[0]) {
+        /* v2.4: si la pagina trae formulario GET, se usa como buscador
+           (p. ej. SearXNG propio); si no, el de /fbrowser.cfg. */
+        if (tiene_doc && doc.hay_forma && doc.forma[0] && doc.campo[0]) {
+            codifica_q(entrada, q, (int)sizeof(q));
+            i = 0;
+            while (doc.forma[i] && i < U_HTML_URL) {
+                u[i] = doc.forma[i];
+                i++;
+            }
+            {
+                int j = 0;
+                char sep = '?';
+                {
+                    int k = 0;
+                    while (doc.forma[k]) {
+                        if (doc.forma[k] == '?') sep = '&';
+                        k++;
+                    }
+                }
+                u[i++] = sep;
+                while (doc.campo[j] && i < U_HTML_URL) u[i++] = doc.campo[j++];
+                u[i++] = '=';
+                j = 0;
+                while (q[j] && i < U_HTML_URL) u[i++] = q[j++];
+            }
+            u[i] = 0;
+            if (i >= U_HTML_URL) {
+                pon_estado("busqueda demasiado larga");
+                return;
+            }
+        } else if (!base_busca[0]) {
             pon_estado("sin buscador (crea /fbrowser.cfg)");
             return;
-        }
-        codifica_q(entrada, q, (int)sizeof(q));
-        i = 0;
-        while (base_busca[i] && i < U_HTML_URL) {
-            u[i] = base_busca[i];
-            i++;
-        }
-        {
-            int j = 0;
-            while (q[j] && i < U_HTML_URL) u[i++] = q[j++];
-        }
-        u[i] = 0;
-        if (i >= U_HTML_URL) {
-            pon_estado("busqueda demasiado larga");
-            return;
+        } else {
+            codifica_q(entrada, q, (int)sizeof(q));
+            i = 0;
+            while (base_busca[i] && i < U_HTML_URL) {
+                u[i] = base_busca[i];
+                i++;
+            }
+            {
+                int j = 0;
+                while (q[j] && i < U_HTML_URL) u[i++] = q[j++];
+            }
+            u[i] = 0;
+            if (i >= U_HTML_URL) {
+                pon_estado("busqueda demasiado larga");
+                return;
+            }
         }
     } else if (!u_strchr(entrada, ':')) {
         const char *p = entrada;
@@ -429,7 +460,10 @@ static void dibuja(void) {
                 q++;
             }
             tmp[q] = 0;
-            if (filas[f].estilo == U_HTML_E_TITULO)
+            /* v2.4 CSS: el color del tramo manda; si no, el estilo. */
+            if (filas[f].fg >= 0)
+                color = 0x01000000 | (filas[f].fg & 0xFFFFFF);
+            else if (filas[f].estilo == U_HTML_E_TITULO)
                 color = C_AMARILLO;
             else if (filas[f].estilo == U_HTML_E_NEGRITA)
                 color = C_BLANCO;
@@ -444,6 +478,10 @@ static void dibuja(void) {
                 int wpx = ut_largo(tmp) * UG_FW;
                 ug_relleno(&v, x, y, wpx, UG_FH, T_SELECCION);
                 color = C_BLANCO;
+            } else if (filas[f].bg >= 0) {
+                int wpx = ut_largo(tmp) * UG_FW;
+                ug_relleno(&v, x, y, wpx, UG_FH,
+                    0x01000000 | (filas[f].bg & 0xFFFFFF));
             }
             ug_texto(&v, x, y, tmp, color);
             if (filas[f].estilo == U_HTML_E_ENLACE) {

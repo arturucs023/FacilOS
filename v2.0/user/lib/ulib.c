@@ -2355,17 +2355,24 @@ static int html_entidad(const unsigned char *s, int max,
 #define HT_SCRIPT 18
 #define HT_STYLE 19
 #define HT_OBJECT 20
+#define HT_FORM 21
+#define HT_INPUT 22
+#define HT_SELECT 23
+#define HT_TEXTAREA 24
+#define HT_BUTTON 25
 
 static int html_tag_id(const char *s, int n, int *nh) {
     static const char *noms[] = {
         "html", "head", "body", "title", "h", "p", "br", "hr",
         "div", "span", "b", "i", "ul", "ol", "li", "a", "img",
-        "script", "style", "object", "embed", 0
+        "script", "style", "object", "embed",
+        "form", "input", "select", "textarea", "button", 0
     };
     static const int ids[] = {
         HT_HTML, HT_HEAD, HT_BODY, HT_TITLE, HT_H, HT_P, HT_BR,
         HT_HR, HT_DIV, HT_SPAN, HT_B, HT_I, HT_UL, HT_OL, HT_LI,
-        HT_A, HT_IMG, HT_SCRIPT, HT_STYLE, HT_OBJECT, HT_OBJECT
+        HT_A, HT_IMG, HT_SCRIPT, HT_STYLE, HT_OBJECT, HT_OBJECT,
+        HT_FORM, HT_INPUT, HT_SELECT, HT_TEXTAREA, HT_BUTTON
     };
     int k = 0;
     *nh = 0;
@@ -2391,6 +2398,21 @@ static int html_tag_id(const char *s, int n, int *nh) {
 }
 
 /* Estado del parser (solo pila; el documento es el destino). */
+/* v2.4: CSS basico (color/fondo + negrita/cursiva) y formularios
+   GET. Sin cascada completa: ultima regla valida gana; inline >
+   clase > etiqueta. Todo acotado y con aviso de truncado. */
+#define U_CSS_MAX_REGLA 64
+#define U_CSS_MAX_SEL 16
+#define U_CSS_BUF 4096
+typedef struct {
+    char sel[U_CSS_MAX_SEL];   /* etiqueta en minusculas o clase */
+    int es_clase;              /* 1 si .clase, 0 si etiqueta */
+    int fg;                    /* RGB, -1 sin fijar */
+    int bg;                    /* RGB, -1 sin fijar */
+    int bold;                  /* 1/0, -1 sin fijar */
+    int ital;                  /* 1/0, -1 sin fijar */
+} css_regla_t;
+
 typedef struct {
     u_html_doc_t *d;
     const char *base;
@@ -2399,6 +2421,22 @@ typedef struct {
     int pila_e[U_HTML_MAX_PILA]; /* enlace o -1 */
     int pila_t[U_HTML_MAX_PILA]; /* id de etiqueta */
     int npila;
+    int st_tag[16];              /* nest de estilo (todos los elementos) */
+    int st_fg[16];
+    int st_bg[16];
+    int st_b[16];
+    int st_i[16];
+    int nest;
+    int css;                     /* 1 dentro de <style> (captura) */
+    unsigned char css_buf[U_CSS_BUF];
+    int css_n;
+    css_regla_t reg[U_CSS_MAX_REGLA];
+    int nreg;
+    char f_acc[U_HTML_URL];      /* action absoluta del form en curso */
+    char f_campo[64];            /* primer input de texto */
+    int f_met;                   /* 0 get (defecto), 1 otro */
+    int f_ok;                    /* action valida */
+    int en_forma;                /* 1 dentro de <form> */
     int cur;                    /* tramo en curso o -1 (o -2 gota) */
     int curb;                   /* bloque en curso o -1 (o -2 gota) */
     int titulo;                 /* 1 dentro de <title> */
@@ -2412,10 +2450,12 @@ static int html_attr(const unsigned char *pg, int ini, int fin,
                      const char *nom, unsigned char *sal, int cap);
 
 static int html_est(html_st_t *e) {
-    if (e->npila <= 0) return U_HTML_E_NORMAL;
-    if (e->pila_e[e->npila - 1] >= 0) return U_HTML_E_ENLACE;
-    if (e->pila_b[e->npila - 1]) return U_HTML_E_NEGRITA;
-    if (e->pila_i[e->npila - 1]) return U_HTML_E_ENFASIS;
+    if (e->npila > 0 && e->pila_e[e->npila - 1] >= 0)
+        return U_HTML_E_ENLACE;
+    if (e->npila > 0 && e->pila_b[e->npila - 1]) return U_HTML_E_NEGRITA;
+    if (e->nest > 0 && e->st_b[e->nest - 1]) return U_HTML_E_NEGRITA;
+    if (e->npila > 0 && e->pila_i[e->npila - 1]) return U_HTML_E_ENFASIS;
+    if (e->nest > 0 && e->st_i[e->nest - 1]) return U_HTML_E_ENFASIS;
     return U_HTML_E_NORMAL;
 }
 
@@ -2424,15 +2464,373 @@ static int html_enl(html_st_t *e) {
     return e->pila_e[e->npila - 1];
 }
 
+/* ---- v2.4: CSS basico ---- */
+static int css_igual(const char *a, const char *b) {
+    int i = 0;
+    while (a[i] && b[i]) {
+        int ca = a[i], cb = b[i];
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return 0;
+        i++;
+    }
+    return a[i] == b[i];
+}
+
+/* Nombre de color CSS a RGB (16 basicos + transparent=ignorar).
+   Devuelve RGB, -1 si no es color (-2 transparente). */
+static int css_color(const char *s) {
+    static const char *nom[] = {
+        "black", "silver", "gray", "white", "maroon", "red",
+        "purple", "fuchsia", "green", "lime", "olive", "yellow",
+        "navy", "blue", "teal", "aqua", 0
+    };
+    static const int val[] = {
+        0x000000, 0xC0C0C0, 0x808080, 0xFFFFFF, 0x800000, 0xFF0000,
+        0x800080, 0xFF00FF, 0x008000, 0x00FF00, 0x808000, 0xFFFF00,
+        0x000080, 0x0000FF, 0x008080, 0x00FFFF
+    };
+    int i = 0, v = 0, k;
+    while (s[i] == ' ' || s[i] == '\t') i++;
+    if (css_igual(s + i, "transparent")) return -2;
+    if (s[i] == '#') {
+        int n = 0;
+        i++;
+        while (((s[i] >= '0' && s[i] <= '9') ||
+                (s[i] >= 'a' && s[i] <= 'f') ||
+                (s[i] >= 'A' && s[i] <= 'F')) && n < 6) {
+            int d = s[i];
+            if (d >= '0' && d <= '9') d -= '0';
+            else if (d >= 'a' && d <= 'f') d = d - 'a' + 10;
+            else d = d - 'A' + 10;
+            v = v * 16 + d;
+            i++;
+            n++;
+        }
+        if (n == 3)
+            return ((v & 0xF00) << 8) | ((v & 0x0F0) << 4) | (v & 0x00F) |
+                   ((v & 0xF00) << 12) | ((v & 0x0F0) << 8) | ((v & 0x00F) << 4);
+        if (n == 6) return v & 0xFFFFFF;
+        return -1;
+    }
+    k = 0;
+    while (nom[k]) {
+        int q = 0;
+        while (nom[k][q] && s[i + q] &&
+               nom[k][q] == (s[i + q] >= 'A' && s[i + q] <= 'Z' ?
+                             s[i + q] + 32 : s[i + q]))
+            q++;
+        if (!nom[k][q] && (s[i + q] == 0 || s[i + q] == ' ' ||
+                           s[i + q] == '\t' || s[i + q] == ';' ||
+                           s[i + q] == '!'))
+            return val[k];
+        k++;
+    }
+    return -1;
+}
+
+/* Declara "prop : valor" (ya recortada). Ajusta fg/bg/bold/ital. */
+static void css_una_decl(const char *pr, const char *va, int *fg,
+                         int *bg, int *bo, int *it) {
+    if (css_igual(pr, "color")) {
+        int c = css_color(va);
+        if (c >= 0) *fg = c;
+    } else if (css_igual(pr, "background-color") ||
+               css_igual(pr, "background")) {
+        int c = css_color(va);
+        if (c >= 0) *bg = c;
+    } else if (css_igual(pr, "font-weight")) {
+        if (css_igual(va, "bold")) *bo = 1;
+        else if (css_igual(va, "normal")) *bo = 0;
+    } else if (css_igual(pr, "font-style")) {
+        if (css_igual(va, "italic") || css_igual(va, "oblique"))
+            *it = 1;
+        else if (css_igual(va, "normal")) *it = 0;
+    }
+}
+
+/* Lista "p:v; p:v" (cadenas mutables acotadas). */
+static void css_decls(char *s, int *fg, int *bg, int *bo, int *it) {
+    char *p = s;
+    while (*p) {
+        char *d2, pr[32], va[64];
+        int i = 0;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n' ||
+               *p == ';')
+            p++;
+        if (!*p) break;
+        d2 = p;
+        while (*d2 && *d2 != ':' && *d2 != ';' && *d2 != '}')
+            d2++;
+        if (*d2 != ':') {
+            while (*d2 && *d2 != ';' && *d2 != '}') d2++;
+            p = *d2 ? d2 + 1 : d2;
+            continue;
+        }
+        i = 0;
+        while (p < d2 && i < 31) pr[i++] = *p++;
+        pr[i] = 0;
+        p = d2 + 1;
+        while (*p == ' ' || *p == '\t') p++;
+        i = 0;
+        while (*p && *p != ';' && *p != '}' && i < 63) va[i++] = *p++;
+        va[i] = 0;
+        while (i > 0 && (va[i - 1] == ' ' || va[i - 1] == '\t'))
+            va[--i] = 0;
+        css_una_decl(pr, va, fg, bg, bo, it);
+        if (*p) p++;
+    }
+}
+
+/* Nombre de etiqueta para reglas (solo subset con estilo). */
+static void html_tag_nom(int tag, int nh, char *sal) {
+    sal[0] = 0;
+    if (tag == HT_H) {
+        if (nh >= 1 && nh <= 6) {
+            sal[0] = 'h';
+            sal[1] = (char)('0' + nh);
+            sal[2] = 0;
+        }
+        return;
+    }
+    {
+        const char *n = 0;
+        if (tag == HT_P) n = "p";
+        else if (tag == HT_DIV) n = "div";
+        else if (tag == HT_SPAN) n = "span";
+        else if (tag == HT_B) n = "b";
+        else if (tag == HT_I) n = "i";
+        else if (tag == HT_UL) n = "ul";
+        else if (tag == HT_OL) n = "ol";
+        else if (tag == HT_LI) n = "li";
+        else if (tag == HT_A) n = "a";
+        else if (tag == HT_BODY) n = "body";
+        else if (tag == HT_HTML) n = "html";
+        else if (tag == HT_HEAD) n = "head";
+        else if (tag == HT_TITLE) n = "title";
+        else if (tag == HT_FORM) n = "form";
+        else if (tag == HT_INPUT) n = "input";
+        else if (tag == HT_BUTTON) n = "button";
+        if (n) {
+            int i = 0;
+            while (n[i] && i < 15) {
+                sal[i] = n[i];
+                i++;
+            }
+            sal[i] = 0;
+        }
+    }
+}
+
+/* Aplica una regla ya recortada ("sel" simple, "decls" crudas). */
+static void css_regla_add(html_st_t *e, const char *sel,
+                          const char *decls) {
+    css_regla_t *r;
+    int es_cl = 0, i = 0, f, b, bo, it;
+    char loc[U_CSS_MAX_SEL];
+    static char dc[512];
+    if (e->nreg >= U_CSS_MAX_REGLA) {
+        e->d->truncado = 1;
+        return;
+    }
+    while (sel[i] == ' ' || sel[i] == '\t') i++;
+    if (sel[i] == '.') {
+        es_cl = 1;
+        i++;
+    }
+    f = 0;
+    while (sel[i] && sel[i] != ' ' && sel[i] != '\t' &&
+           sel[i] != ':' && sel[i] != '.' && sel[i] != '#' &&
+           sel[i] != '[' && f < U_CSS_MAX_SEL - 1)
+        loc[f++] = sel[i++];
+    loc[f] = 0;
+    if (!f) return;
+    if (!es_cl) {
+        /* Ultimo componente (ignora "div p": casa con p). */
+        int u = 0, ini = 0;
+        while (loc[u]) {
+            if (loc[u] == ' ') ini = u + 1;
+            u++;
+        }
+        if (ini) {
+            int q = 0;
+            while (loc[ini + q] && q < U_CSS_MAX_SEL - 1) {
+                loc[q] = loc[ini + q];
+                q++;
+            }
+            loc[q] = 0;
+        }
+    }
+    /* Copia mutable acotada de las declaraciones. */
+    {
+        int q = 0;
+        while (decls[q] && q < 511) {
+            dc[q] = decls[q];
+            q++;
+        }
+        dc[q] = 0;
+    }
+    f = 0;
+    b = 0;
+    bo = 0;
+    it = 0;
+    {
+        int ff = -1, bb = -1, oo = -1, ii = -1;
+        css_decls(dc, &ff, &bb, &oo, &ii);
+        f = ff;
+        b = bb;
+        bo = oo;
+        it = ii;
+    }
+    r = &e->reg[e->nreg++];
+    i = 0;
+    while (loc[i] && i < U_CSS_MAX_SEL - 1) {
+        r->sel[i] = loc[i] >= 'A' && loc[i] <= 'Z' ? loc[i] + 32 :
+                                                          loc[i];
+        i++;
+    }
+    r->sel[i] = 0;
+    r->es_clase = es_cl;
+    r->fg = f;
+    r->bg = b;
+    r->bold = bo;
+    r->ital = it;
+}
+
+/* Interpreta la hoja capturada en e->css_buf. */
+static void css_parse(html_st_t *e) {
+    unsigned char *s = e->css_buf;
+    int n = e->css_n, p = 0;
+    while (p < n) {
+        char sel[128], dec[512];
+        int i = 0, q;
+        while (p < n && (s[p] == ' ' || s[p] == '\t' || s[p] == '\r' ||
+                         s[p] == '\n'))
+            p++;
+        if (p + 1 < n && s[p] == '/' && s[p + 1] == '*') {
+            p += 2;
+            while (p + 1 < n && !(s[p] == '*' && s[p + 1] == '/'))
+                p++;
+            p = p + 1 < n ? p + 2 : n;
+            continue;
+        }
+        if (p >= n) break;
+        if (s[p] == '@' || s[p] == '}') {
+            while (p < n && s[p] != ';' && s[p] != '}' && s[p] != '{')
+                p++;
+            if (p < n && (s[p] == ';' || s[p] == '}')) p++;
+            continue;
+        }
+        while (p < n && s[p] != '{' && i < 127) sel[i++] = (char)s[p++];
+        sel[i] = 0;
+        if (p >= n || s[p] != '{') break;
+        p++;
+        q = 0;
+        while (p < n && s[p] != '}' && q < 511) dec[q++] = (char)s[p++];
+        dec[q] = 0;
+        if (p < n && s[p] == '}') p++;
+        /* Lista separada por comas: cada una, una regla. */
+        {
+            int a = 0;
+            while (sel[a]) {
+                char un[128];
+                int u = 0;
+                while (sel[a] == ' ' || sel[a] == '\t') a++;
+                while (sel[a] && sel[a] != ',' && u < 127)
+                    un[u++] = sel[a++];
+                un[u] = 0;
+                if (u) css_regla_add(e, un, dec);
+                if (sel[a] == ',') a++;
+            }
+        }
+    }
+}
+
+/* Calcula fg/bg/bold/ital del elemento (tag + reglas + class + style).
+   Hereda del padre (nest top). Todo -1/0 si nada aplica. */
+static void css_elem(html_st_t *e, int tag, int nh,
+                     const unsigned char *pg, int ini, int fin,
+                     int *fg, int *bg, int *bo, int *it) {
+    int pf = -1, pb = -1, pbo = 0, pit = 0, i;
+    char tnom[16];
+    unsigned char cv[128];
+    unsigned char sv[512];
+    if (e->nest > 0) {
+        pf = e->st_fg[e->nest - 1];
+        pb = e->st_bg[e->nest - 1];
+        pbo = e->st_b[e->nest - 1];
+        pit = e->st_i[e->nest - 1];
+    }
+    html_tag_nom(tag, nh, tnom);
+    if (tnom[0]) {
+        for (i = 0; i < e->nreg; i++) {
+            if (!e->reg[i].es_clase && !u_strcmp(e->reg[i].sel, tnom)) {
+                if (e->reg[i].fg >= 0) pf = e->reg[i].fg;
+                if (e->reg[i].bg >= 0) pb = e->reg[i].bg;
+                if (e->reg[i].bold >= 0) pbo = e->reg[i].bold;
+                if (e->reg[i].ital >= 0) pit = e->reg[i].ital;
+            }
+        }
+    }
+    if (html_attr(pg, ini, fin, "class", cv, (int)sizeof(cv)) >= 0 &&
+        cv[0]) {
+        int p = 0;
+        while (cv[p]) {
+            char un[U_CSS_MAX_SEL];
+            int q = 0;
+            while (cv[p] == ' ' || cv[p] == '\t') p++;
+            if (!cv[p]) break;
+            while (cv[p] && cv[p] != ' ' && cv[p] != '\t' &&
+                   q < U_CSS_MAX_SEL - 1)
+                un[q++] = (char)(cv[p] >= 'A' && cv[p] <= 'Z' ?
+                                 cv[p] + 32 :
+                                 cv[p++]);
+            un[q] = 0;
+            for (i = 0; i < e->nreg; i++) {
+                if (e->reg[i].es_clase && !u_strcmp(e->reg[i].sel, un)) {
+                    if (e->reg[i].fg >= 0) pf = e->reg[i].fg;
+                    if (e->reg[i].bg >= 0) pb = e->reg[i].bg;
+                    if (e->reg[i].bold >= 0) pbo = e->reg[i].bold;
+                    if (e->reg[i].ital >= 0) pit = e->reg[i].ital;
+                }
+            }
+        }
+    }
+    if (html_attr(pg, ini, fin, "style", sv, (int)sizeof(sv)) >= 0 &&
+        sv[0]) {
+        int f2 = -1, b2 = -1, bo2 = -1, it2 = -1;
+        static char ds[512];
+        int q = 0;
+        while (sv[q] && q < 511) {
+            ds[q] = (char)sv[q];
+            q++;
+        }
+        ds[q] = 0;
+        css_decls(ds, &f2, &b2, &bo2, &it2);
+        if (f2 >= 0) pf = f2;
+        if (b2 >= 0) pb = b2;
+        if (bo2 >= 0) pbo = bo2;
+        if (it2 >= 0) pit = it2;
+    }
+    *fg = pf;
+    *bg = pb;
+    *bo = pbo;
+    *it = pit;
+}
+
 /* Abre tramo si hace falta (0 almacenable, -1 gota). */
 static int html_seg(html_st_t *e) {
-    int est, en;
+    int est, en, fg, bg;
     if (e->cur == -2) return -1;
     est = html_est(e);
     en = html_enl(e);
+    fg = e->nest > 0 ? e->st_fg[e->nest - 1] : -1;
+    bg = e->nest > 0 ? e->st_bg[e->nest - 1] : -1;
     if (e->cur >= 0) {
         u_html_seg_t *s = &e->d->seg[e->cur];
-        if (s->est == est && s->enlace == en) return 0;
+        if (s->est == est && s->enlace == en && s->fg == fg &&
+            s->bg == bg)
+            return 0;
         if (s->len == 0) {
             e->d->nseg--;
             e->cur = -1;
@@ -2450,8 +2848,39 @@ static int html_seg(html_st_t *e) {
     e->d->seg[e->cur].len = 0;
     e->d->seg[e->cur].est = est;
     e->d->seg[e->cur].enlace = en;
+    e->d->seg[e->cur].fg = e->nest > 0 ? e->st_fg[e->nest - 1] : -1;
+    e->d->seg[e->cur].bg = e->nest > 0 ? e->st_bg[e->nest - 1] : -1;
     e->d->nseg++;
     return 0;
+}
+
+/* Nest de estilo: hereda del padre; un nivel por elemento (16). */
+static void html_seg_cierra(html_st_t *e);
+static void nest_mete(html_st_t *e, int tag, int fg, int bg) {
+    if (e->nest >= 16) {
+        e->d->truncado = 1;
+        return;
+    }
+    e->st_tag[e->nest] = tag;
+    e->st_fg[e->nest] = fg;
+    e->st_bg[e->nest] = bg;
+    e->st_b[e->nest] = e->nest > 0 ? e->st_b[e->nest - 1] : 0;
+    e->st_i[e->nest] = e->nest > 0 ? e->st_i[e->nest - 1] : 0;
+    e->nest++;
+    html_seg_cierra(e);
+}
+
+static void nest_saca(html_st_t *e, int tag) {
+    int i, h = -1;
+    for (i = e->nest - 1; i >= 0; i--) {
+        if (e->st_tag[i] == tag) {
+            h = i;
+            break;
+        }
+    }
+    if (h < 0) return;
+    html_seg_cierra(e);
+    e->nest = h;
 }
 
 static void html_seg_cierra(html_st_t *e) {
@@ -2524,6 +2953,11 @@ static void html_bloque_cierra(html_st_t *e) {
 
 /* Un byte decodificado al documento (texto o titulo). */
 static void html_txt_byte(html_st_t *e, unsigned char c) {
+    if (e->css) {
+        if (e->css_n < U_CSS_BUF) e->css_buf[e->css_n++] = c;
+        else e->d->truncado = 1;
+        return;
+    }
     if (e->titulo) {
         int n = u_strlen(e->d->titulo);
         if (n < 126) {
@@ -2583,12 +3017,27 @@ static void html_abre(html_st_t *e, int tag, int nh,
     int sn;
     unsigned char av[U_HTML_ALT];
     if (tag == HT_H) {
+        int fg, bg, bo, it;
         if (nh < 1 || nh > 6) return;
         html_bloque(e, U_HTML_B_H1 + (nh - 1), nh, -1);
+        css_elem(e, tag, nh, pg, ini, fin, &fg, &bg, &bo, &it);
+        nest_mete(e, tag, fg, bg);
+        if (e->nest > 0) {
+            e->st_b[e->nest - 1] = bo;
+            e->st_i[e->nest - 1] = it;
+        }
         return;
     }
-    if (tag == HT_P || tag == HT_DIV) {
+    if (tag == HT_P || tag == HT_DIV || tag == HT_BODY ||
+        tag == HT_HTML || tag == HT_HEAD) {
+        int fg, bg, bo, it;
         html_bloque(e, U_HTML_B_P, 0, -1);
+        css_elem(e, tag, nh, pg, ini, fin, &fg, &bg, &bo, &it);
+        nest_mete(e, tag, fg, bg);
+        if (e->nest > 0) {
+            e->st_b[e->nest - 1] = bo;
+            e->st_i[e->nest - 1] = it;
+        }
         return;
     }
     if (tag == HT_BR) {
@@ -2602,7 +3051,14 @@ static void html_abre(html_st_t *e, int tag, int nh,
         return;
     }
     if (tag == HT_UL || tag == HT_OL) {
+        int fg, bg, bo, it;
         html_bloque_cierra(e);
+        css_elem(e, tag, nh, pg, ini, fin, &fg, &bg, &bo, &it);
+        nest_mete(e, tag, fg, bg);
+        if (e->nest > 0) {
+            e->st_b[e->nest - 1] = bo;
+            e->st_i[e->nest - 1] = it;
+        }
         if (e->lista < 8) {
             e->ord[e->lista] = (tag == HT_OL);
             e->nnum[e->lista] = 1;
@@ -2619,6 +3075,15 @@ static void html_abre(html_st_t *e, int tag, int nh,
             nv = -nv;
         lvl = nv < 0 ? -nv : nv;
         html_bloque(e, U_HTML_B_LI, nv, -1);
+        {
+            int fg, bg, bo, it;
+            css_elem(e, tag, nh, pg, ini, fin, &fg, &bg, &bo, &it);
+            nest_mete(e, tag, fg, bg);
+            if (e->nest > 0) {
+                e->st_b[e->nest - 1] = bo;
+                e->st_i[e->nest - 1] = it;
+            }
+        }
         if (nv == 0) {
             html_txt_byte(e, (unsigned char)'\xE2');
             html_txt_byte(e, (unsigned char)'\x80');
@@ -2647,8 +3112,18 @@ static void html_abre(html_st_t *e, int tag, int nh,
         }
         return;
     }
-    if (tag == HT_B || tag == HT_I || tag == HT_SPAN) {
+    if (tag == HT_B || tag == HT_I || tag == HT_SPAN ||
+        tag == HT_BUTTON) {
+        int fg, bg, bo, it;
         html_empuja(e, tag);
+        css_elem(e, tag, nh, pg, ini, fin, &fg, &bg, &bo, &it);
+        if (bo && e->npila > 0) e->pila_b[e->npila - 1] = 1;
+        if (it && e->npila > 0) e->pila_i[e->npila - 1] = 1;
+        nest_mete(e, tag, fg, bg);
+        if (e->nest > 0) {
+            e->st_b[e->nest - 1] = bo;
+            e->st_i[e->nest - 1] = it;
+        }
         return;
     }
     if (tag == HT_A) {
@@ -2672,6 +3147,17 @@ static void html_abre(html_st_t *e, int tag, int nh,
         html_empuja(e, HT_A);
         if (idx >= 0)
             e->pila_e[e->npila - 1] = idx;
+        {
+            int fg, bg, bo, it;
+            css_elem(e, tag, nh, pg, ini, fin, &fg, &bg, &bo, &it);
+            if (bo && e->npila > 0) e->pila_b[e->npila - 1] = 1;
+            if (it && e->npila > 0) e->pila_i[e->npila - 1] = 1;
+            nest_mete(e, tag, fg, bg);
+            if (e->nest > 0) {
+                e->st_b[e->nest - 1] = bo;
+                e->st_i[e->nest - 1] = it;
+            }
+        }
         html_seg_cierra(e);
         return;
     }
@@ -2709,9 +3195,79 @@ static void html_abre(html_st_t *e, int tag, int nh,
         e->titulo = 1;
         return;
     }
-    if (tag == HT_SCRIPT || tag == HT_STYLE || tag == HT_OBJECT) {
+    if (tag == HT_STYLE) {
+        e->css = 1;   /* el texto va al buffer CSS (no a salto) */
+        e->css_n = 0;
+        return;
+    }
+    if (tag == HT_SCRIPT || tag == HT_OBJECT || tag == HT_SELECT ||
+        tag == HT_TEXTAREA) {
         e->salto = tag;
         return;
+    }
+    if (tag == HT_FORM) {
+        unsigned char av[U_HTML_URL];
+        unsigned char mv[16];
+        int fg, bg, bo, it;
+        e->en_forma = 1;
+        e->f_ok = 0;
+        e->f_campo[0] = 0;
+        e->f_met = 0;
+        if (html_attr(pg, ini, fin, "action", av, U_HTML_URL) >= 0 &&
+            av[0]) {
+            char abs[U_HTML_URL];
+            if (u_html_resuelve_url(e->base, (const char *)av,
+                    abs) == 0) {
+                int q = 0;
+                while (abs[q] && q < U_HTML_URL - 1) {
+                    e->f_acc[q] = abs[q];
+                    q++;
+                }
+                e->f_acc[q] = 0;
+                e->f_ok = 1;
+            }
+        }
+        if (html_attr(pg, ini, fin, "method", mv, 16) >= 0 && mv[0]) {
+            if (!(mv[0] == 'g' || mv[0] == 'G')) e->f_met = 1;
+        }
+        css_elem(e, tag, nh, pg, ini, fin, &fg, &bg, &bo, &it);
+        nest_mete(e, tag, fg, bg);
+        if (e->nest > 0) {
+            e->st_b[e->nest - 1] = bo;
+            e->st_i[e->nest - 1] = it;
+        }
+        return;
+    }
+    if (tag == HT_INPUT) {
+        unsigned char nv[64];
+        unsigned char tv[16];
+        unsigned char vv[128];
+        if (!e->en_forma) return;
+        if (html_attr(pg, ini, fin, "type", tv, 16) < 0) tv[0] = 0;
+        if (html_attr(pg, ini, fin, "name", nv, 64) < 0) nv[0] = 0;
+        html_attr(pg, ini, fin, "value", vv, 128);
+        /* Solo texto (por defecto) y sin campo aun: es el buscador. */
+        if (!e->f_campo[0] && nv[0] &&
+            (tv[0] == 0 || css_igual((const char *)tv, "text") ||
+             css_igual((const char *)tv, "search"))) {
+            int q = 0;
+            while (nv[q] && q < 63) {
+                e->f_campo[q] = (char)nv[q];
+                q++;
+            }
+            e->f_campo[q] = 0;
+        }
+        return;
+    }
+    /* Desconocida: contenido igual, pero el estilo aplica. */
+    {
+        int fg, bg, bo, it;
+        css_elem(e, tag, nh, pg, ini, fin, &fg, &bg, &bo, &it);
+        nest_mete(e, tag, fg, bg);
+        if (e->nest > 0) {
+            e->st_b[e->nest - 1] = bo;
+            e->st_i[e->nest - 1] = it;
+        }
     }
     for (k = 0; k < e->npila; k++) {
         (void)k;
@@ -2732,13 +3288,41 @@ static void html_cierra(html_st_t *e, int tag, int nh) {
         if (tag == HT_UL || tag == HT_OL) {
             html_bloque_cierra(e);
             if (e->lista > 0) e->lista--;
+            nest_saca(e, tag);
             return;
         }
         html_bloque_cierra(e);
+        nest_saca(e, tag);
         return;
     }
-    if (tag == HT_BR || tag == HT_HR || tag == HT_IMG)
+    if (tag == HT_BR || tag == HT_HR || tag == HT_IMG ||
+        tag == HT_INPUT)
         return;
+    if (tag == HT_STYLE) {
+        e->css = 0;
+        css_parse(e);
+        return;
+    }
+    if (tag == HT_FORM) {
+        if (e->en_forma && !e->f_met && e->f_ok && e->f_campo[0]) {
+            int q = 0;
+            while (e->f_acc[q] && q < U_HTML_URL - 1) {
+                e->d->forma[q] = e->f_acc[q];
+                q++;
+            }
+            e->d->forma[q] = 0;
+            q = 0;
+            while (e->f_campo[q] && q < 63) {
+                e->d->campo[q] = e->f_campo[q];
+                q++;
+            }
+            e->d->campo[q] = 0;
+            e->d->hay_forma = 1;
+        }
+        e->en_forma = 0;
+        nest_saca(e, tag);
+        return;
+    }
     h = -1;
     for (i = e->npila - 1; i >= 0; i--) {
         if (e->pila_t[i] == tag) {
@@ -2746,6 +3330,7 @@ static void html_cierra(html_st_t *e, int tag, int nh) {
             break;
         }
     }
+    nest_saca(e, tag);
     if (h < 0) return;
     for (i = e->npila - 1; i >= h; i--) {
         if (e->pila_e[i] >= 0 && e->pila_e[i] < e->d->nenl &&
@@ -3090,6 +3675,9 @@ int u_html_crea(u_html_doc_t *d) {
     d->nimg = 0;
     d->titulo[0] = 0;
     d->truncado = 0;
+    d->forma[0] = 0;
+    d->campo[0] = 0;
+    d->hay_forma = 0;
     return 0;
 }
 
@@ -3112,6 +3700,9 @@ void u_html_libera(u_html_doc_t *d) {
     d->nimg = 0;
     d->titulo[0] = 0;
     d->truncado = 0;
+    d->forma[0] = 0;
+    d->campo[0] = 0;
+    d->hay_forma = 0;
 }
 
 int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
@@ -3122,6 +3713,15 @@ int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
     e.d = d;
     e.base = base;
     e.npila = 0;
+    e.nest = 0;
+    e.css = 0;
+    e.css_n = 0;
+    e.nreg = 0;
+    e.en_forma = 0;
+    e.f_acc[0] = 0;
+    e.f_campo[0] = 0;
+    e.f_met = 0;
+    e.f_ok = 0;
     e.cur = -1;
     e.curb = -1;
     e.titulo = 0;
@@ -3142,6 +3742,9 @@ int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
     d->nimg = 0;
     d->titulo[0] = 0;
     d->truncado = 0;
+    d->forma[0] = 0;
+    d->campo[0] = 0;
+    d->hay_forma = 0;
     if (n <= 0) return 0;
     while (p < n) {
         /* Contenido ignorado (script/style/object). */
@@ -3341,6 +3944,8 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
             filas[nf].len = 0;
             filas[nf].x = 0;
             filas[nf].estilo = U_HTML_E_VACIA;
+                filas[nf].fg = -1;
+                filas[nf].bg = -1;
             filas[nf].enlace = -1;
             filas[nf].img = -1;
             nf++;
@@ -3351,6 +3956,8 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
             filas[nf].len = 0;
             filas[nf].x = 0;
             filas[nf].estilo = U_HTML_E_HR;
+                filas[nf].fg = -1;
+                filas[nf].bg = -1;
             filas[nf].enlace = -1;
             filas[nf].img = -1;
             nf++;
@@ -3361,6 +3968,8 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
             filas[nf].len = 0;
             filas[nf].x = 0;
             filas[nf].estilo = U_HTML_E_VACIA;
+                filas[nf].fg = -1;
+                filas[nf].bg = -1;
             filas[nf].enlace = -1;
             filas[nf].img = -1;
             nf++;
@@ -3371,6 +3980,8 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
             filas[nf].len = 0;
             filas[nf].x = 2;
             filas[nf].estilo = U_HTML_E_IMG;
+                filas[nf].fg = -1;
+                filas[nf].bg = -1;
             filas[nf].enlace = -1;
             filas[nf].img = bl->img;
             nf++;
@@ -3402,6 +4013,8 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
                         filas[nf].len = 0;
                         filas[nf].x = x;
                         filas[nf].estilo = U_HTML_E_VACIA;
+                filas[nf].fg = -1;
+                filas[nf].bg = -1;
                         filas[nf].enlace = -1;
                         filas[nf].img = -1;
                         nf++;
@@ -3455,6 +4068,8 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
                 filas[nf].estilo = est;
                 filas[nf].enlace = sg->enlace;
                 filas[nf].img = -1;
+                filas[nf].fg = sg->fg;
+                filas[nf].bg = sg->bg;
                 nf++;
                 x += html_ancho(d, w0, wl);
                 off = w0 + wl;
@@ -3467,6 +4082,8 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
             filas[nf].len = 0;
             filas[nf].x = 0;
             filas[nf].estilo = U_HTML_E_HR;
+                filas[nf].fg = -1;
+                filas[nf].bg = -1;
             filas[nf].enlace = -1;
             filas[nf].img = -1;
             nf++;

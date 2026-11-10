@@ -179,6 +179,20 @@ def atiende(cn):
                              [("Content-Type", "text/html"),
                               ("Content-Length", str(len(body)))],
                              body))
+        elif path == "/css":
+            body = ("<html><head><title>CSS</title>"
+                    "<style>p{color:red} .v{color:#00ff00} "
+                    "h1{background:#000080;color:white}</style>"
+                    "</head><body>"
+                    "<h1>Cabecera</h1>"
+                    "<p>Rojo por etiqueta.</p>"
+                    "<p class=\"v\">Verde por clase.</p>"
+                    "<p style=\"color:#ffff00\">Amarillo inline.</p>"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/html"),
+                              ("Content-Length", str(len(body)))],
+                             body))
         elif path == "/enlaces":
             body = ("<html><head><title>Enlaces</title></head><body>"
                     "<h2>Enlaces</h2><ul>"
