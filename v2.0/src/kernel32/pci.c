@@ -29,6 +29,26 @@ int pci_busca(uint16_t vendor, uint16_t device,
     return pci_busca_n(vendor, device, 0, bus, dev, fun);
 }
 
+/* Coincidencia en un (bus,dev,fun): vendor/device o clase. */
+static int pci_casa(int b, int d, int f,
+                    uint16_t vendor, uint16_t device, uint32_t clase24) {
+    uint32_t id = pci_cfg_lee(b, d, f, 0);
+    if (id == 0xFFFFFFFFu) return 0;
+    if (clase24 != 0xFFFFFFFFu) {
+        uint32_t cl = pci_cfg_lee(b, d, f, 0x08) >> 8;
+        return cl == clase24;
+    }
+    return (uint16_t)(id & 0xFFFFu) == vendor &&
+           (uint16_t)((id >> 16) & 0xFFFFu) == device;
+}
+
+static int pci_entrega(int b, int d, int f, int *bus, int *dev, int *fun) {
+    if (bus) *bus = b;
+    if (dev) *dev = d;
+    if (fun) *fun = f;
+    return 0;
+}
+
 int pci_busca_n(uint16_t vendor, uint16_t device, int n,
                 int *bus, int *dev, int *fun) {
     int b, d, hall = 0;
@@ -36,32 +56,45 @@ int pci_busca_n(uint16_t vendor, uint16_t device, int n,
      * Documentado como limite, no como enumeracion general. */
     for (b = 0; b < 1; b++) {
         for (d = 0; d < 32; d++) {
-            uint32_t id = pci_cfg_lee(b, d, 0, 0);
-            if (id == 0xFFFFFFFFu) continue;
-            if ((uint16_t)(id & 0xFFFFu) == vendor &&
-                (uint16_t)((id >> 16) & 0xFFFFu) == device) {
-                if (hall == n) {
-                    if (bus) *bus = b;
-                    if (dev) *dev = d;
-                    if (fun) *fun = 0;
-                    return 0;
-                }
+            if (pci_casa(b, d, 0, vendor, device, 0xFFFFFFFFu)) {
+                if (hall == n)
+                    return pci_entrega(b, d, 0, bus, dev, fun);
                 hall++;
             }
             /* Multifuncion: prueba funciones 1..7. */
             if (pci_cfg_lee(b, d, 0, 0x0E) & 0x00800000u) {
                 int f;
                 for (f = 1; f < 8; f++) {
-                    id = pci_cfg_lee(b, d, f, 0);
-                    if (id == 0xFFFFFFFFu) continue;
-                    if ((uint16_t)(id & 0xFFFFu) == vendor &&
-                        (uint16_t)((id >> 16) & 0xFFFFu) == device) {
-                        if (hall == n) {
-                            if (bus) *bus = b;
-                            if (dev) *dev = d;
-                            if (fun) *fun = f;
-                            return 0;
-                        }
+                    if (pci_casa(b, d, f, vendor, device, 0xFFFFFFFFu)) {
+                        if (hall == n)
+                            return pci_entrega(b, d, f, bus, dev, fun);
+                        hall++;
+                    }
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+/* v2.4-USB: n-esima coincidencia por clase/subclase/prog-if. */
+int pci_busca_clase(uint8_t clase, uint8_t sub, uint8_t prog, int n,
+                    int *bus, int *dev, int *fun) {
+    uint32_t cl = ((uint32_t)clase << 16) | ((uint32_t)sub << 8) | prog;
+    int b, d, hall = 0;
+    for (b = 0; b < 1; b++) {
+        for (d = 0; d < 32; d++) {
+            if (pci_casa(b, d, 0, 0, 0, cl)) {
+                if (hall == n)
+                    return pci_entrega(b, d, 0, bus, dev, fun);
+                hall++;
+            }
+            if (pci_cfg_lee(b, d, 0, 0x0E) & 0x00800000u) {
+                int f;
+                for (f = 1; f < 8; f++) {
+                    if (pci_casa(b, d, f, 0, 0, cl)) {
+                        if (hall == n)
+                            return pci_entrega(b, d, f, bus, dev, fun);
                         hall++;
                     }
                 }

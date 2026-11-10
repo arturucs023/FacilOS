@@ -46,5 +46,9 @@ int distribucion_actual(void);
 void distribucion_pon(int d);
 /* v2.2-editor: modificadores (bit0 Shift, bit1 Ctrl, bit2 AltGr, bit3 Caps). */
 int teclado_mod(void);
+/* v2.4-USB: inyecta tecla HID-boot como si fuera PS/2 (misma cola y
+   despertar; mod = byte de modificadores HID, uso = usage ID;
+   baja = 1 al pulsar). Reutiliza distribucion/emite(). */
+void teclado_usb_tecla(uint8_t mod, uint8_t uso, int baja);
 
 #endif

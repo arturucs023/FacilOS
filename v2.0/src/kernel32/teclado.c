@@ -216,6 +216,110 @@ static const tecla_t *tabla_ext(void) {
     return us_ext;
 }
 
+/* v2.4-USB: HID-boot (posicional) -> scancode set-1 (posicional ES).
+   0 = ignorada. Letras/digitos coinciden; simbolos por posicion. */
+static const uint8_t hid_a_scan[128] = {
+    [0x04] = 0x1E, [0x05] = 0x30, [0x06] = 0x2E, [0x07] = 0x20,
+    [0x08] = 0x12, [0x09] = 0x21, [0x0A] = 0x22, [0x0B] = 0x23,
+    [0x0C] = 0x17, [0x0D] = 0x24, [0x0E] = 0x25, [0x0F] = 0x26,
+    [0x10] = 0x32, [0x11] = 0x31, [0x12] = 0x18, [0x13] = 0x19,
+    [0x14] = 0x10, [0x15] = 0x13, [0x16] = 0x1F, [0x17] = 0x14,
+    [0x18] = 0x16, [0x19] = 0x2F, [0x1A] = 0x11, [0x1B] = 0x2D,
+    [0x1C] = 0x15, [0x1D] = 0x2C,
+    [0x1E] = 0x02, [0x1F] = 0x03, [0x20] = 0x04, [0x21] = 0x05,
+    [0x22] = 0x06, [0x23] = 0x07, [0x24] = 0x08, [0x25] = 0x09,
+    [0x26] = 0x0A, [0x27] = 0x0B,
+    [0x28] = 0x1C, [0x29] = 0x01, [0x2A] = 0x0E, [0x2B] = 0x0F,
+    [0x2C] = 0x39, [0x2D] = 0x0C, [0x2E] = 0x0D, [0x2F] = 0x1A,
+    [0x30] = 0x1B, [0x31] = 0x2B, [0x33] = 0x27, [0x34] = 0x28,
+    [0x35] = 0x29, [0x36] = 0x33, [0x37] = 0x34, [0x38] = 0x35,
+};
+
+void proc_despierta_tecla(void);
+
+/* Inyecta tecla USB como PS/2: actualiza modificadores desde el byte
+   HID (LCtrl/LShift/LAlt/LGui/RCtrl/RShift/RAlt/RGui), traduce el uso
+   con la misma tabla de distribucion y despierta a los lectores. */
+void teclado_usb_tecla(uint8_t mod, uint8_t uso, int baja) {
+    uint8_t c;
+    int may;
+    const tecla_t *t;
+    sh_izq = (mod & 0x02) ? 1 : 0;
+    sh_der = (mod & 0x20) ? 1 : 0;
+    ctrl_izq = (mod & 0x01) ? 1 : 0;
+    ctrl_der = (mod & 0x10) ? 1 : 0;
+    altgr = (mod & 0x40) ? 1 : 0;   /* RAlt como AltGr (ES) */
+    if (!baja) return;
+    if (uso == 0x39) { bloqmay = !bloqmay; return; }      /* CapsLock */
+    if (uso == 0x3A) { muerto = 0; tk_mete(TEC_MENU);      /* F1 = menu */
+        proc_despierta_tecla(); return; }
+    if (uso == 0x52) { tk_mete_mod(TEC_ARRIBA);            /* flechas */
+        proc_despierta_tecla(); return; }
+    if (uso == 0x51) { tk_mete_mod(TEC_ABAJO);
+        proc_despierta_tecla(); return; }
+    if (uso == 0x50) { tk_mete_mod(TEC_IZQ);
+        proc_despierta_tecla(); return; }
+    if (uso == 0x4F) { tk_mete_mod(TEC_DER);
+        proc_despierta_tecla(); return; }
+    if (uso == 0x4A) { tk_mete_mod(TEC_INICIO);            /* edicion */
+        proc_despierta_tecla(); return; }
+    if (uso == 0x4D) { tk_mete_mod(TEC_FIN);
+        proc_despierta_tecla(); return; }
+    if (uso == 0x4B) { tk_mete_mod(TEC_REPAG);
+        proc_despierta_tecla(); return; }
+    if (uso == 0x4E) { tk_mete_mod(TEC_AVPA);
+        proc_despierta_tecla(); return; }
+    if (uso == 0x4C) { tk_mete_mod(TEC_SUPR);
+        proc_despierta_tecla(); return; }
+    if (uso >= 128) return;
+    c = hid_a_scan[uso];
+    if (!c) return;
+    if (c == 0x1C) { muerto = 0; tk_mete(13);
+        proc_despierta_tecla(); return; }
+    if (c == 0x0E) { muerto = 0;                          /* retroceso */
+        tk_mete((ctrl_izq || ctrl_der) ? 0x7F : 8);
+        proc_despierta_tecla(); return; }
+    if (c == 0x01) { muerto = 0; tk_mete(27);
+        proc_despierta_tecla(); return; }
+    if (c == 0x0F) { muerto = 0;                          /* Tab */
+        if (ctrl_izq || ctrl_der)
+            tk_mete((sh_izq || sh_der) ? TEC_CTRL_MAY_TAB : TEC_CTRL_TAB);
+        else if (sh_izq || sh_der)
+            tk_mete(TEC_MAY_TAB);
+        else
+            tk_mete(9);
+        proc_despierta_tecla(); return; }
+    may = (sh_izq || sh_der);
+    for (t = tabla_ext(); t->scan; t++) {
+        int ch;
+        if (t->scan != c) continue;
+        if (altgr && t->altgr) ch = t->altgr;
+        else ch = may ? t->mayus : t->base;
+        if (ch >= (int)M_AG && ch <= (int)M_TI) {
+            muerto = ch;
+            return;
+        }
+        if (altgr && !t->altgr) return;
+        emite(aplica_may(ch, may));
+        proc_despierta_tecla();
+        return;
+    }
+    for (t = comunes; t->scan; t++) {
+        int ch;
+        if (t->scan != c) continue;
+        if (altgr && t->altgr) ch = t->altgr;
+        else ch = may ? t->mayus : t->base;
+        if (ch >= (int)M_AG && ch <= (int)M_TI) {
+            muerto = ch;
+            return;
+        }
+        if (altgr && !t->altgr) return;
+        emite(aplica_may(ch, may));
+        proc_despierta_tecla();
+        return;
+    }
+}
+
 int kbd_hay(void) {
     uint32_t fl = cpu_eflags();
     int hay;

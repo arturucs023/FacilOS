@@ -15,7 +15,10 @@ void pci_cfg_pon(int bus, int dev, int fun, int off, uint32_t v);
  * 0 si lo encuentra (rellena bus/dev/fun), -1 si no existe. */
 int pci_busca(uint16_t vendor, uint16_t device,
               int *bus, int *dev, int *fun);
-/* F8: n-esima coincidencia (n=0 primera). Misma semantica; permite
+/* v2.4-USB: n-esima coincidencia por clase/subclase/prog-if (off 0x08).
+ * 0 si la encuentra, -1 si no. Para OHCI: clase 0x0C sub 0x03 prog 0x10. */
+int pci_busca_clase(uint8_t clase, uint8_t sub, uint8_t prog, int n,
+                    int *bus, int *dev, int *fun);/* F8: n-esima coincidencia (n=0 primera). Misma semantica; permite
  * detectar una segunda NIC sin cambiar pci_busca. */
 int pci_busca_n(uint16_t vendor, uint16_t device, int n,
                 int *bus, int *dev, int *fun);

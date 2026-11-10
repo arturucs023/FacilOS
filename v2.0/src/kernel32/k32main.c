@@ -17,6 +17,7 @@
 #include "blk.h"
 #include "ps2.h"
 #include "drv_red.h"
+#include "usb_ohci.h"
 #include "teclado.h"
 #include "gfx.h"
 #include "fs.h"
@@ -74,6 +75,7 @@ void kmain(void)
     drv_registra_ex("pit", pit_drv_init, 0, 1, 0x40, 4, 0, 0);
     drv_registra("ramfs", ramfs_init);
     drv_registra("red", red_init);
+    drv_registra("usb", usb_init);
     drv_init_todos();
     irq_init();   /* F8: PIT/teclado a la HAL */
     sti();
