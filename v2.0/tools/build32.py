@@ -337,7 +337,7 @@ _fin = PAYLOAD_LBA + _ncd
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.3-f8.iso"   # F8 (f7c intacta)
+out_iso = ISO_DIR / "FacilOS-v2.4.iso"   # v2.4 (f8 intacta en v2.3-red)
 _iso = bytearray(_fin * 2048)
 for _k in range(_fin):
     _iso[_k * 2048:(_k + 1) * 2048] = iso_sec.get(_k, bytes(2048))

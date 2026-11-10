@@ -53,34 +53,28 @@ inicio:
     ; VESA con modo persistente (v2.1-p1): CMOS 0x40 guarda 0=800x600
     ; (defecto), 1=640x480, 2=1024x768 (lo escribe configura). Sin NVRAM
     ; no hay donde guardar la preferencia (ISO de solo lectura, en frio
-    ; aun no hay disco). Si el modo pedido falla, se reintenta 0x143 y
-    ; si no, texto 80x25.
+    ; aun no hay disco). Si el modo Bochs falla, se enumeran los
+    ; modos VBE (VBox/HW); si no hay 32bpp con LFB, texto 80x25.
     mov byte [0x7002], 0
     mov al, 0x40
     out 0x70, al
     in al, 0x71
     and al, 3                ; 0xFF virgen -> 3 -> defecto (ver tabla)
-.modo_ok:
-    mov bx, modo_tab
-    xlat
-    mov cl, al
-    mov ch, 1
-    push cx
-    mov ax, 0x7800
-    mov es, ax
-    xor di, di
-    mov ax, 0x4F01
-    int 0x10
-    cmp ax, 0x004F
-    jne .cargar
-    mov ax, [es:0]
-    test ax, 0x0080
-    jz .cargar
-    ; v1.9: la resolucion la valida gfx_init al arrancar (>=640x400);
-    ; aqui solo hace falta LFB y 32 bpp.
-    cmp byte [es:0x19], 32
-    jne .cargar
+    xor bh, bh
+    mov bl, al                ; BX = indice (la rutina lo duplica y usa)
+    call vesa_enum
+    jc .cargar
 .modo_save:
+    ; el bloque ganador esta en 0x7800:0x200 (las consultas no pisan
+    ; el control); copiarlo a 0x7800:0 antes de usarlo.
+    push es
+    pop ds
+    mov si, 0x200
+    xor di, di
+    mov cx, 32
+    rep movsw
+    xor ax, ax
+    mov ds, ax
     ; guardar campos (ES=0x7800 valido; DS=0)
     xor ax, ax
     mov ds, ax
@@ -213,10 +207,6 @@ gdt:
     dd 0x0000FFFF, 0x00CF9A00
     dd 0x0000FFFF, 0x00CF9300
 gdt_fin:
-; v2.1-p1: modos VESA Bochs (byte bajo; alto siempre 0x01).
-; Indice CMOS 0x40: 0=800x600 (defecto y valor si CMOS virgen 0xFF),
-; 1=640x480, 2=1024x768. Verificados con LFB+32bpp en QEMU.
-modo_tab db 0x43, 0x42, 0x44, 0x43
 ; F7-C: cola alta del catalogo (tras la pila de arranque 0x90000).
 ; CORTE_LBA = primer LBA copiado alto (993 = 225 + 768;
 ; 768 = (0x90000 - 0x30000) / 512).
@@ -243,16 +233,68 @@ edd_cnt dw 0
 edd_off dw 0
 edd_seg dw 0
 edd_lba dd 0, 0, 0, 0
-; GDT propia para el irreal de leer_alta (dato 32 bit 4 GB).
-gdt_u_ptr:
-    dw gdt_u_fin - gdt_u - 1
-    dd gdt_u
-gdt_u:
-    dd 0, 0
-    dd 0x0000FFFF, 0x00CF9A00   ; codigo 32 bit 4 GB (igual que copyalta)
-    dd 0x0000FFFF, 0x00CF9300   ; dato 32 bit 4 GB (igual que copyalta)
-gdt_u_fin:
 
+
+; vesa_enum (v2.4): enumeracion VBE (VBox/HW real: los 32bpp tienen
+; numeros propios). Busca want[idx] con 32bpp y LFB. NO RETORNA:
+; salta a inicio.modo_save (modo en pila) o a inicio.cargar.
+; Adaptado de vbe_buscar (legacy16, probado en VBox).
+vesa_enum:
+    ; v2.4: enumeracion VBE (VBox/HW: los 32bpp tienen numeros propios).
+    ; Busca want[idx] con 32bpp y LFB. CF=0 y modo en pila si ok;
+    ; CF=1 si no. DS=0 a la entrada. Solo ES se confia entre BIOS
+    ; (como ya hace F8); DS:SI/cursor por pila, wants en el bloque ES.
+    add bx, bx                 ; BX = indice*2 (lo puso el sector 1)
+    mov ax, 0x7800
+    mov es, ax
+    mov ax, [bx+want_h]
+    shl eax, 16               ; EAX = h<<16 (386+)
+    mov ax, [bx+want_w]       ; EAX = h<<16|w
+    mov [es:0x1F0], eax       ; wants (checks sin DS)
+    xor di, di
+    mov ax, 0x4F00
+    int 0x10
+    cmp ax, 0x004F
+    jne .ve_no
+    mov si, [es:0x0E]
+    mov ds, [es:0x10]         ; DS:SI = lista de modos
+.ve_sig:
+    mov cx, [si]              ; DS:SI cursor (ambos por pila)
+    cmp cx, 0xFFFF
+    je .ve_no
+    push si
+    push ds
+    push cx
+    mov di, 0x200             ; consulta a 0x7800:0x200 (no pisa nada)
+    mov ax, 0x4F01
+    int 0x10
+    pop cx                    ; modo (orden inverso a los pushes)
+    pop ds                    ; listseg
+    pop si                    ; cursor
+    cmp ax, 0x004F
+    jne .ve_next
+    mov eax, [es:di+0x12]     ; XRes+YRes de una vez
+    cmp eax, [es:0x1F0]       ; wants (h<<16|w) intactos en el bloque
+    jne .ve_next
+    mov al, [es:di]
+    test al, 0x80             ; LFB disponible (bit 7)
+    jz .ve_next
+    cmp byte [es:di+0x19], 32
+    jne .ve_next
+    pop bx                    ; retorno (el modo va debajo, modo_save lo saca)
+    push cx                   ; modo para .modo_save (pop bx)
+    push bx
+    clc
+    ret
+.ve_next:                     ; [ret], SI=cursor intacto
+    inc si
+    inc si
+    jmp .ve_sig
+.ve_no:
+    stc
+    ret
+want_w dw 800, 640, 1024, 800
+want_h dw 600, 480, 768, 600
 
 ; edd_ok: F8: el chequeo AH=41h se cuelga con DL=0xE0 en este
 ; SeaBIOS (probado); se asume EDD (la lectura AH=42h lo demostrara
@@ -313,7 +355,7 @@ leer_sin:
 leer_alta:
     xor ax, ax
     mov ds, ax
-    lgdt [cs:gdt_u_ptr]         ; GDT 4 GB propia (probada en copyalta)
+    lgdt [cs:gdt_ptr]         ; v2.4: la GDT del sector 1 es identica
 alta_bucle:
     mov di, [cs:p_lba]
     call edd_trae            ; SI = 0x8000+off, DS=0
