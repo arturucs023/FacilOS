@@ -500,11 +500,17 @@ void proc_bloquea_ticks(uint32_t hasta) {
     if (proc_actual) {
         proc_actual->dormir_hasta = hasta;
         proc_actual->modo = 0;
-        if (proc_actual->estado == EST_EJECUTO)
-            proc_actual->estado = EST_BLOQ;
+        /* v2.4: bloqueo incondicional (ver abajo). */
+        proc_actual->estado = EST_BLOQ;
     }
     cpu_if_restaura(fl);
-    if (proc_actual && proc_actual->estado != EST_BLOQ) return;
+    if (!proc_actual) return;
+    /* v2.4: bloqueo incondicional. La espera es por tiempo absoluto:
+       no se pierde ningun aviso (el tick despierta por dormir_hasta).
+       El early-return anterior dejaba un bucle Ring0 sin ceder con
+       IF=0 para siempre cuando se entraba en LISTO (estela del hlt
+       de bloquea con runqueue vacia): PIT muerto, timeouts que nunca
+       expiran, EIP clavado en red_rx (visto con google.com). */
     bloquea();
     if (proc_actual) proc_actual->dormir_hasta = 0;
 }
