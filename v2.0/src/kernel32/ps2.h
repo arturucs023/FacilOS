@@ -21,5 +21,8 @@ int raton_lee(raton_t *dst); /* 0 ok (bloquea si vacia) */
 /* Handlers syscalls 38/39 (firma de tabla). */
 void sc_raton(regs_t *r, int di);
 void sc_raton_hay(regs_t *r, int di);
+/* v2.4-USB: inyecta movimiento relativo HID (dx/dy con signo, botones
+   bit0-2, giro con signo). Misma cola y despertar que el PS/2. */
+void ps2_inyecta_usb(int dx, int dy, int botones, int giro);
 
 #endif

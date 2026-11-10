@@ -132,8 +132,7 @@ void raton_irq(void) {
 }
 
 /* Sujeta a la pantalla vigente y guarda la instantanea. */
-static void vuelca(int dz) {
-    int lim_x = (int)gfx_w() - 1;
+static void vuelca(int dz) {    int lim_x = (int)gfx_w() - 1;
     int lim_y = (int)gfx_h() - 1;
     if (lim_x < 0) lim_x = 0;
     if (lim_y < 0) lim_y = 0;
@@ -146,6 +145,14 @@ static void vuelca(int dz) {
     cur_b = pb0 & 0x07;
     fase = 0;
     mete(cur_x, cur_y, cur_b, dz);
+}
+
+/* v2.4-USB: entrada del raton HID (relativo; HID Y+ es abajo). */
+void ps2_inyecta_usb(int dx, int dy, int botones, int giro) {
+    dx_ac = dx;
+    dy_ac = -dy;
+    pb0 = (uint8_t)(botones & 0x07);
+    vuelca(giro);
 }
 
 int raton_hay(void) {
