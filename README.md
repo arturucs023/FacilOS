@@ -1,4 +1,4 @@
-# FacilOS
+# FacilOS (rama v2.4)
 
 Sistema operativo de 32 bits desarrollado desde cero (sin Linux ni otro kernel
 como base): arranque BIOS, kernel x86 en C freestanding + NASM, modo protegido
@@ -6,62 +6,74 @@ como base): arranque BIOS, kernel x86 en C freestanding + NASM, modo protegido
 sobre PIT, memoria virtual por proceso, sistema de archivos propio en RAM,
 formato ejecutable F32X, shell y aplicaciones independientes.
 
-- **v1.9 (estable)**: ver [release v1.9](../../releases/tag/v1.9) y
-  `build/reports/INFORME-ESTABILIZACION-INTEGRAL-v1.9.md`.
-  Validada en QEMU: batería de aislamiento/procesos 8/8, `t1_lib` 258 pruebas
-  0 fallos, 40+20 ciclos crear/esperar, balance exacto de marcos, sin PANIC.
-- **v2.0-etapa1 (en desarrollo)**: rama `v2.0-etapa1` (memoria, IPC, syscalls,
-  drivers, VFS, seguridad). Sin entorno gráfico todavía.
+v2.4 (esta rama, en desarrollo): evolución importante sobre v2.3-red.
+
+- **VESA por enumeración**: el arranque ya no depende de los modos Bochs;
+  enumera los modos VBE y elige resolución+32bpp+LFB. Vale en QEMU,
+  VirtualBox y HW real (`v2.0/src/kernel32/boot32.asm`).
+- **USB por OHCI con sondeo** (sin IRQ nueva): teclado y ratón HID-boot
+  se enumeran y se inyectan en el camino PS/2 (`usb_ohci.c`,
+  `teclado_usb_tecla`, `ps2_inyecta_usb`). Probado en QEMU
+  (`pci-ohci` + `usb-kbd` + `usb-mouse`).
+- **Navegador con CSS básico**: color/fondo por etiqueta, clase e inline,
+  negrita/cursiva; formularios GET (sirve un SearXNG propio por HTTP).
+  Sin JS; sin HTTPS (ver `docs/network/TLS.md`).
+- ISO: `v2.0/build/iso/FacilOS-v2.4.iso` (solo la de esta rama).
+
+Batería v2.4 en QEMU: `t1_lib` 258/0, `tutf8` 26/0, `mem32` 15/0,
+`t_fb` 129/0. `t_red` llega hasta el mismo punto que F8 (la parte viva
+externa depende del NAT/slirp del anfitrión).
 
 ## Estructura
 
 | Ruta | Contenido |
 |---|---|
-| `src/kernel32/` | Kernel v1.9→v2.0 (memoria, procesos, syscalls, FS, shell, drivers) |
-| `src/legacy16/` | Línea histórica 16-bit (no modificar) |
-| `user/apps/` | Aplicaciones F32X (shell, menú, reloj, batería `aislamiento32`, …) |
-| `user/lib/` | Biblioteca de usuario (`ulib`, `sys.h`) y arranque (`start.asm`) |
-| `user/ld/` | Enlazado de programas (`prog.ld`) |
-| `tools/` | `build32.py` (build), `qrun.py`/`qwin.ps1` (QEMU), utilidades |
-| `build/iso/` | ISOs (`FacilOS-v1.9-32.iso` estable) |
-| `build/reports/` | Informes de estabilización y de etapa |
-| `build/evidence/` | Evidencias de QEMU/serie de versiones anteriores |
+| `v2.0/src/kernel32/` | Kernel (memoria, procesos, syscalls, FS, shell, drivers incl. USB) |
+| `v2.0/src/legacy16/` | Línea histórica 16-bit (no modificar) |
+| `v2.0/user/apps/` | Aplicaciones F32X (shell, fbrowser, t_fb, …) |
+| `v2.0/user/lib/` | Biblioteca de usuario (`ulib`: red, HTTP, HTML+CSS, …) |
+| `v2.0/tools/` | `build32.py` (build), `qrun.py`/`qwin.ps1` (QEMU), `http_stub.py`, utilidades |
+| `v2.0/build/iso/` | ISO (`FacilOS-v2.4.iso`) |
+| `v2.0/docs/` | Documentación (red, kernel) |
 
 ## Requisitos (Windows)
 
-- Python 3 (`python tools/build32.py`).
-- GCC MinGW i686 (ruta configurable en `tools/build32.py`).
-- NASM incluido en `tools/nasm/`.
+- Python 3.
+- GCC MinGW i686 (ruta configurable en `v2.0/tools/build32.py`).
+- NASM incluido en `v2.0/tools/nasm/`.
 - QEMU i386 (`C:\Program Files\qemu\qemu-system-i386.exe`).
 
 ## Construir
 
 ```powershell
-python tools/build32.py
+# Desde la raíz del repo.
+python v2.0/tools/build32.py
 ```
 
-Genera el kernel (`build/bin/kernel32.bin`), los programas y la ISO en
-`build/iso/`. La ISO de la rama correspondiente lleva su nombre
-(`FacilOS-v1.9-32.iso`, `FacilOS-v2.0-32.iso`); no reutilizar nombres de
-versiones estables.
+Genera el kernel, los programas y la ISO en `v2.0/build/iso/`.
+Cada rama solo lleva las ISOs de su versión.
 
-## Probar en QEMU
+## Probar en QEMU (arranque manual con red y USB)
 
 ```powershell
-# ISO, "-" = sin disco, log serie, puerto monitor, comandos...
-python tools/qrun.py build/iso/FacilOS-v1.9-32.iso - build/logs/hola.log 4720 "{ESC}" "{SLEEP:3}" "ejecutar hola"
+# Desde la raíz del repo. Red user NAT + RTL8139 + OHCI + HID.
+& 'C:\Program Files\qemu\qemu-system-i386.exe' -cdrom v2.0\build\iso\FacilOS-v2.4.iso -boot order=d -m 32 -netdev user,id=red0 -device rtl8139,netdev=red0,mac=52:54:00:12:34:56 -device pci-ohci -device usb-kbd -device usb-mouse
 ```
 
-Arranque → menú gráfico → `{ESC}` sale a la shell (`facil32:/>`). Comandos
-útiles: `version`, `ejecutar hola`, `ejecutar t1_lib`,
-`ejecutar aislamiento32` (batería A–H), `ejecutar planificador32`.
+- Red QEMU user: `10.0.2.0/24`, DNS `10.0.2.3`. Dentro de FacilOS, ejecutar
+  `dhcp` en la shell para tener IP; sin esos parámetros arranca igual pero
+  sin adaptador (modo sin red).
+- Arranque → menú gráfico → `{ESC}` sale a la shell (`facil32:/>`). Para
+  volver al escritorio: `ejecutar servidor`. Teclas: F1 = menú.
+- Sin USB físico, el PS/2 de siempre sigue funcionando (ambos conviven).
 
-## Ramas
+Harness automatizado (serie + monitor, para baterías):
 
-- `main`: v1.9 estable (congelada como referencia; tag `v1.9`).
-- `v2.0-etapa1`: evolución del kernel por entregas (ver `build/reports/`).
-- Directorio `v2.0/`: copia de trabajo v2.0 integrada (etapas 1 y 2) con sus
-  informes en `v2.0/build/reports/`.
+```powershell
+$env:QRUN_RED = "1"
+$env:QRUN_USB = "1"
+python v2.0/tools/qrun.py v2.0/build/iso/FacilOS-v2.4.iso - serie.log 5123 "{ESC}" "{SLEEP:3}" "ejecutar t1_lib"
+```
 
 ## Licencia
 
