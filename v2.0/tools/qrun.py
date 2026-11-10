@@ -118,6 +118,20 @@ for c in CMDS:
         continue
     if c.startswith("{SLEEP:"):
         time.sleep(float(c[7:-1])); continue
+    if c.startswith("{WAIT:"):
+        # {WAIT:texto,seg} = espera event-driven (ahorra sleeps fijos).
+        interior = c[6:-1]
+        txt, _, to = interior.partition(",")
+        to = float(to) if to else 60.0
+        t0 = time.time()
+        while time.time() - t0 < to:
+            try:
+                if txt in ser.read_bytes().decode(errors="ignore"):
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+        continue
     crudo = c.endswith("~")
     if crudo:
         c = c[:-1]

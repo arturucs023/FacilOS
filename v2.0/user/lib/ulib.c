@@ -1805,10 +1805,11 @@ static int http_cabeceras(u_http_res_t *r, int fin, int capcuerpo) {
         o = e2 + 2;
     }
     if (r->chunked) {
-        r->err = -7;
-        return -1;
-    }
-    if (r->tiene_cl && r->content_length > (unsigned int)capcuerpo) {
+        /* v2.4.3: chunked manda; Content-Length (si lo hay) se ignora
+           y no limita (el tope lo pone capcuerpo al acumular). */
+        r->tiene_cl = 0;
+        r->content_length = 0;
+    } else if (r->tiene_cl && r->content_length > (unsigned int)capcuerpo) {
         r->err = -8;
         return -1;
     }
@@ -1843,10 +1844,153 @@ void u_http_res_inicia(u_http_res_t *r) {
     r->chunked = 0;
     r->cuerpo_n = 0;
     r->cuerpo_esp = 0;
+    r->ch_rest = -1;
+    r->ch_nlin = 0;
+    r->ch_crlf = 0;
     r->ip = 0;
     r->puerto = 0;
     http_hlen = 0;
     for (j = 0; j < (int)sizeof(http_hbuf); j++) http_hbuf[j] = 0;
+}
+
+/* v2.4.3: interpreta linea de tamano chunked ("1A[;ext]" o "0").
+   Devuelve tamano o -1 si malformada. */
+static int http_ch_tam(const char *l, int n) {
+    unsigned int v = 0;
+    int i = 0, nd = 0;
+    if (n <= 0) return -1;
+    for (; i < n; i++) {
+        char c = l[i];
+        if (c >= '0' && c <= '9') v = v * 16u + (unsigned int)(c - '0');
+        else if (c >= 'a' && c <= 'f')
+            v = v * 16u + (unsigned int)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F')
+            v = v * 16u + (unsigned int)(c - 'A' + 10);
+        else
+            break;
+        nd++;
+        if (v > 0xFFFFFFu) return -1;   /* tope cuerdo: 16M por trozo */
+    }
+    if (!nd) return -1;
+    for (; i < n; i++) {
+        char c = l[i];
+        if (c == ';') {
+            for (; i < n; i++)
+                if (l[i] < 32 || l[i] > 126) return -1;
+            return (int)v;
+        }
+        if (c != ' ' && c != '\t') return -1;
+    }
+    return (int)v;
+}
+
+/* v2.4.3: avanza el cuerpo chunked con d[o..n). 1 completo (estado OK),
+   0 falta mas (o==n), -1 error (estado ERR). Incremental: trozos,
+   lineas y CRLF pueden venir partidos entre llamadas. */
+static int http_ch_avanza(u_http_res_t *r, const unsigned char *d, int *po,
+                          int n, unsigned char *cuerpo, int capcuerpo,
+                          int *nbody) {
+    int o = *po, i;
+    while (o < n) {
+        if (r->ch_rest == -2) {
+            /* trailers: se ignoran; linea vacia = fin */
+            if (r->ch_nlin < 31 &&
+                !(r->ch_nlin > 0 && d[o] == '\n' &&
+                  r->ch_lin[r->ch_nlin - 1] == '\r')) {
+                if (d[o] == '\r' ||
+                    (d[o] >= 32 && d[o] <= 126) || d[o] == '\t') {
+                    r->ch_lin[r->ch_nlin++] = (char)d[o++];
+                } else {
+                    r->estado = U_HTTP_ST_ERR;
+                    r->err = -6;
+                    return -1;
+                }
+                continue;
+            }
+            if (d[o] == '\n' && r->ch_nlin > 0 &&
+                r->ch_lin[r->ch_nlin - 1] == '\r') {
+                o++;
+                if (r->ch_nlin == 1) {
+                    /* linea vacia: mensaje completo */
+                    r->ch_nlin = 0;
+                    if (o < n) {
+                        r->estado = U_HTTP_ST_ERR;
+                        r->err = -8;
+                        return -1;
+                    }
+                    r->estado = U_HTTP_ST_OK;
+                    *po = o;
+                    return 1;
+                }
+                r->ch_nlin = 0;
+                continue;
+            }
+            r->estado = U_HTTP_ST_ERR;
+            r->err = -6;
+            return -1;
+        }
+        if (r->ch_rest == -1) {
+            /* linea de tamano */
+            if (r->ch_nlin < 31 &&
+                !(r->ch_nlin > 0 && d[o] == '\n' &&
+                  r->ch_lin[r->ch_nlin - 1] == '\r')) {
+                r->ch_lin[r->ch_nlin++] = (char)d[o++];
+                continue;
+            }
+            if (d[o] == '\n' && r->ch_nlin > 0 &&
+                r->ch_lin[r->ch_nlin - 1] == '\r') {
+                int t = http_ch_tam(r->ch_lin, r->ch_nlin - 1);
+                o++;
+                r->ch_nlin = 0;
+                if (t < 0) {
+                    r->estado = U_HTTP_ST_ERR;
+                    r->err = -6;
+                    return -1;
+                }
+                r->ch_rest = (t == 0) ? -2 : t;
+                r->ch_crlf = 0;
+                continue;
+            }
+            r->estado = U_HTTP_ST_ERR;
+            r->err = -6;
+            return -1;
+        }
+        if (r->ch_rest > 0) {
+            unsigned int rest = (unsigned int)(n - o);
+            unsigned int want = (unsigned int)r->ch_rest;
+            unsigned int toma = rest < want ? rest : want;
+            if ((unsigned int)(*nbody) + toma > (unsigned int)capcuerpo) {
+                r->estado = U_HTTP_ST_ERR;
+                r->err = -8;
+                return -1;
+            }
+            for (i = 0; (unsigned int)i < toma; i++)
+                cuerpo[*nbody + i] = d[o + i];
+            *nbody += (int)toma;
+            r->cuerpo_n += toma;
+            o += (int)toma;
+            r->ch_rest -= (int)toma;
+            continue;
+        }
+        /* ch_rest == 0: CRLF de fin de datos */
+        if (!r->ch_crlf) {
+            if (d[o] == '\r') {
+                r->ch_crlf = 1;
+                o++;
+                continue;
+            }
+        } else if (d[o] == '\n') {
+            r->ch_crlf = 0;
+            r->ch_rest = -1;
+            o++;
+            continue;
+        }
+        r->estado = U_HTTP_ST_ERR;
+        r->err = -6;
+        return -1;
+    }
+    *po = o;
+    return 0;
 }
 
 int u_http_res_datos(u_http_res_t *r, const unsigned char *d, int n,
@@ -1936,6 +2080,12 @@ int u_http_res_datos(u_http_res_t *r, const unsigned char *d, int n,
         }
     }
     while (o < n) {
+        if (r->chunked) {
+            int q = http_ch_avanza(r, d, &o, n, cuerpo, capcuerpo,
+                                   nbody);
+            if (q != 0) return q;
+            continue;
+        }
         if (r->tiene_cl) {
             unsigned int need = r->content_length - r->cuerpo_n;
             unsigned int rest = (unsigned int)(n - o);
@@ -1984,7 +2134,9 @@ int u_http_res_fin(u_http_res_t *r) {
     era_cuerpo = (r->estado == U_HTTP_ST_CUERPO);
     r->estado = U_HTTP_ST_ERR;
     r->err = era_cuerpo ? -8 : -6;
-    if (era_cuerpo && !r->tiene_cl) {
+    if (era_cuerpo && !r->tiene_cl && !r->chunked) {
+        /* Cierre sin CL: cuerpo completo (no vale para chunked:
+           sin chunk-0 es truncado). */
         r->estado = U_HTTP_ST_OK;
         r->err = 0;
         return 1;
@@ -2086,7 +2238,7 @@ int u_http_trae(const char *url, u_http_res_t *r, unsigned char *cuerpo,
         }
     }
     for (;;) {
-        unsigned char tb[2048];
+        unsigned char tb[8192];   /* v2.4.3: 8K por llamada (ventana 8K) */
         unsigned int rest;
         int rr, q, espera;
         if ((int)(http_ahora() - fin) >= 0) {

@@ -271,6 +271,148 @@ static void prueba_topes(void) {
     suelta();
 }
 
+/* v2.4.3 chunked: decodificador incremental (ver u_http_res_datos). */
+static int mete_trozos(const unsigned char *m, int n, int paso,
+                       unsigned char *cpo, int cap, u_http_res_t *r,
+                       int *nbody) {
+    int o = 0, q = 0;
+    u_http_res_inicia(r);
+    *nbody = 0;
+    while (o < n) {
+        int t = n - o < paso ? n - o : paso;
+        q = u_http_res_datos(r, m + o, t, cpo, cap, nbody);
+        if (q != 0) break;
+        o += t;
+    }
+    return q;
+}
+
+static int cuerpo_igual(const unsigned char *cpo, const char *esp) {
+    int i = 0;
+    while (esp[i] && i < 300) {
+        if (cpo[i] != (unsigned char)esp[i]) return 0;
+        i++;
+    }
+    return esp[i] == 0;
+}
+
+static void prueba_chunked(void) {
+    static unsigned char cpo[512];
+    static const char cab[] =
+        "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    u_print("t_fb: chunked...\n");
+    {
+        /* simple de una pieza */
+        static const char m[] =
+            "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            "5\r\nhola0\r\n0\r\n\r\n";
+        u_http_res_t r;
+        int nb = 0, q;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m,
+                             (int)sizeof(m) - 1, cpo, (int)sizeof(cpo),
+                             &nb);
+        ok(q == 1 && nb == 5 && cuerpo_igual(cpo, "hola0"),
+           "chunk-simple");
+    }
+    {
+        /* varios trozos + extension + trailers, partido a varios pasos */
+        static const char m[] =
+            "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            "A;ext=x\r\n0123456789\r\n3\r\nabc\r\n"
+            "0\r\nX-T: 1\r\nY: 2\r\n\r\n";
+        int pasos[6], ip, todo = 1;
+        u_http_res_t r;
+        int nb = 0, q = 0;
+        pasos[0] = 1;
+        pasos[1] = 2;
+        pasos[2] = 3;
+        pasos[3] = 5;
+        pasos[4] = 7;
+        pasos[5] = 64;
+        for (ip = 0; ip < 6; ip++) {
+            nb = 0;
+            q = mete_trozos((const unsigned char *)m,
+                            (int)sizeof(m) - 1, pasos[ip], cpo,
+                            (int)sizeof(cpo), &r, &nb);
+            if (!(q == 1 && nb == 13 &&
+                  cuerpo_igual(cpo, "0123456789abc"))) {
+                todo = 0;
+                break;
+            }
+        }
+        ok(todo, "chunk-trozos");
+        (void)cab;
+    }
+    {
+        /* tamano malformado */
+        static const char m[] =
+            "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            "ZZ\r\nxx\r\n0\r\n\r\n";
+        u_http_res_t r;
+        int nb = 0, q;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m,
+                             (int)sizeof(m) - 1, cpo, (int)sizeof(cpo),
+                             &nb);
+        ok(q == -1, "chunk-mal-hex");
+    }
+    {
+        /* truncado: sin terminador -> res_fin falla */
+        static const char m[] =
+            "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            "5\r\nho";
+        u_http_res_t r;
+        int nb = 0, q, qf;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m,
+                             (int)sizeof(m) - 1, cpo, (int)sizeof(cpo),
+                             &nb);
+        qf = u_http_res_fin(&r);
+        ok(q == 0 && qf == -1, "chunk-corte");
+    }
+    {
+        /* tope de cuerpo: 5 bytes con cap 4 */
+        static const char m[] =
+            "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            "5\r\nhola0\r\n0\r\n\r\n";
+        u_http_res_t r;
+        int nb = 0, q;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m,
+                             (int)sizeof(m) - 1, cpo, 4, &nb);
+        ok(q == -1 && r.err == -8, "chunk-tope");
+    }
+    {
+        /* CL + chunked: manda chunked, CL se ignora */
+        static const char m[] =
+            "HTTP/1.0 200 OK\r\nContent-Length: 999\r\n"
+            "Transfer-Encoding: chunked\r\n\r\n"
+            "2\r\nok\r\n0\r\n\r\n";
+        u_http_res_t r;
+        int nb = 0, q;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m,
+                             (int)sizeof(m) - 1, cpo, (int)sizeof(cpo),
+                             &nb);
+        ok(q == 1 && nb == 2 && cuerpo_igual(cpo, "ok"),
+           "chunk-cl-ignora");
+    }
+    {
+        /* chunk-0 directo: cuerpo vacio */
+        static const char m[] =
+            "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+            "0\r\n\r\n";
+        u_http_res_t r;
+        int nb = 0, q;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m,
+                             (int)sizeof(m) - 1, cpo, (int)sizeof(cpo),
+                             &nb);
+        ok(q == 1 && nb == 0, "chunk-vacio");
+    }
+}
+
 static void prueba_layout(void) {
     int nf;
     u_print("t_fb: layout...\n");
@@ -446,6 +588,30 @@ static void prueba_viva(const char *base) {    static unsigned char cpo[8192];
         }
     }
     {
+        /* v2.4.3: chunked real contra el stub (/chunked -> "hola0") */
+        char u[128];
+        int i = 0;
+        while (base[i] && i < 110) {
+            u[i] = base[i];
+            i++;
+        }
+        u[i++] = '/';
+        u[i++] = 'c';
+        u[i++] = 'h';
+        u[i++] = 'u';
+        u[i++] = 'n';
+        u[i++] = 'k';
+        u[i++] = 'e';
+        u[i++] = 'd';
+        u[i] = 0;
+        k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+        ok(k == 0 && r.codigo == 200 && r.cuerpo_n == 5,
+           "viva-chunked-200");
+        if (k == 0)
+            ok(cpo[0] == 'h' && cpo[1] == 'o' && cpo[2] == 'l' &&
+               cpo[3] == 'a' && cpo[4] == '0', "viva-chunked-cuerpo");
+    }
+    {
         char u[128];
         int i = 0;
         while (base[i] && i < 120) {
@@ -555,6 +721,7 @@ int main(void) {
     prueba_robustos();
     prueba_urls();
     prueba_topes();
+    prueba_chunked();
     prueba_layout();
     prueba_css();
     prueba_forma();

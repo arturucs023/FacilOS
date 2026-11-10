@@ -12,7 +12,7 @@ Rutas:
   /ocho-kb              : 200 + 8192 bytes deterministicos.
   /fragmentado          : 200 + cuerpo enviado byte a byte.
   /por-cierre           : 200 sin Content-Length, cierra al final.
-  /chunked              : Transfer-Encoding: chunked (debe fallar).
+  /chunked              : Transfer-Encoding: chunked ("hola0", v2.4.3 OK).
   /mala-cabecera        : cabecera sin dos puntos (debe fallar).
   /cl-mal               : Content-Length no numerico (debe fallar).
   /cl-corto             : CL:100 con 10 bytes y cierre (truncada).
@@ -34,7 +34,8 @@ Rutas:
   /malformada           : tags sin cerrar, desconocidos, script.
   /img-pagina           : imagenes con/sin alt.
   /busca[?q=...]        : resultados de busqueda de ejemplo.
-  /grande-html          : 70 KB (supera el tope de 64K).
+  /grande-html          : 70 KB con Content-Length (cabe en 256K).
+  /grande-chunked       : ~200 KB HTML en trozos chunked de 8K.
 """
 import socket
 import sys
@@ -275,6 +276,23 @@ def atiende(cn):
                              [("Content-Type", "text/html"),
                               ("Content-Length", str(len(body)))],
                              body))
+        elif path == "/grande-chunked":
+            # v2.4.3: 200 KB HTML en trozos de 8K + trailers.
+            trozo = "<p>trozo chunked para red util v2.4.3</p>"
+            body = ("<html><head><title>GrandeC</title></head><body>" +
+                    trozo * 4600 + "</body></html>").encode("latin1")
+            h = ("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n"
+                 "Transfer-Encoding: chunked\r\n"
+                 "Connection: close\r\n\r\n")
+            cn.sendall(h.encode("latin1"))
+            for i in range(0, len(body), 8192):
+                t = body[i:i + 8192]
+                cn.sendall(("%X\r\n" % len(t)).encode("latin1"))
+                cn.sendall(t)
+                cn.sendall(b"\r\n")
+                time.sleep(0.02)
+            cn.sendall(("0\r\nX-Partes: %d\r\n\r\n" %
+                        (len(body) // 8192 + 1)).encode("latin1"))
         else:
             cn.sendall(resp(404, "Not Found",
                              [("Content-Type", "text/plain"),

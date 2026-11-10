@@ -1770,7 +1770,7 @@ __attribute__((optimize("O0"))) static void sc_61(regs_t *r, int di)
             } else {
                 uint32_t max = r->esi;
                 uint32_t n = 0;
-                if (max < 1 || max > 2048) return;
+                if (max < 1 || max > 8192) return;
                 if (!ptr_ok(di, r->edx, max, 1)) return;
                 if (a.espera > 10000) a.espera = 10000;
                 while (n < max) {

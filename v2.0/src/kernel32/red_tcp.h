@@ -11,7 +11,8 @@
    Direcciones: u32 con el primer octeto en el byte bajo. */
 
 #define TCP_MSS 536        /* carga util maxima por segmento Tx */
-#define TCP_RCV 2048       /* ventana de recepcion por conexion */
+#define TCP_RCV 8192       /* ventana de recepcion por conexion (v2.4.3:
+                              2K provocaba SWS-avoidance del emisor) */
 #define TCP_N 4            /* conexiones simultaneas */
 
 /* Estados (op 7 los devuelve). */

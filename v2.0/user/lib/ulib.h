@@ -363,7 +363,7 @@ int u_dns_cache_viva(unsigned int ins, unsigned int ttl,
 #define U_HTTP_MAX_SEC 8192    /* seccion de cabeceras */
 #define U_HTTP_MAX_LIN 512     /* linea de estado/cabecera */
 #define U_HTTP_MAX_CAB 32      /* cabeceras por respuesta */
-#define U_HTTP_MAX_CPO 65536   /* cuerpo acumulado */
+#define U_HTTP_MAX_CPO 262144   /* cuerpo acumulado (v2.4.3: 256K) */
 #define U_HTTP_NOM 64          /* nombre de cabecera */
 #define U_HTTP_VAL 256         /* valor de cabecera */
 #define U_HTTP_ST_LINEA 0      /* esperando linea de estado */
@@ -387,6 +387,13 @@ typedef struct {
     int chunked;               /* 1 si vino Transfer-Encoding */
     unsigned int cuerpo_n;     /* bytes de cuerpo aceptados */
     unsigned int cuerpo_esp;   /* bytes esperados (CL) o 0 si cierre */
+    /* v2.4.3 chunked (solo si chunked==1 y estado==CUERPO):
+       ch_rest==-1 espera linea de tamano; >=0 faltan datos del
+       trozo; -2 tras chunk-0 (trailers hasta linea vacia). */
+    int ch_rest;
+    char ch_lin[32];           /* linea de tamano/trailer en curso */
+    int ch_nlin;               /* bytes en ch_lin */
+    int ch_crlf;               /* 0 nada, 1 vista '\r' (fin de datos) */
 } u_http_res_t;
 typedef struct {
     char host[256];            /* minusculas, sin punto final */

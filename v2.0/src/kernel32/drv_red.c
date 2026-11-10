@@ -43,10 +43,10 @@
 #define TSD_OWN 0x2000u   /* 1 = trama en manos del chip */
 
 /* RCR: APM+AB (solo la nuestra + difusion), WRAP, MXDMA max,
-   anillo 16K. */
-#define RCR_VAL 0x0F8Au
+   anillo 64K (v2.4.3: 16K se desbordaba con rafagas del cable). */
+#define RCR_VAL 0x1F8Au   /* bit12: 11b = 64K (antes 01b = 16K) */
 
-#define RX_ANILLO (16 * 1024)
+#define RX_ANILLO (64 * 1024)
 #define RX_MASCARA (RX_ANILLO - 1)
 #define TX_MAX 1536
 
@@ -55,7 +55,7 @@ static uint16_t iob = 0;
 static uint8_t mi_mac[6];
 static uint8_t irq_lin = 0;
 
-static uint8_t *rx_anillo = 0;   /* 16K alineado a 8K */
+static uint8_t *rx_anillo = 0;   /* 64K alineado a 64K */
 static int rx_pos = 0;           /* desplazamiento de lectura */
 
 static uint8_t tx_buf[4][TX_MAX];   /* un bufer por descriptor */
@@ -103,10 +103,14 @@ static void isr_limpia(void) {
 /* Reinicio suave del receptor (desbordes): offsets a cero. */
 static void rx_repara(void) {
     uint8_t cr;
+    int i;
     c_rx_err++;
     cr = inb((uint16_t)(iob + R_CR));
     outb_b(R_CR, (uint8_t)(cr & (uint8_t)~CR_RE));
     rx_pos = 0;
+    /* v2.4.3: invalida cabeceras stale; si no, tras el reset se
+       releerian como nuevas (duplicados) o desync de nuevo. */
+    for (i = 0; i < RX_ANILLO; i++) rx_anillo[i] = 0;
     outw_b(R_CAPR, 0);
     isr_limpia();
     cr = inb((uint16_t)(iob + R_CR));
@@ -155,15 +159,15 @@ int red_init(void) {
         nim_init();
         return 0;
     }
-    /* Anillo Rx 16K alineado a 8K (kheap identidad: virt==fis). */
-    crudo = (uint8_t *)kmalloc(RX_ANILLO + 8192);
+    /* Anillo Rx 64K alineado a 64K (kheap identidad: virt==fis). */
+    crudo = (uint8_t *)kmalloc(RX_ANILLO + 65536);
     if (!crudo) {
         kprintf("red: sin memoria para anillo Rx\r\n");
         presente = 0;
         nim_init();
         return 0;
     }
-    rx_anillo = (uint8_t *)(((uint32_t)crudo + 8191u) & ~8191u);
+    rx_anillo = (uint8_t *)(((uint32_t)crudo + 65535u) & ~65535u);
     for (i = 0; i < RX_ANILLO; i++) rx_anillo[i] = 0;
     rx_pos = 0;
     outl_b(R_RBSTART, (uint32_t)rx_anillo);
@@ -283,8 +287,15 @@ static void rx_copia(int off, uint8_t *dst, int n) {
 
 int red_rx(uint8_t *marco, int max) {
     uint8_t cab[4];
-    int estado, tam, util, cons, i;
+    int estado, tam, util, cons, i, viejo;
     uint16_t s;
+    /* v2.4.3: el anillo se "ensucia" solo (stale tras wrap). Sin
+       marcar lo consumido, un relectura devuelve duplicados y un
+       tam corrupto desyncroniza rx_pos para siempre: la recepcion
+       moria en silencio tras ~16K (visto con 70K locales: en rx_pos
+       habia texto "llen", no cabecera). der_n cuenta cabeceras
+       invalidas seguidas y resetea como en RER. */
+    static int der_n = 0;
     if (!presente) return -1;
     if (!marco || max <= 0) return -2;
     s = inw_b(R_ISR);
@@ -292,32 +303,43 @@ int red_rx(uint8_t *marco, int max) {
         los consume quien los atiende (Tx y anillo) */
     if (s & INT_RER) {
         rx_repara();
+        der_n = 0;
         return 0;
     }
     rx_copia(rx_pos, cab, 4);
     estado = cab[0] | (cab[1] << 8);
     tam = cab[2] | (cab[3] << 8);   /* incluye CRC (4 B) */
-    if (!(estado & 0x01)) return 0; /* anillo vacio */
+    if (!(estado & 0x01)) return 0; /* vacio o ya consumido */
     if (tam < 14 + 4 || tam > 1514 + 4) {
-        c_rx_err++;
-        cons = (4 + tam + 3) & ~3;
-        rx_pos = (rx_pos + cons) & RX_MASCARA;
-        outw_b(R_CAPR, (uint16_t)((rx_pos + RX_ANILLO - 16) & RX_MASCARA));
+        /* Cabecera corrupta (sobreescritura silenciosa en rafaga o
+           DMA a medias). Sin avance por cons corrupto: reintentos y
+           reset persistente. Transitorios se resuelven solos. */
+        if (++der_n > 64) {
+            rx_repara();
+            der_n = 0;
+        }
         return 0;
     }
+    der_n = 0;
     util = tam - 4;   /* sin CRC final */
     if (util > max) {
         /* No cabe: se descarta (estadistica) y se avanza. */
         c_rx_err++;
+        viejo = rx_pos;
         cons = (4 + tam + 3) & ~3;
         rx_pos = (rx_pos + cons) & RX_MASCARA;
+        for (i = 0; i < 4; i++) rx_anillo[(viejo + i) & RX_MASCARA] = 0;
         outw_b(R_CAPR, (uint16_t)((rx_pos + RX_ANILLO - 16) & RX_MASCARA));
         return 0;
     }
     for (i = 0; i < util; i++)
         marco[i] = rx_anillo[(rx_pos + 4 + i) & RX_MASCARA];
+    viejo = rx_pos;
     cons = (4 + tam + 3) & ~3;
     rx_pos = (rx_pos + cons) & RX_MASCARA;
+    /* Marca consumido ANTES de liberar con CAPR: la NIC solo reusa
+       lo liberado, asi no se pisa nada en vuelo. */
+    for (i = 0; i < 4; i++) rx_anillo[(viejo + i) & RX_MASCARA] = 0;
     outw_b(R_CAPR, (uint16_t)((rx_pos + RX_ANILLO - 16) & RX_MASCARA));
     c_rx_ok++;
     return util;

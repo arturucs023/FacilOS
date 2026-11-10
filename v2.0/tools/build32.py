@@ -199,7 +199,7 @@ _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
 
 
 def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
-                 al_disco=True, con_ugfx=False):
+                 al_disco=True, con_ugfx=False, tope=196607):
     if nom == "editor32":
         run([NASM, "-f", "win32", str(APPS / "editor32.asm"),
              "-o", str(BLD / "editor32.o")])
@@ -235,12 +235,22 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
              "-o", str(BLD / (nom + ".pe"))] + objs)
     run([str(pathlib.Path(GCC).parent / "objcopy.exe"), "-O", "binary",
          str(BLD / (nom + ".pe")), str(BLD / (nom + ".plano"))])
-    plano = (BLD / (nom + ".plano")).read_bytes()
+    # F32: veto total a UNIX/BSD/Linux/Windows en el binario.
+    # Sin libc del anfitrion (-nostdlib), sin libstdc++, sin CRT ni
+    # DLLs: el .pe no puede importar nada ni traer .idata/.edata.
+    # (El nucleo aparte si enlaza -lgcc: solo aritmetica del
+    # compilador, sin llamadas al SO; los programas ni eso.)
     r = subprocess.run(
         [str(pathlib.Path(GCC).parent / "objdump.exe"), "-h",
          str(BLD / (nom + ".pe"))],
         capture_output=True, text=True)
+    plano = (BLD / (nom + ".plano")).read_bytes()
     bss_tam = 0
+    for ln in r.stdout.splitlines():
+        p = ln.split()
+        if len(p) >= 2 and p[1] in (".idata", ".edata", ".rsrc"):
+            print("FALLO %s: seccion del anfitrion %s" % (nom, p[1]))
+            sys.exit(1)
     for ln in r.stdout.splitlines():
         p = ln.split()
         if len(p) >= 4 and p[1] == ".bss":
@@ -254,7 +264,9 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
         # supera los 64K clasicos; el nucleo admite plano+bss<=768K
         # (ver kern_crea_proceso). F7-C: fbrowser roza los 140K
         # (ulib HTTP+DNS+HTML+UGFX); tope 192K plano.
-        assert len(plano) + 20 <= 196607, nom + " no cabe en 192K"
+        # v2.4.3: fbrowser/http llevan cuerpo estatico de 256K (chunked
+        # + paginas grandes); el tope se pasa por programa.
+        assert len(plano) + 20 <= tope, nom + " no cabe en tope"
         assert bss_tam <= 0x40000, nom + " bss enorme"
         assert len(plano) + bss_tam <= 0xC0000, nom + " +bss > 768K"
     cab = b"F32X" + _st.pack("<IIII", ver, 0, len(plano) + 20, bss_tam)
@@ -326,8 +338,11 @@ _apps3 = [
     ("t_cpp", ["t_cpp.cpp"], True),
 ]
 for _nom, _fs, _u, *_g in _apps3:
+    # v2.4.3: fbrowser/http con cuerpo estatico de 256K (chunked +
+    # paginas grandes); tope 384K, dentro del limite kernel 768K.
+    _tope = 393216 if _nom in ("fbrowser", "http") else 196607
     haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK,
-                 con_ugfx=bool(_g and _g[0]))
+                 con_ugfx=bool(_g and _g[0]), tope=_tope)
 
 # ---- escribir la ISO con el catalogo (todo dentro del CD) ----
 _todos = _programas + [a[0] for a in _apps3]
@@ -363,7 +378,7 @@ _fin = PAYLOAD_LBA + _ncd
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.4.2.iso"   # v2.4.2 (rama propia; v2.4 intacta)
+out_iso = ISO_DIR / "FacilOS-v2.4.3.iso"   # v2.4.3 (rama propia; v2.4.x intactas)
 _iso = bytearray(_fin * 2048)
 for _k in range(_fin):
     _iso[_k * 2048:(_k + 1) * 2048] = iso_sec.get(_k, bytes(2048))

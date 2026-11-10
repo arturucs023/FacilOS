@@ -952,6 +952,20 @@ int red_tcp_recibir(int id, uint32_t pid, uint8_t *dst, int max,
                 dst[k] = t->rcv[(t->rcv_ini + k) % TCP_RCV];
             t->rcv_ini = (t->rcv_ini + copia) % TCP_RCV;
             t->rcv_n -= (uint16_t)copia;
+            /* v2.4.3: window update best-effort al drenar, pero solo
+               cuando importa (el KAT cuenta paquetes exactos y el
+               buffer de captura es de 32): al salir de ventana 0 o
+               al cruzar media ventana. Sin el, el emisor solo ve
+               ventanas pequenas (SWS-avoidance) y la descarga se
+               arrastra por persist (~5 s por racha). */
+            if (copia > 0) {
+                int libre_desp = TCP_RCV - t->rcv_n;
+                int libre_antes = libre_desp - copia;
+                if ((libre_antes == 0 && libre_desp > 0) ||
+                    (libre_antes < TCP_RCV / 2 &&
+                     libre_desp >= TCP_RCV / 2))
+                    tcp_tx(t, 0x10, 0, 0, t->snd_nxt);
+            }
             return copia;
         }
         if (t->fin_rx) return -12;
@@ -1662,15 +1676,16 @@ void red_tcp_kat(void) {
             uint8_t tmp[536];
             int got = 0, q;
             for (k = 0; k < 536; k++) kre[k] = (uint8_t)k;
-            for (k = 0; k < 3; k++) {
+            /* v2.4.3: llena hasta TCP_RCV sea cual sea (antes 3x536+440
+               fijo para 2048). */
+            while (t->rcv_n < TCP_RCV) {
+                unsigned int trozo = (unsigned int)TCP_RCV - t->rcv_n;
+                if (trozo > 536) trozo = 536;
                 n = kat_arma(KAT_PAR, 80, 50211, rcv, t->snd_nxt,
-                             0x18, kre, 536);
+                             0x18, kre, (int)trozo);
                 red_tcp_entrada(kat_frm, n);
-                rcv += 536;
+                rcv += (uint32_t)trozo;
             }
-            n = kat_arma(KAT_PAR, 80, 50211, rcv, t->snd_nxt,
-                         0x18, kre, 440);
-            red_tcp_entrada(kat_frm, n);
             if (t->rcv_n != TCP_RCV) ok = 0;
             if (kat_n < 1) ok = 0;
             else if (kat_r[kat_n - 1].wnd != 0) ok = 0;
