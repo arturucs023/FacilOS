@@ -5,7 +5,13 @@
 SECTIONS
 {
     . = 0x200000;
-    .text : { *(.text*) *(.rdata*) *(.data*) }
+    .text : { *(.text*) *(.rdata*) *(.rodata*) *(.data*) *(.text.*) *(.data.*)
+        /* F32 C++: constructores globales (g++ .init_array; ABI vieja
+           .ctors). Solo ocupan si el programa los trae; los C no cambian. */
+        __init_array_start = .;
+        KEEP(*(.init_array*))
+        KEEP(*(.ctors*))
+        __init_array_end = .; }
     .bss : {
         __pbss = .;
         *(.bss*)

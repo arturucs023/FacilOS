@@ -11,8 +11,17 @@
 #define ULOG_DEPUR 3
 #define ULOG_CRITICO 4
 
+/* F32 C++: API C (sin mangling). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Formatea un registro en d (cap). Devuelve bytes (sin NUL). */
 int ulog_form(char *d, int cap, int nivel, const char *comp, int cod,
               const char *msg);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -6,6 +6,11 @@
  * (el renderer del nucleo es tolerante por compatibilidad con
  * volumenes antiguos: ver DISENO-UNICODE-v2.2.md). Sin libc. */
 
+/* F32 C++: API C (sin mangling). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Decodifica un caracter en s (max bytes). Devuelve codepoint o
    U+FFFD si invalida; *av = bytes consumidos (minimo 1). */
 unsigned ut_dec(const char *s, int max, int *av);
@@ -35,5 +40,9 @@ int ut_ancho(const char *s);
 #define UT_MU_CIRC 0xE002u
 #define UT_MU_DIER 0xE003u
 #define UT_MU_TILDE 0xE004u
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

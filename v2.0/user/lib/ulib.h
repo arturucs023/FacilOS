@@ -3,6 +3,11 @@
 
 #include "sys.h"
 
+/* F32 C++: las APIs de ulib son C (sin mangling). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Biblioteca C propia de usuario (v1.6). Sin libc: todo sobre syscalls.
    Compila con -ffreestanding -nostdlib; enlaza en programas F32X v3. */
 
@@ -545,5 +550,9 @@ typedef struct {
    Devuelve nfilas (0 = documento vacio) o -1 por args. */
 int u_html_maqueta(const u_html_doc_t *d, int cols,
                    u_html_fila_t *filas, int maxfilas);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -4,6 +4,11 @@
 #include "ulib.h"
 #include "tema.h"   /* v2.1-P0: colores RGB del tema para apps UGFX */
 
+/* F32 C++: API C (sin mangling). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* UGFX v1 (etapa 5): biblioteca grafica de usuario para FacilOS32.
  * Capa Ring3 sobre el protocolo del servidor (IPC/buzones). No conoce el
  * framebuffer fisico: dibuja con syscalls de lease durante DRAW.
@@ -109,5 +114,9 @@ void ug_lista(ug_win_t *v, int x, int y, int w, int h, const char **items,
 int ug_lista_tecla(int *sel, int *scroll, int n, int vis, int tecla);
 /* Clic en lista: item bajo (mx,my) o -1. My en coords de contenido. */
 int ug_lista_clic(int my, int y0, int scroll, int n);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

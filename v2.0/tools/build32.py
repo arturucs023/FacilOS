@@ -19,11 +19,19 @@ IMG_DIR = BASE / "build" / "images"
 for _d in (BLD, ISO_DIR, IMG_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 GCC = r"C:\Users\artur\gcc32\mingw32\bin\gcc.exe"
+GXX = r"C:\Users\artur\gcc32\mingw32\bin\g++.exe"
 NASM = str(BASE / "tools" / "nasm" / "nasm-3.01" / "nasm.exe")
 C32FLAGS = ["-ffreestanding", "-nostdlib", "-m32", "-march=i386",
             "-O1", "-Wall", "-fno-pic", "-fno-pie", "-fno-stack-protector",
             "-fzero-initialized-in-bss"]
 PROGFLAGS = C32FLAGS + ["-Os", "-ffunction-sections", "-fdata-sections"]
+# F32 C++ (v2.4.2): mismo modelo que C, sin excepciones/RTTI/libstdc++.
+# -fno-asynchronous-unwind-tables evita .eh_frame (prog.ld lo descarta).
+# -fuse-cxa-atexit: destructores via __cxa_atexit del runtime (MinGW
+# por defecto usaria atexit de su CRT, que aqui no existe).
+CXXFLAGS = PROGFLAGS + ["-fno-exceptions", "-fno-rtti",
+                        "-fno-asynchronous-unwind-tables",
+                        "-fuse-cxa-atexit"]
 
 def run(cmd):
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -171,6 +179,12 @@ def cdcat_build(nombres):
 # programas ejemplo F32X (todos con ulib + start)
 run([NASM, "-f", "win32", str(LIB / "start.asm"),
      "-o", str(BLD / "start.o")])
+# F32 C++ (v2.4.2): entrada con init/fini + runtime (new/delete,
+# ctores globales, guardas, atexit). start.asm de C queda intacto.
+run([NASM, "-f", "win32", str(LIB / "startxx.asm"),
+     "-o", str(BLD / "startxx.o")])
+run([GXX] + CXXFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
+     str(LIB / "f32cxx.cpp"), "-o", str(BLD / "f32cxx.o")])
 run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
      str(LIB / "ulib.c"), "-o", str(BLD / "ulib.o")])
 run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
@@ -195,19 +209,27 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
              "-o", str(BLD / "editor32.pe"),
              str(BLD / "editor32.o")])
     else:
-        objs = [str(BLD / "start.o")]
+        objs = []
+        es_cpp = any(str(fs_).endswith(".cpp") for fs_ in (fuentes or [nom + ".c"]))
+        # F32 C++: entrada con init/fini + runtime; las apps C++ no
+        # definen __main (lo aporta f32cxx). Flujo C intacto.
+        objs.append(str(BLD / ("startxx.o" if es_cpp else "start.o")))
+        CC = GXX if es_cpp else GCC
+        CF = CXXFLAGS if es_cpp else PROGFLAGS
         for fs_ in (fuentes or [nom + ".c"]):
             obj = str(BLD / (pathlib.Path(fs_).stem + ".o"))
-            run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
+            run([CC] + CF + ["-I", str(LIB), "-I", str(APPS), "-c",
                  str(APPS / fs_), "-o", obj])
             objs.append(obj)
-        if con_ulib or con_ugfx:
+        if es_cpp:
+            objs.append(str(BLD / "f32cxx.o"))
+        if con_ulib or con_ugfx or es_cpp:
             objs.append(str(BLD / "ulib.o"))
             objs.append(str(BLD / "utext.o"))
             objs.append(str(BLD / "ulog.o"))
         if con_ugfx:
             objs.append(str(BLD / "ugfx.o"))
-        run([GCC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
+        run([CC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
              "-Wl,-e,_start", "-Wl,--gc-sections",
              "-T", str(LD / "prog.ld"),
              "-o", str(BLD / (nom + ".pe"))] + objs)
@@ -298,6 +320,10 @@ _apps3 = [
     ("adivina", ["adivina.c"], True),
     ("fbrowser", ["fbrowser.c"], True, True),
     ("t_fb", ["t_fb.c"], True),
+    # F32 C++ (v2.4.2): demo + bateria (compilan con g++, enlazan
+    # startxx + f32cxx + ulib; mismo F32X v3 y limites que C).
+    ("cppdemo", ["cppdemo.cpp"], True),
+    ("t_cpp", ["t_cpp.cpp"], True),
 ]
 for _nom, _fs, _u, *_g in _apps3:
     haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK,
@@ -337,7 +363,7 @@ _fin = PAYLOAD_LBA + _ncd
 struct.pack_into("<I", pvd, 80, _fin)
 struct.pack_into(">I", pvd, 84, _fin)
 wsec(16, pvd)
-out_iso = ISO_DIR / "FacilOS-v2.4.iso"   # v2.4 (f8 intacta en v2.3-red)
+out_iso = ISO_DIR / "FacilOS-v2.4.2.iso"   # v2.4.2 (rama propia; v2.4 intacta)
 _iso = bytearray(_fin * 2048)
 for _k in range(_fin):
     _iso[_k * 2048:(_k + 1) * 2048] = iso_sec.get(_k, bytes(2048))
