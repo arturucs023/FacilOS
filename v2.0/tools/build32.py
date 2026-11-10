@@ -176,6 +176,19 @@ def cdcat_build(nombres):
     return lba
 
 
+# Hubbub (NetSurf, MIT) para fbrowser/t_fb (v2.4.3+hubbub): parser
+# HTML5 real. Sin perl/gperf (ver thirdparty/netsurf/gen_inc.py).
+# nslibc propia (sin UNIX/BSD/Windows); enlazado estatico.
+NSBASE = BASE / "thirdparty" / "netsurf"
+NSLIBS = ["libparserutils-0.2.5", "libwapcaplet-0.4.3", "libhubbub-0.3.8"]
+NSHAVE = NSBASE.is_dir()
+NSINCS = []
+if NSHAVE:
+    NSINCS = ["-I", str(LIB / "nslibc")]
+    for _nl in NSLIBS:
+        NSINCS += ["-I", str(NSBASE / _nl / "include"),
+                   "-I", str(NSBASE / _nl / "src")]
+NSDEF = ["-DF32_NSHUBBUB", "-DNDEBUG"] if NSHAVE else []
 # programas ejemplo F32X (todos con ulib + start)
 run([NASM, "-f", "win32", str(LIB / "start.asm"),
      "-o", str(BLD / "start.o")])
@@ -185,8 +198,8 @@ run([NASM, "-f", "win32", str(LIB / "startxx.asm"),
      "-o", str(BLD / "startxx.o")])
 run([GXX] + CXXFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
      str(LIB / "f32cxx.cpp"), "-o", str(BLD / "f32cxx.o")])
-run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
-     str(LIB / "ulib.c"), "-o", str(BLD / "ulib.o")])
+run([GCC] + PROGFLAGS + NSDEF + NSINCS + ["-I", str(LIB), "-I", str(APPS),
+     "-c", str(LIB / "ulib.c"), "-o", str(BLD / "ulib.o")])
 run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
      str(LIB / "ugfx.c"), "-o", str(BLD / "ugfx.o")])
 run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
@@ -194,12 +207,28 @@ run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
 run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
      str(LIB / "ulog.c"), "-o", str(BLD / "ulog.o")])
 import struct as _st
+NSOBJS = []
+if NSHAVE:
+    for _nl in NSLIBS:
+        for _c in sorted((NSBASE / _nl / "src").rglob("*.c")):
+            # nombre unico (hay utils.c en varias libs)
+            _o = str(BLD / ("ns_" + _nl.split("-")[0] + "_" +
+                            _c.parent.name + "_" + _c.stem + ".o"))
+            run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS)] +
+                NSINCS + ["-DWITHOUT_ICONV_FILTER", "-DNDEBUG", "-w",
+                          "-c", str(_c), "-o", _o])
+            NSOBJS.append(_o)
+    run([GCC] + PROGFLAGS + ["-I", str(LIB / "nslibc"), "-I", str(LIB),
+         "-I", str(APPS), "-c",
+         str(LIB / "nsshim.c"), "-o", str(BLD / "nsshim.o")])
+    NSOBJS.append(str(BLD / "nsshim.o"))
 
 _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
 
 
 def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
-                 al_disco=True, con_ugfx=False, tope=196607):
+                 al_disco=True, con_ugfx=False, tope=196607,
+                 con_ns=False):
     if nom == "editor32":
         run([NASM, "-f", "win32", str(APPS / "editor32.asm"),
              "-o", str(BLD / "editor32.o")])
@@ -216,6 +245,8 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
         objs.append(str(BLD / ("startxx.o" if es_cpp else "start.o")))
         CC = GXX if es_cpp else GCC
         CF = CXXFLAGS if es_cpp else PROGFLAGS
+        if con_ns:
+            CF = CF + NSDEF + NSINCS
         for fs_ in (fuentes or [nom + ".c"]):
             obj = str(BLD / (pathlib.Path(fs_).stem + ".o"))
             run([CC] + CF + ["-I", str(LIB), "-I", str(APPS), "-c",
@@ -229,6 +260,8 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
             objs.append(str(BLD / "ulog.o"))
         if con_ugfx:
             objs.append(str(BLD / "ugfx.o"))
+        if con_ns:
+            objs += NSOBJS
         run([CC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
              "-Wl,-e,_start", "-Wl,--gc-sections",
              "-T", str(LD / "prog.ld"),
@@ -339,10 +372,21 @@ _apps3 = [
 ]
 for _nom, _fs, _u, *_g in _apps3:
     # v2.4.3: fbrowser/http con cuerpo estatico de 256K (chunked +
-    # paginas grandes); tope 384K, dentro del limite kernel 768K.
-    _tope = 393216 if _nom in ("fbrowser", "http") else 196607
+    # paginas grandes); fbrowser y t_fb llevan Hubbub (medido:
+    # fbrowser ~672K, t_fb ~520K; tope holgado bajo el limite 768K
+    # del nucleo, que se comprueba siempre).
+    _tope = 196607
+    _ns = False
+    if _nom in ("fbrowser", "http"):
+        _tope = 393216
+    if _nom == "fbrowser":
+        _tope = 724992
+        _ns = True
+    if _nom == "t_fb":
+        _tope = 770048
+        _ns = True
     haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK,
-                 con_ugfx=bool(_g and _g[0]), tope=_tope)
+                 con_ugfx=bool(_g and _g[0]), tope=_tope, con_ns=_ns)
 
 # ---- escribir la ISO con el catalogo (todo dentro del CD) ----
 _todos = _programas + [a[0] for a in _apps3]

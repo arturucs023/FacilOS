@@ -13,6 +13,7 @@ Rutas:
   /fragmentado          : 200 + cuerpo enviado byte a byte.
   /por-cierre           : 200 sin Content-Length, cierra al final.
   /chunked              : Transfer-Encoding: chunked ("hola0", v2.4.3 OK).
+  /cablarga             : cabecera desconocida de 600 B (se ignora).
   /mala-cabecera        : cabecera sin dos puntos (debe fallar).
   /cl-mal               : Content-Length no numerico (debe fallar).
   /cl-corto             : CL:100 con 10 bytes y cierre (truncada).
@@ -116,6 +117,14 @@ def atiende(cn):
                  "Connection: close\r\n\r\n")
             cn.sendall(h.encode("latin1"))
             cn.sendall(b"5\r\nhola0\r\n0\r\n\r\n")
+        elif path == "/cablarga":
+            # v2.4.3+hubbub: cabecera desconocida de 600 B (tipo CSP
+            # real): debe ignorarse, no tumbar la respuesta.
+            h = ("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n"
+                 "X-Relleno: " + "abcd1234" * 75 + "\r\n"
+                 "Content-Length: 15\r\nConnection: close\r\n\r\n")
+            cn.sendall(h.encode("latin1"))
+            cn.sendall(b"<p>cablarga</p>")
         elif path == "/mala-cabecera":
             cn.sendall(b"HTTP/1.0 200 OK\r\nX-Mala sin dos puntos\r\n"
                         b"\r\n")

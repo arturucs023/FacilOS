@@ -361,7 +361,7 @@ int u_dns_cache_viva(unsigned int ins, unsigned int ttl,
    reutilizable (patron del codec DNS F6-D). */
 #define U_HTTP_MAX_URL 512     /* URL completa */
 #define U_HTTP_MAX_SEC 8192    /* seccion de cabeceras */
-#define U_HTTP_MAX_LIN 512     /* linea de estado/cabecera */
+#define U_HTTP_MAX_LIN 1024  /* linea de estado/cabecera (v2.4.3: 512->1024 por CSP largas reales) */
 #define U_HTTP_MAX_CAB 32      /* cabeceras por respuesta */
 #define U_HTTP_MAX_CPO 262144   /* cuerpo acumulado (v2.4.3: 256K) */
 #define U_HTTP_NOM 64          /* nombre de cabecera */
@@ -537,6 +537,13 @@ int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
    0 ok; -1 args; -2 esquema no navegable (https/javascript/mailto/
    vacio con blancos); -3 largo o base invalida. */
 int u_html_resuelve_url(const char *base, const char *ref, char *sal);
+#ifdef F32_NSHUBBUB
+/* v2.4.3+hubbub: igual contrato que u_html_parse, pero tokenizado
+   con Hubbub (HTML5 real: entidades, comentarios, rawtext). 0 ok,
+   1 truncado, -1 args, -2 sin memoria/Hubbub (reintentar legacy). */
+int u_html_parse_hb(u_html_doc_t *d, const unsigned char *pg, int n,
+                    const char *base);
+#endif
 
 /* Fila de layout (u_html_maqueta): tramo de texto ya ajustado al
    ancho. ini/len referencian d->texto (len 0 en VACIA/HR/IMG).

@@ -296,6 +296,181 @@ static int cuerpo_igual(const unsigned char *cpo, const char *esp) {
     return esp[i] == 0;
 }
 
+#ifdef F32_NSHUBBUB
+/* v2.4.3+hubbub: mismo contrato que parsea() pero tokenizado con
+   Hubbub (HTML5 real). -98 = hubbub no disponible/fallo. */
+static int parsea_hb(const char *s, const char *base) {
+    int n = u_strlen(s);
+    if (u_html_crea(&d)) return -99;
+    {
+        int k = u_html_parse_hb(&d, (const unsigned char *)s, n, base);
+        if (k < 0) {
+            u_html_libera(&d);
+            return -98;
+        }
+    }
+    return 0;
+}
+
+static unsigned hb_suma(void) {
+    unsigned s = 0;
+    int i;
+    for (i = 0; i < d.texto_n; i++)
+        s += (unsigned char)d.texto[i];
+    return s;
+}
+
+/* Paridad legado-vs-hubbub sobre el mismo documento: mismo texto,
+   bloques, enlaces, titulo y formulario. */
+static void paridad(const char *s, const char *base, const char *nom) {
+    int tn0, bl0, en0, im0, tt0 = 0, f0 = 0, okp = 1;
+    unsigned sum0;
+    char tit0[128], for0[512], cam0[64];
+    int q;
+    if (parsea(s, base) != 0) {
+        ok(0, nom);
+        return;
+    }
+    tn0 = d.texto_n;
+    bl0 = d.nbloq;
+    en0 = d.nenl;
+    im0 = d.nimg;
+    sum0 = hb_suma();
+    for (q = 0; q < 127 && d.titulo[q]; q++) tit0[q] = d.titulo[q];
+    tit0[q < 127 ? q : 127] = 0;
+    for (q = 0; q < 511 && d.forma[q]; q++) for0[q] = d.forma[q];
+    for0[q < 511 ? q : 511] = 0;
+    for (q = 0; q < 63 && d.campo[q]; q++) cam0[q] = d.campo[q];
+    cam0[q < 63 ? q : 63] = 0;
+    tt0 = d.titulo[0] != 0;
+    f0 = d.hay_forma;
+    suelta();
+    if (parsea_hb(s, base) != 0) {
+        ok(0, nom);
+        return;
+    }
+    if (d.texto_n != tn0) okp = 0;
+    if (okp) {
+        int i;
+        /* compara por suma + longitudes (evita copiar 48K) */
+        if (hb_suma() != sum0) okp = 0;
+    }
+    if (d.nbloq != bl0) okp = 0;
+    if (d.nenl != en0) okp = 0;
+    if (d.nimg != im0) okp = 0;
+    if ((d.titulo[0] != 0) != tt0) okp = 0;
+    else if (tt0 && u_strcmp(d.titulo, tit0)) okp = 0;
+    if (d.hay_forma != f0) okp = 0;
+    else if (f0 && (u_strcmp(d.forma, for0) || u_strcmp(d.campo, cam0)))
+        okp = 0;
+    ok(okp, nom);
+    suelta();
+}
+
+static void prueba_hubbub(void) {
+    int nf;
+    u_print("t_fb: hubbub...\n");
+    ok(parsea_hb("<html><body><p>hola</p></body></html>",
+        "http://a/") == 0, "hb-minimo-parsea");
+    ok(d.nbloq == 1 && d.bloq[0].tipo == U_HTML_B_P, "hb-minimo-bloque");
+    ok(texto_igual("hola"), "hb-minimo-texto");
+    suelta();
+    ok(parsea_hb("<p>&amp;&lt;&gt;&quot;&apos;&#65;&#x41;&nbsp;</p>",
+        "http://a/") == 0, "hb-entidades");
+    ok(d.texto_n == 9, "hb-entidades-bytes");
+    ok(d.texto[0] == '&' && d.texto[1] == '<' &&
+        d.texto[2] == '>' && d.texto[3] == '"' &&
+        d.texto[4] == '\'' && d.texto[5] == 'A' &&
+        d.texto[6] == 'A', "hb-entidades-ascii");
+    ok(((unsigned char)d.texto[7] & 0xC0) == 0xC0,
+        "hb-entidades-nbsp");
+    suelta();
+    ok(parsea_hb("<p>&desconocida; fin</p>", "http://a/") == 0,
+        "hb-entidad-rara");
+    ok(texto_igual("&desconocida; fin"), "hb-entidad-rara-literal");
+    suelta();
+    ok(parsea_hb("<!DOCTYPE html><!-- x --><p>y</p>", "http://a/") == 0,
+        "hb-doctype-comentario");
+    ok(texto_igual("y"), "hb-comentario-fuera");
+    suelta();
+    ok(parsea_hb("<script>if(a<b){mala();}</script><p>ok</p>",
+        "http://a/") == 0, "hb-script");
+    ok(texto_igual("ok"), "hb-script-fuera");
+    suelta();
+    ok(parsea_hb("<style>p{color:red;}</style><p>z</p>",
+        "http://a/") == 0, "hb-style");
+    ok(texto_igual("z"), "hb-style-fuera");
+    suelta();
+    ok(parsea_hb("<html><head><title>Mi Ti</title></head>"
+        "<body><p>x</p></body></html>", "http://a/") == 0,
+        "hb-titulo");
+    ok(!u_strcmp(d.titulo, "Mi Ti"), "hb-titulo-texto");
+    suelta();
+    ok(parsea_hb("<P CLASS=\"v\">T</P>", "http://a/") == 0,
+        "hb-mayusculas");
+    ok(d.nbloq == 1 && d.bloq[0].tipo == U_HTML_B_P,
+        "hb-mayus-bloque");
+    suelta();
+    ok(parsea_hb("<p>hola", "http://a/") == 0, "hb-sin-cerrar");
+    ok(texto_igual("hola"), "hb-sin-cerrar-texto");
+    suelta();
+    ok(parsea_hb("<p>a<br/>b</p>", "http://a/") == 0, "hb-selfclose");
+    ok(texto_igual("ab"), "hb-selfclose-texto");
+    suelta();
+    ok(parsea_hb("<object><p>q</p></object><p>w</p>", "http://a/") == 0,
+        "hb-object-salta");
+    ok(texto_igual("w"), "hb-object-fuera");
+    suelta();
+    ok(parsea_hb("<p><a href=\"/x?a=1&amp;b=2\">t</a></p>",
+        "http://a/base/p") == 0, "hb-enlace-args");
+    ok(d.nenl == 1, "hb-enlace-args-nenl");
+    ok(!u_strcmp(d.enl[0].url, "http://a/x?a=1&b=2"),
+        "hb-enlace-args-url");
+    suelta();
+    ok(parsea_hb("<img src=\"/i.png\" alt=\"foto\">",
+        "http://a/b/") == 0, "hb-img");
+    ok(d.nimg == 1 && !u_strcmp(d.img[0].src, "http://a/i.png"),
+        "hb-img-src");
+    suelta();
+    ok(parsea_hb("<form action=\"/busca\" method=\"get\">"
+        "<input name=\"q\"></form>", "http://a/") == 0,
+        "hb-forma");
+    ok(d.hay_forma == 1 && !u_strcmp(d.forma, "http://a/busca") &&
+        !u_strcmp(d.campo, "q"), "hb-forma-datos");
+    suelta();
+    ok(parsea_hb("<style>p{color:red}</style><p>hola</p>",
+        "http://a/") == 0, "hb-css-regla");
+    nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+    ok(nf > 0 && filas[0].fg == 0xFF0000, "hb-css-rojo");
+    suelta();
+    ok(parsea_hb("<p style=\"color:#00ff00\">x</p>",
+        "http://a/") == 0, "hb-css-inline");
+    nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+    ok(nf > 0 && filas[0].fg == 0x00FF00, "hb-css-inline-verde");
+    suelta();
+    paridad("<html><body><p>hola <b>mundo</b></p></body></html>",
+        "http://a/", "hb-par-minimo");
+    paridad("<h1>T</h1><p>uno <a href=\"/x\">dos</a></p>"
+        "<ul><li>a</li><li>b</li></ul>", "http://a/",
+        "hb-par-bloques");
+    paridad("<html><head><title>Ti</title><style>p{color:red}</style>"
+        "</head><body><p>&amp; <b>negrita</b></p>"
+        "<form action=\"/b\"><input name=\"q\"></form></body></html>",
+        "http://a/base/", "hb-par-pagina");
+    paridad("solo texto", "http://a/", "hb-par-texto");
+    paridad("<script>var x = 1 < 2;</script><p>tras</p>", "http://a/",
+        "hb-par-script");
+    paridad("<!-- c --><p>a</p><!-- d --><p>b</p>", "http://a/",
+        "hb-par-comentarios");
+    paridad("<TABLE><TR><TD>c1</TD><TD>c2</TD></TR></TABLE>",
+        "http://a/", "hb-par-mayus");
+}
+#else
+static void prueba_hubbub(void) {
+    u_print("t_fb: hubbub no compilado (omitido, sin contar)\n");
+}
+#endif
+
 static void prueba_chunked(void) {
     static unsigned char cpo[512];
     static const char cab[] =
@@ -410,6 +585,84 @@ static void prueba_chunked(void) {
                              (int)sizeof(m) - 1, cpo, (int)sizeof(cpo),
                              &nb);
         ok(q == 1 && nb == 0, "chunk-vacio");
+    }
+}
+
+/* v2.4.3: tolerancia a cabeceras largas desconocidas (CSP reales de
+   600+ B, caso iana.org): se ignoran; el framing sigue estricto y la
+   linea sigue topada en U_HTTP_MAX_LIN (1024). */
+static void prueba_cablarga(void) {
+    static unsigned char cpo[512];
+    static unsigned char msg[2048];
+    u_print("t_fb: cablarga...\n");
+    {
+        /* X-Relleno 600 B + CL: debe ignorarse y entregar el cuerpo */
+        static const char p1[] = "HTTP/1.0 200 OK\r\nX-Relleno: ";
+        static const char p2[] = "\r\nContent-Length: 5\r\n\r\nhola0";
+        int o = 0, i, nb = 0, q;
+        u_http_res_t r;
+        for (i = 0; p1[i]; i++) msg[o++] = (unsigned char)p1[i];
+        for (i = 0; i < 600; i++) msg[o++] = (unsigned char)'A';
+        for (i = 0; p2[i]; i++) msg[o++] = (unsigned char)p2[i];
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, msg, o, cpo, (int)sizeof(cpo), &nb);
+        ok(q == 1 && nb == 5 && cuerpo_igual(cpo, "hola0"),
+           "cablarga-cl-ignora");
+    }
+    {
+        /* misma cabecera larga pero en trozos de 7 B (incremental) */
+        static const char p1[] = "HTTP/1.0 200 OK\r\nX-Relleno: ";
+        static const char p2[] = "\r\nContent-Length: 5\r\n\r\nhola0";
+        int o = 0, i, nb = 0, q;
+        u_http_res_t r;
+        for (i = 0; p1[i]; i++) msg[o++] = (unsigned char)p1[i];
+        for (i = 0; i < 600; i++) msg[o++] = (unsigned char)'A';
+        for (i = 0; p2[i]; i++) msg[o++] = (unsigned char)p2[i];
+        q = mete_trozos(msg, o, 7, cpo, (int)sizeof(cpo), &r, &nb);
+        ok(q == 1 && nb == 5 && cuerpo_igual(cpo, "hola0"),
+           "cablarga-trozos");
+    }
+    {
+        /* larga + chunked (caso iana.org: CSP + Transfer-Encoding) */
+        static const char p1[] = "HTTP/1.0 200 OK\r\nX-Relleno: ";
+        static const char p2[] =
+            "\r\nTransfer-Encoding: chunked\r\n\r\n"
+            "5\r\nhola0\r\n0\r\n\r\n";
+        int o = 0, i, nb = 0, q;
+        u_http_res_t r;
+        for (i = 0; p1[i]; i++) msg[o++] = (unsigned char)p1[i];
+        for (i = 0; i < 600; i++) msg[o++] = (unsigned char)'A';
+        for (i = 0; p2[i]; i++) msg[o++] = (unsigned char)p2[i];
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, msg, o, cpo, (int)sizeof(cpo), &nb);
+        ok(q == 1 && nb == 5 && cuerpo_igual(cpo, "hola0"),
+           "cablarga-chunked");
+    }
+    {
+        /* framing largo sigue siendo error: CL de 300 digitos */
+        static const char p1[] = "HTTP/1.0 200 OK\r\nContent-Length: ";
+        static const char p2[] = "\r\n\r\nxx";
+        int o = 0, i, nb = 0, q;
+        u_http_res_t r;
+        for (i = 0; p1[i]; i++) msg[o++] = (unsigned char)p1[i];
+        for (i = 0; i < 300; i++) msg[o++] = (unsigned char)'9';
+        for (i = 0; p2[i]; i++) msg[o++] = (unsigned char)p2[i];
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, msg, o, cpo, (int)sizeof(cpo), &nb);
+        ok(q == -1, "cablarga-cl-rigida");
+    }
+    {
+        /* linea > U_HTTP_MAX_LIN (1100 B) sigue siendo error */
+        static const char p1[] = "HTTP/1.0 200 OK\r\nX-Larga: ";
+        static const char p2[] = "\r\n\r\nxx";
+        int o = 0, i, nb = 0, q;
+        u_http_res_t r;
+        for (i = 0; p1[i]; i++) msg[o++] = (unsigned char)p1[i];
+        for (i = 0; i < 1100; i++) msg[o++] = (unsigned char)'C';
+        for (i = 0; p2[i]; i++) msg[o++] = (unsigned char)p2[i];
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, msg, o, cpo, (int)sizeof(cpo), &nb);
+        ok(q == -1, "cablarga-linea-tope");
     }
 }
 
@@ -612,6 +865,29 @@ static void prueba_viva(const char *base) {    static unsigned char cpo[8192];
                cpo[3] == 'a' && cpo[4] == '0', "viva-chunked-cuerpo");
     }
     {
+        /* v2.4.3: cabecera larga desconocida (/cablarga -> 200 OK) */
+        char u[128];
+        int i = 0;
+        while (base[i] && i < 110) {
+            u[i] = base[i];
+            i++;
+        }
+        u[i++] = '/';
+        u[i++] = 'c';
+        u[i++] = 'a';
+        u[i++] = 'b';
+        u[i++] = 'l';
+        u[i++] = 'a';
+        u[i++] = 'r';
+        u[i++] = 'g';
+        u[i++] = 'a';
+        u[i] = 0;
+        k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+        ok(k == 0 && r.codigo == 200, "viva-cablarga-200");
+        if (k == 0)
+            ok(r.cuerpo_n == 15, "viva-cablarga-cuerpo");
+    }
+    {
         char u[128];
         int i = 0;
         while (base[i] && i < 120) {
@@ -722,9 +998,11 @@ int main(void) {
     prueba_urls();
     prueba_topes();
     prueba_chunked();
+    prueba_cablarga();
     prueba_layout();
     prueba_css();
     prueba_forma();
+    prueba_hubbub();
     for (i = 0; i < 32; i++) ((unsigned char *)&rif)[i] = 0;
     if (u_red_interfaz(&rif) == 0 && rif.presente) {
         for (i = 0; i < 16; i++) ((unsigned char *)&cfg)[i] = 0;

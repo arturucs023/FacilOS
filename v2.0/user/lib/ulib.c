@@ -1660,7 +1660,8 @@ int u_http_pide(const u_http_url_t *u, const char *extra, char *sal,
     return t;
 }
 
-/* Valida "Nombre: valor". 0 ok; -1 malformada. */
+/* Valida "Nombre: valor". 0 ok; 1 valida pero sin sitio para el
+   valor (el llamador la ignora); -1 malformada. */
 static int http_cab_ok(const unsigned char *l, int n, char *nom,
                        char *val, int *es_te) {
     int i, cpos = -1, v0, v1;
@@ -1681,7 +1682,16 @@ static int http_cab_ok(const unsigned char *l, int n, char *nom,
     while (v0 < n && (l[v0] == ' ' || l[v0] == '\t')) v0++;
     v1 = n;
     while (v1 > v0 && (l[v1 - 1] == ' ' || l[v1 - 1] == '\t')) v1--;
-    if (v1 - v0 >= U_HTTP_VAL) return -1;
+    if (v1 - v0 >= U_HTTP_VAL) {
+        /* strcmp-estilo: != 0 = distinto. Solo se ignora si NO es
+           framing; content-length/transfer-encoding largas = error. */
+        if (http_iguales(nom, "content-length") &&
+            http_iguales(nom, "transfer-encoding")) {
+            *es_te = 0;
+            return 1;
+        }
+        return -1;
+    }
     for (i = v0; i < v1; i++) {
         if (l[i] < 32 || l[i] > 126) return -1;
         val[i - v0] = (char)l[i];
@@ -1798,10 +1808,12 @@ static int http_cabeceras(u_http_res_t *r, int fin, int capcuerpo) {
         }
         if (http_hbuf[o] == ' ' || http_hbuf[o] == '\t') return -1;
         if (e2 - o > U_HTTP_MAX_LIN) return -1;
-        if (http_cab_ok(http_hbuf + o, e2 - o, nom, val, &te))
-            return -1;
-        if (te) r->chunked = 1;
-        if (http_cab_guarda(r, nom, val)) return -1;
+        {
+            int ck = http_cab_ok(http_hbuf + o, e2 - o, nom, val, &te);
+            if (ck < 0) return -1;
+            if (te) r->chunked = 1;
+            if (!ck && http_cab_guarda(r, nom, val)) return -1;
+        }
         o = e2 + 2;
     }
     if (r->chunked) {
@@ -3857,33 +3869,31 @@ void u_html_libera(u_html_doc_t *d) {
     d->hay_forma = 0;
 }
 
-int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
-                 const char *base) {
-    html_st_t e;
-    int p = 0;
-    if (!d || !d->texto || !pg || n < 0 || !base) return -1;
-    e.d = d;
-    e.base = base;
-    e.npila = 0;
-    e.nest = 0;
-    e.css = 0;
-    e.css_n = 0;
-    e.nreg = 0;
-    e.en_forma = 0;
-    e.f_acc[0] = 0;
-    e.f_campo[0] = 0;
-    e.f_met = 0;
-    e.f_ok = 0;
-    e.cur = -1;
-    e.curb = -1;
-    e.titulo = 0;
-    e.salto = 0;
-    e.lista = 0;
+/* Inicializa el estado del parser (comun legacy/Hubbub): mismo
+   punto de partida para que ambos rindan igual. */
+static void html_ini(html_st_t *e, u_html_doc_t *d, const char *base) {
+    e->d = d;
+    e->base = base;
+    e->npila = 0;
+    e->nest = 0;
+    e->css = 0;
+    e->css_n = 0;
+    e->nreg = 0;
+    e->en_forma = 0;
+    e->f_acc[0] = 0;
+    e->f_campo[0] = 0;
+    e->f_met = 0;
+    e->f_ok = 0;
+    e->cur = -1;
+    e->curb = -1;
+    e->titulo = 0;
+    e->salto = 0;
+    e->lista = 0;
     {
         int z = 0;
         while (z < 8) {
-            e.ord[z] = 0;
-            e.nnum[z] = 1;
+            e->ord[z] = 0;
+            e->nnum[z] = 1;
             z++;
         }
     }
@@ -3897,6 +3907,14 @@ int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
     d->forma[0] = 0;
     d->campo[0] = 0;
     d->hay_forma = 0;
+}
+
+int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
+                 const char *base) {
+    html_st_t e;
+    int p = 0;
+    if (!d || !d->texto || !pg || n < 0 || !base) return -1;
+    html_ini(&e, d, base);
     if (n <= 0) return 0;
     while (p < n) {
         /* Contenido ignorado (script/style/object). */
@@ -4073,6 +4091,235 @@ int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
     if (d->truncado) return 1;
     return 0;
 }
+
+#if defined(F32_NSHUBBUB)
+#include <stdint.h>
+#include <stddef.h>
+#include <hubbub/parser.h>
+#include <hubbub/types.h>
+
+/* Puente Hubbub -> constructor de bloques (v2.4.3+hubbub).
+   Hubbub tokeniza HTML5 de verdad (entidades, comentarios, doctype,
+   rawtext/CDATA); la construccion de bloques/enlaces/formularios/
+   CSS es la de siempre (html_abre/html_cierra/html_txt_byte), asi
+   que el layout no cambia. Sin DOM intermedio ni GC extra. */
+typedef struct {
+    html_st_t e;
+    hubbub_parser *ps;
+    int salta;   /* id HT_* en salto (script/object/select/textarea), -1 no */
+} hb_t;
+
+static void hb_error(uint32_t ln, uint32_t col, const char *m, void *pw) {
+    (void)ln;
+    (void)col;
+    (void)m;
+    (void)pw;
+}
+
+/* Texto ya decodificado por Hubbub: mismo tratamiento que el legado
+   pero sin re-decodificar entidades. */
+static void hb_texto(html_st_t *e, const uint8_t *s, unsigned long n) {
+    unsigned long p = 0;
+    while (p < n) {
+        unsigned char c = s[p];
+        if (c < 0x80) {
+            if (c == 0) {
+                p++;
+                continue;
+            }
+            if (c == '\r' || c == '\n' || c == '\t')
+                html_txt_byte(e, ' ');
+            else
+                html_txt_byte(e, c);
+            p++;
+        } else {
+            unsigned long q = p + 1;
+            while (q < n && q < p + 4 && (s[q] & 0xC0) == 0x80) q++;
+            {
+                char cvt[8];
+                int cn = html_utf8_copia(s + p, (int)(q - p), cvt, 5);
+                int m = 0;
+                if (!cn) {
+                    html_txt_byte(e, 0xEF);
+                    html_txt_byte(e, 0xBF);
+                    html_txt_byte(e, 0xBF);
+                    p++;
+                } else {
+                    while (m < cn) {
+                        html_txt_byte(e, (unsigned char)cvt[m]);
+                        m++;
+                    }
+                    p = q;
+                }
+            }
+        }
+    }
+}
+
+/* Nombre de etiqueta en minusculas (como el scanner legado). */
+static int hb_nom(char *d, const uint8_t *s, unsigned long n) {
+    unsigned long i = 0;
+    int t = 0;
+    while (i < n && t < 23) {
+        unsigned c = s[i];
+        if (c >= 'A' && c <= 'Z') c += 32;
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) break;
+        d[t++] = (char)c;
+        i++;
+    }
+    d[t] = 0;
+    return t;
+}
+
+/* Copia con escape para re-sintetizar el tag (" & < >). */
+static int hb_esc(char *d, int cap, int t, const uint8_t *s,
+                  unsigned long n) {
+    unsigned long i;
+    for (i = 0; i < n && t < cap; i++) {
+        unsigned char c = s[i];
+        const char *rep = 0;
+        if (c == '&') rep = "&amp;";
+        else if (c == '<') rep = "&lt;";
+        else if (c == '>') rep = "&gt;";
+        else if (c == '"') rep = "&quot;";
+        if (rep) {
+            int k = 0;
+            while (rep[k] && t < cap) d[t++] = rep[k++];
+        } else if (c >= 32 || c == '\t' || c >= 0x80) {
+            d[t++] = (char)c;
+        } else if (t < cap) {
+            d[t++] = ' ';
+        }
+    }
+    return t;
+}
+
+/* Re-sintetiza <nombre a="v"...> para reutilizar html_abre tal cual
+   (incluye style/clase/href/action). Devuelve longitud. */
+static int hb_sint(char *sal, int cap, const char *nom,
+                   const hubbub_attribute *at, uint32_t na) {
+    unsigned i;
+    int t = 0, k;
+    if (t < cap) sal[t++] = '<';
+    for (k = 0; nom[k] && t < cap; k++) sal[t++] = nom[k];
+    for (i = 0; i < na && t < cap - 2; i++) {
+        int k2;
+        sal[t++] = ' ';
+        for (k2 = 0; k2 < 64; k2++) {
+            unsigned char c;
+            if ((unsigned)k2 >= at[i].name.len) break;
+            c = at[i].name.ptr[k2];
+            if (c >= 'A' && c <= 'Z') c += (unsigned char)('a' - 'A');
+            if (t < cap) sal[t++] = (char)c;
+        }
+        if (t + 2 < cap) {
+            sal[t++] = '=';
+            sal[t++] = '"';
+        }
+        t = hb_esc(sal, cap - 1, t, at[i].value.ptr, at[i].value.len);
+        if (t < cap) sal[t++] = '"';
+    }
+    if (t < cap) sal[t++] = '>';
+    if (t < cap)
+        sal[t] = 0;
+    else if (cap > 0)
+        sal[cap - 1] = 0;
+    return t;
+}
+
+static hubbub_error hb_tok(const hubbub_token *tk, void *pw) {
+    hb_t *h = (hb_t *)pw;
+    html_st_t *e = &h->e;
+    char nb[24];
+    int nn, nh = 0, id;
+    hubbub_parser_optparams prm;
+    if (!tk) return HUBBUB_OK;
+    if (tk->type == HUBBUB_TOKEN_DOCTYPE ||
+        tk->type == HUBBUB_TOKEN_COMMENT ||
+        tk->type == HUBBUB_TOKEN_EOF)
+        return HUBBUB_OK;
+    if (tk->type == HUBBUB_TOKEN_CHARACTER) {
+        if (h->salta < 0)
+            hb_texto(e, tk->data.character.ptr, tk->data.character.len);
+        return HUBBUB_OK;
+    }
+    nn = hb_nom(nb, tk->data.tag.name.ptr, tk->data.tag.name.len);
+    id = html_tag_id(nb, nn, &nh);
+    if (tk->type == HUBBUB_TOKEN_END_TAG) {
+        if (h->salta >= 0) {
+            if (id == h->salta) {
+                h->salta = -1;
+                prm.content_model.model = HUBBUB_CONTENT_MODEL_PCDATA;
+                hubbub_parser_setopt(h->ps, HUBBUB_PARSER_CONTENT_MODEL,
+                                     &prm);
+            }
+            return HUBBUB_OK;
+        }
+        html_cierra(e, id, nh);
+        return HUBBUB_OK;
+    }
+    if (h->salta >= 0) return HUBBUB_OK;
+    if (id == HT_SCRIPT || id == HT_OBJECT || id == HT_SELECT ||
+        id == HT_TEXTAREA) {
+        h->salta = id;
+        prm.content_model.model = HUBBUB_CONTENT_MODEL_CDATA;
+        hubbub_parser_setopt(h->ps, HUBBUB_PARSER_CONTENT_MODEL, &prm);
+        return HUBBUB_OK;
+    }
+    if (id == HT_STYLE || id == HT_TITLE) {
+        prm.content_model.model = id == HT_STYLE ?
+            HUBBUB_CONTENT_MODEL_CDATA : HUBBUB_CONTENT_MODEL_RCDATA;
+        hubbub_parser_setopt(h->ps, HUBBUB_PARSER_CONTENT_MODEL, &prm);
+    }
+    {
+        char syn[2048];
+        int sl = hb_sint(syn, (int)sizeof(syn), nb,
+                         tk->data.tag.attributes, tk->data.tag.n_attributes);
+        html_abre(e, id, nh, (const unsigned char *)syn, 0, sl);
+        if (tk->data.tag.self_closing) html_cierra(e, id, nh);
+    }
+    return HUBBUB_OK;
+}
+
+/* Igual contrato que u_html_parse, pero tokenizado con Hubbub
+   (HTML5 real). -1 args, -2 sin memoria/Hubbub (reintentar con
+   u_html_parse), 0/1 como el original (1 = truncado). */
+int u_html_parse_hb(u_html_doc_t *d, const unsigned char *pg, int n,
+                    const char *base) {
+    hb_t h;
+    hubbub_parser *ps = 0;
+    hubbub_parser_optparams prm;
+    hubbub_error r;
+    if (!d || !d->texto || !pg || n < 0 || !base) return -1;
+    html_ini(&h.e, d, base);
+    if (n <= 0) return 0;
+    h.ps = 0;
+    h.salta = -1;
+    r = hubbub_parser_create(0, 0, &ps);
+    if (r != HUBBUB_OK || !ps) return -2;
+    h.ps = ps;
+    prm.token_handler.handler = hb_tok;
+    prm.token_handler.pw = &h;
+    r = hubbub_parser_setopt(ps, HUBBUB_PARSER_TOKEN_HANDLER, &prm);
+    if (r == HUBBUB_OK) {
+        prm.error_handler.handler = hb_error;
+        prm.error_handler.pw = &h;
+        r = hubbub_parser_setopt(ps, HUBBUB_PARSER_ERROR_HANDLER, &prm);
+    }
+    if (r == HUBBUB_OK)
+        r = hubbub_parser_parse_chunk(ps, pg, (unsigned)n);
+    if (r == HUBBUB_OK)
+        r = hubbub_parser_completed(ps);
+    hubbub_parser_destroy(ps);
+    h.ps = 0;
+    if (r != HUBBUB_OK) {
+        d->truncado = 1;
+        return -2;
+    }
+    html_bloque_cierra(&h.e);
+    return d->truncado ? 1 : 0;
+}
+#endif
 
 static int html_ancho(const u_html_doc_t *d, int ini, int len) {
     int i = 0, c = 0;

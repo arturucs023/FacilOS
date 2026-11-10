@@ -4,3 +4,8 @@ build/logs/
 build/images/
 build/programs/
 __pycache__/
+# Tarballs vendoreados: se descargan de https://download.netsurf-browser.org/libs/releases/
+# (ver v2.0/thirdparty/netsurf/NOTAS-v2.4.2.md); no van a git.
+*.tgz
+# Cache local del orquestador ftest (hash ISO): no va a git.
+v2.0/build/.ftest_state.json

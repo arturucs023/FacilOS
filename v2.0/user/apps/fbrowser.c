@@ -309,7 +309,14 @@ static void navegar(const char *entrada, int empujar) {
             pon_estado("sin memoria para el documento");
             return;
         }
-        pr = u_html_parse(&nd, cuerpo, tam_cpo, u);
+        pr = 0;
+#ifdef F32_NSHUBBUB
+        /* v2.4.3+hubbub: tokenizador HTML5 real; si falla (-2),
+           se reintenta con el legado (misma salida esperada). */
+        pr = u_html_parse_hb(&nd, cuerpo, tam_cpo, u);
+#endif
+        if (pr < 0)
+            pr = u_html_parse(&nd, cuerpo, tam_cpo, u);
         if (pr < 0) {
             u_html_libera(&nd);
             pon_estado("documento ilegible");
