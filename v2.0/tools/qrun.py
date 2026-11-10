@@ -75,6 +75,7 @@ MP = {"\n": "ret", " ": "0x39", "_": "shift-minus", "-": "minus",
       ")": "shift-0", "(": "shift-9", "!": "shift-1", "?": "shift-slash"}
 MP.update({c: f"shift-{c.lower()}" for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZÑ"})
 _ultima = [""]
+_wcursor = [0]   # cursor de sesion para {WAIT} (ver arriba)
 def key(k):
     # Hold explicito de 20 ms: sin el, QEMU mantiene la tecla 100 ms y al
     # enviar la siguiente (gap de 90 ms) las pulsaciones se solapan y el
@@ -120,17 +121,30 @@ for c in CMDS:
         time.sleep(float(c[7:-1])); continue
     if c.startswith("{WAIT:"):
         # {WAIT:texto,seg} = espera event-driven (ahorra sleeps fijos).
+        # Cursor de sesion: solo vale lo posterior a la ultima
+        # coincidencia (asi un "retorno:" anterior no cuela y un
+        # prompt ya presente casa al instante). Sin esto, o se
+        # pierde tiempo o no se detectan cuelgues.
         interior = c[6:-1]
         txt, _, to = interior.partition(",")
         to = float(to) if to else 60.0
         t0 = time.time()
+        ok = False
         while time.time() - t0 < to:
             try:
-                if txt in ser.read_bytes().decode(errors="ignore"):
+                nuevo = ser.read_bytes()[_wcursor[0]:].decode(
+                    errors="ignore")
+                i = nuevo.find(txt)
+                if i >= 0:
+                    _wcursor[0] += i + len(txt)
+                    ok = True
                     break
             except Exception:
                 pass
             time.sleep(0.5)
+        print("WAIT-%s %s %.0fs @%d" % ("OK" if ok else "TO", txt,
+                                    time.time() - t0, _wcursor[0]),
+              flush=True)
         continue
     crudo = c.endswith("~")
     if crudo:
