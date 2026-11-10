@@ -117,7 +117,7 @@ wsec(20, rd)
 # logicos [0..fin): 0 = arranque (sector 1), 1..224 = nucleo,
 # 225 = catalogo F32C (4 sect), 229.. = datos (ver cdcat_build).
 # El tamano final lo dicta el contenido (10/50/100 MB posibles).
-KERN_SECS = 240          # sectores logicos de nucleo (F8: margen EDD; era 224)
+KERN_SECS = 256          # sectores logicos de nucleo (v2.4-USB: era 240)
 img = bytearray(225 * 512)
 CAT_LBA = KERN_SECS + 1  # = 225 (0 = arranque, 1.. = nucleo)
 # v1.9: el catalogo ocupa 4 sectores (2048 B) para que quepan 32 programas

@@ -130,9 +130,9 @@ inicio:
     mov [p_off], ax
     inc ax
     mov [p_lba], ax
-    mov ax, 240                     ; nucleo hasta 240 sectores logicos
-                                        ; (F8: debe coincidir con KERN_SECS de
-                                        ; build32.py; el assert kb<=240*512 lo
+    mov ax, 256                     ; nucleo hasta 256 sectores logicos
+                                        ; (v2.4-USB: era 240; debe coincidir con KERN_SECS de
+                                        ; build32.py; el assert kb<=256*512 lo
                                         ; garantiza; si crece, subir ambos)
     mov [p_cnt], ax
     call leer

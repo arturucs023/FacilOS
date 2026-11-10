@@ -2,7 +2,6 @@
 #include "irq.h"
 #include "cpu.h"
 #include "libc.h"
-#include "libc.h"
 
 /* v2.2: distribuciones ES/CA con teclas muertas y AltGr. El driver
  * emite puntos de codigo Unicode (el pipeline int los transporta) o
