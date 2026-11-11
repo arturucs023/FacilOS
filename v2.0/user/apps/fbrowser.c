@@ -334,6 +334,24 @@ static void navegar(const char *entrada, int empujar) {
         hist_empuja(u);
     desplaza = 0;
     enl_foco = -1;
+    {
+        /* Traza para el harness de navegacion (serial QEMU):
+           permite esperar la pagina sin sleeps a ciegas. */
+        char tg[U_HTML_URL + 9];
+        int q = 0;
+        const char *pre = "fbrowser: ";
+        while (pre[q] && q < 500) {
+            tg[q] = pre[q];
+            q++;
+        }
+        {
+            int j = 0;
+            while (u[j] && q < 500) tg[q++] = u[j++];
+        }
+        tg[q++] = '\n';
+        tg[q] = 0;
+        u_print(tg);
+    }
     if (redir)
         pon_estado("listo (redirigido)");
     else if (codigo >= 400)
