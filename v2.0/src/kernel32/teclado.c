@@ -48,15 +48,19 @@ static const tecla_t comunes[] = {
     {0x0D,0,'+','*',0}, {0x33,0,',',';',0}, {0x34,0,'.',':',0},
     {0x35,0,'/','_',0}, {0x39,0,' ',' ',0}, {0,0,0,0}
 };
-/* ES: 0x1A tumba/circunflejo, 0x28 agudo/dieresis, 0x1B ¡/¿, 0x2B +/*. */
+/* ES: 0x1A tumba/circunflejo, 0x28 agudo/dieresis, 0x1B ¡/¿, 0x2B +/*.
+   0x56 tecla ISO "<>|" (entre Mayus-izq y Z; sin ella no se puede
+   escribir < ni > con distribucion ES). */
 static const tecla_t es_ext[] = {
     {0x1A,0,M_GR,M_CI,0}, {0x1B,0,0xA1,0xBF,0}, {0x28,0,M_AG,M_DI,0},
-    {0x2B,0,'+','*',0}, {0x27,0,0xF1,0xD1,0}, {0,0,0,0}
+    {0x2B,0,'+','*',0}, {0x27,0,0xF1,0xD1,0}, {0x56,0,'<','>',0},
+    {0,0,0,0}
 };
 /* CA: c cedilla directa; agudas en 0x1A, graves en 0x28. */
 static const tecla_t ca_ext[] = {
     {0x1A,0,M_AG,M_DI,0}, {0x1B,0,0xA1,0xBF,0}, {0x28,0,M_GR,M_CI,0},
-    {0x2B,0,'+','*',0}, {0x27,0,0xE7,0xC7,0}, {0,0,0,0}
+    {0x2B,0,'+','*',0}, {0x27,0,0xE7,0xC7,0}, {0x56,0,'<','>',0},
+    {0,0,0,0}
 };
 /* US: sin enie (compat v1.x). */
 static const tecla_t us_ext[] = {
@@ -232,6 +236,7 @@ static const uint8_t hid_a_scan[128] = {
     [0x2C] = 0x39, [0x2D] = 0x0C, [0x2E] = 0x0D, [0x2F] = 0x1A,
     [0x30] = 0x1B, [0x31] = 0x2B, [0x33] = 0x27, [0x34] = 0x28,
     [0x35] = 0x29, [0x36] = 0x33, [0x37] = 0x34, [0x38] = 0x35,
+    [0x64] = 0x56,   /* HID Non-US "\|" -> tecla ISO "<>|" */
 };
 
 void proc_despierta_tecla(void);

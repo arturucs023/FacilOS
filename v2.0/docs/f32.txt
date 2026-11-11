@@ -1,0 +1,123 @@
+F32 Lang v0.2 (FacilOS v2.4.3, rama v2.4.3)
+===========================================
+
+0. Compatibilidad
+----------------
+v0.2 conserva la sintaxis 0.1: `programa` ... `fin`, cuerpo
+indentado con 4 espacios por nivel, `variable x = valor` con
+inicializador obligatorio, `escribir`, `leer`, `si`/`sinosi`/
+`sino`/`finsi`, `mientras`/`finmientras`, `funcion`/`finfuncion`,
+`retornar`, `y`/`o`/`no`, `verdadero`/`falso`.
+Errores con formato `Error F32-0xx en ARCHIVO linea N`.
+
+1. Modulos (`importar`)
+-----------------------
+`importar a` carga `/a.f32`.
+`importar a.b` carga `/a/b.f32` (ruta relativa al fichero que importa).
+Solo a nivel de programa (nivel 0). Prohibido en bloques y funciones.
+Sin `..` ni componentes vacios (Error 88).
+No encontrado (86), circular (87).
+Cada modulo se ejecuta una vez (aunque se importe varias veces).
+Llamadas cualificadas: `mod.func()`. Variables: `mod.var`.
+Las variables de un modulo no se ven sin cualificar.
+Dos modulos pueden repetir el mismo nombre de funcion.
+Las funciones del programa sombrean a las de modulos solo si se
+llaman sin cualificar; `m1.doble()` siempre va al modulo.
+
+Ejemplo:
+  programa
+  importar m1
+      escribir m1.doble(21)
+  fin
+
+2. Archivos (builtins con parentesis)
+-------------------------------------
+`abrir(ruta, modo)` -> descriptor INT.
+  modo: "lectura" | "escritura" | "anadir". Otro => 104.
+  No existe / no se puede abrir => 100.
+`leer_linea(h)` -> STR (sin `\n`; EOF => "").
+`escribir_linea(h, texto)` -> INT 0.
+`cerrar(h)` -> INT 0. Doble cierre o descriptor malo => 103.
+`existe(ruta)` -> BOL.
+Demasiados abiertos (8) => 105.
+Fallo de lectura => 101, de escritura => 102.
+Tipos malos => 43 (incompatibles).
+
+3. Arreglos
+-----------
+Literal: `[1, 2, 3]`, `[]` (vacio).
+Acceso: `a[i]` (0-based, solo lectura en expresion).
+Asignacion: `a[i] = v`.
+`longitud(a)` -> numero de elementos.
+Impresion: `[1, 99, 3]`.
+Fuera de rango => 120. Base no arreglo en `a[i]=v` => 121.
+
+4. `para`
+---------
+  para i desde A hasta B
+      ...
+  finpara
+  para i desde A hasta B paso S
+      ...
+  finpara
+A, B, S enteros. Sin paso: +1 si A<=B, -1 si no.
+La variable se crea para el bucle y sombrea temporalmente
+cualquier variable exterior del mismo nombre; al terminar se
+restaura. Si el cuerpo modifica la variable, el siguiente valor
+es `modificado + paso`.
+
+5. Cadenas (0.2)
+----------------
+`+` concatena STR+STR (limite 512 B => 51).
+Comparacion lexicografica por bytes: `< <= > >=` con STR.
+`==`/`!=` por contenido.
+`a[i]` -> caracter i como STR de 1. Fuera de rango => 120.
+`longitud(s)` -> caracteres.
+`buscar(texto, sub)` -> indice o -1 ("" => 0).
+`subcadena(texto, ini [, n])` -> porcion; fuera de rango => "".
+
+6. Registros
+------------
+Literal: `[nombre: "ana", edad: 30]`.
+Acceso: `r.nombre` o `r["nombre"]`.
+Asignacion: `r.nombre = v`.
+`longitud(r)` -> numero de campos.
+Impresion: `[nombre: ana, edad: 30]`.
+Campo inexistente => 122. Acceso con punto sobre no-registro
+=> 121.
+
+7. Errores nuevos
+-----------------
+86 modulo no encontrado, 87 dependencia circular,
+88 ruta de modulo invalida,
+100 no se pudo abrir el archivo, 101 fallo al leer,
+102 fallo al escribir, 103 descriptor invalido,
+104 modo invalido, 105 demasiados archivos abiertos,
+120 indice fuera de rango, 121 no se puede asignar ahi,
+122 campo inexistente.
+51 cadena supera 512 B, 52 reservado (0.1 prohibia orden con
+cadenas; 0.2 lo permite como lexicografico).
+
+8. Limites
+----------
+Arreglo <= 256 elementos, registro <= 32 campos,
+modulos <= 16, pila de carga <= 8, llamadas <= 64,
+iteraciones por bucle <= 100000, linea <= 32768 B fuente,
+tokens <= 8192, nodos <= 4096.
+Sin libc/host: solo API nativa FacilOS (u_fopen/u_fread/
+u_fwrite/u_fclose, u_malloc/u_free, arena interna).
+ABI y mapa de memoria sin cambios.
+
+9. Editor
+---------
+`.f32`: autoindent +4 tras `programa/si/sinosi/sino/mientras/
+funcion/para`, realinea `finsi/finmientras/finfuncion/finpara/
+fin/sinosi/sino`. Color manual con `col`; sin resaltado
+automatico (sin rediseno).
+
+10. Pruebas
+----------
+`t_f32`: bateria en QEMU (base + texto + modulos + archivos +
+estructuras). Cada prueba escribe su `.f32` temporal, corre
+`f32_corre` y compara `/f32sal.tmp` y codigo de retorno.
+FULL incluye `t_f32`.

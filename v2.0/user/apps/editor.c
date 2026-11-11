@@ -2634,13 +2634,15 @@ static int es_apertura_f32(doc_t *d, int ini, int fin) {
            linea_es(d, ini, fin, "sinosi") ||
            linea_es(d, ini, fin, "sino") ||
            emp_o_igual(d, ini, fin, "mientras") ||
-           emp_o_igual(d, ini, fin, "funcion");
+           emp_o_igual(d, ini, fin, "funcion") ||
+           emp_o_igual(d, ini, fin, "para");
 }
 
 static int es_cierre_f32(doc_t *d, int ini, int fin) {
     return linea_es(d, ini, fin, "finsi") ||
            linea_es(d, ini, fin, "finmientras") ||
            linea_es(d, ini, fin, "finfuncion") ||
+           linea_es(d, ini, fin, "finpara") ||
            linea_es(d, ini, fin, "fin") ||
            linea_es(d, ini, fin, "sinosi") ||
            linea_es(d, ini, fin, "sino");

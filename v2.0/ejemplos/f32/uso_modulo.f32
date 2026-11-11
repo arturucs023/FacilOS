@@ -1,0 +1,5 @@
+programa
+importar m1
+    escribir m1.doble(21)
+    escribir m1.base
+fin

@@ -419,6 +419,7 @@ _apps3 = [
     ("cppdemo", ["cppdemo.cpp"], True),
     ("t_cpp", ["t_cpp.cpp"], True),
     ("t_tls", ["t_tls.c"], True, False, True),
+    ("t_f32", ["t_f32.c"], True),
     # Hito TLS: cliente HTTPS de prueba (BearSSL + confianzas de test).
     ("https", ["https.c"], True, False, True),
 ]

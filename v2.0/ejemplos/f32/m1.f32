@@ -1,0 +1,6 @@
+programa
+funcion doble(n)
+    retornar n * 2
+finfuncion
+    variable base = 100
+fin
