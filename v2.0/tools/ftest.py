@@ -29,7 +29,7 @@ ROOT = BASE.parent                             # raiz del repo
 TOOLS = BASE / "tools"
 STATE = BASE / "build" / ".ftest_state.json"
 LOGS = BASE / "build" / "logs"
-FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns"]
+FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns", "t_fetch"]
 TIMEOUT = {"t_fb": 150.0, "t_red": 150.0}
 DFLT_TO = 60.0
 # fichero -> patron de tests afectados ("*" = todos). Lo no listado
@@ -55,6 +55,10 @@ IMPACTO = [
     ("v2.0/user/apps/t_f32.c", "t_f32"),
     ("v2.0/user/apps/f32.c", "*"),
     ("v2.0/user/apps/t_ns.c", "t_ns"),
+    ("v2.0/user/apps/t_fetch.c", "t_fetch"),
+    ("v2.0/user/lib/nsfetch.h", "t_fetch"),
+    ("v2.0/user/lib/nsfetch.c", "t_fetch"),
+    ("v2.0/tools/tls_stub.py", "t_fetch"),
     ("v2.0/user/lib/nsshim.c", "t_ns"),
     ("v2.0/user/lib/nslibc/*", "t_ns"),
     ("v2.0/thirdparty/netsurf/*", "t_ns"),
@@ -217,15 +221,21 @@ def compila_fast(ficheros):
     return res
 
 
-def arranca_qemu(iso, ser, port, cmds, timeout_total, stub=False):
+def arranca_qemu(iso, ser, port, cmds, timeout_total, stub=False,
+                 stub_tls=False):
     """Un arranque, N comandos. Devuelve texto del serial."""
     env = dict(os.environ)
     env["QRUN_RED"] = "1"
     env["QRUN_USB"] = "1"
     st = None
+    st_tls = None
     if stub:
         st = subprocess.Popen(
             [sys.executable, str(TOOLS / "http_stub.py"), "18080"])
+        time.sleep(2)
+    if stub_tls:
+        st_tls = subprocess.Popen(
+            [sys.executable, str(TOOLS / "tls_stub.py"), "18443"])
         time.sleep(2)
     try:
         # mata restos de sesiones anteriores (harness conocido)
@@ -249,6 +259,8 @@ def arranca_qemu(iso, ser, port, cmds, timeout_total, stub=False):
     finally:
         if st:
             st.terminate()
+        if st_tls:
+            st_tls.terminate()
 
 
 def veredictos(ser):
@@ -369,7 +381,8 @@ def main():
         cmds += ["ejecutar " + t, "{WAIT:retorno:,%d}" % to]
     total_to = sum(int(TIMEOUT.get(t, DFLT_TO)) for t in tests) + 180
     qout, infra = arranca_qemu(iso, ser, port, cmds, total_to,
-                               stub=(a.stub or "t_fb" in tests))
+                               stub=(a.stub or "t_fb" in tests),
+                               stub_tls=("t_fetch" in tests))
     lineas.append("- QEMU arranque+ejecucion: %.0fs" % (time.time() - t_qemu0))
     for wl in qout.splitlines():
         if wl.startswith("WAIT-"):

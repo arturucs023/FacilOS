@@ -324,6 +324,15 @@ if BRHAVE:
             ["-I", str(LIB), "-I", str(APPS), "-w",
              "-c", str(BRBASE / "src" / _bc), "-o", _o])
         BROBJS.append(_o)
+# nsfetch (Hito 2 NetSurf): fetch HTTP/HTTPS sobre u_http + BearSSL.
+# Se compila con BRINCS y se enlaza con con_br (t_fetch, https).
+NSFETCH = ""
+if NSHAVE and BRHAVE:
+    NSFETCH = str(BLD / "nsfetch.o")
+    run([GCC] + PROGFLAGS + ["-I", str(LIB / "nslibc"), "-I", str(LIB),
+         "-I", str(APPS)] + BRINCS +
+         ["-DWITHOUT_ICONV_FILTER", "-DNDEBUG", "-w",
+          "-c", str(LIB / "nsfetch.c"), "-o", NSFETCH])
 
 _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
 
@@ -373,6 +382,8 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
         if con_br:
             objs += BROBJS
             objs.append(NSHIM)
+            if NSFETCH:
+                objs.append(NSFETCH)
         _link = [CC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
                  "-Wl,-e,_start", "-Wl,--gc-sections",
                  "-T", str(LD / "prog.ld"),
@@ -499,6 +510,8 @@ _apps3 = [
     ("https", ["https.c"], True, False, True),
     # Hito 1 NetSurf: KAT de libs (dom, css, bmp/gif, log, utils, psl).
     ("t_ns", ["t_ns.c"], True),
+    # Hito 2 NetSurf: KAT del fetch HTTP/HTTPS sobre stubs locales.
+    ("t_fetch", ["t_fetch.c"], True, False, True),
 ]
 for _nom, _fs, _u, *_g in _apps3:
     # v2.4.3: fbrowser/http con cuerpo estatico de 256K (chunked +
@@ -522,6 +535,8 @@ for _nom, _fs, _u, *_g in _apps3:
     if _nom == "t_ns":
         _tope = 770048
         _ns1 = True
+    if _nom == "t_fetch":
+        _tope = 524288
     haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK,
                  con_ugfx=bool(_g and _g[0]), tope=_tope, con_ns=_ns,
                  con_ns1=_ns1, con_br=_br)
