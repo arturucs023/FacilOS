@@ -1,0 +1,5 @@
+programa
+importar modulo_m1
+    escribir modulo_m1.doble(21)
+    escribir modulo_m1.base
+fin

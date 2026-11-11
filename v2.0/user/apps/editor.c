@@ -768,6 +768,9 @@ static int carga_f32r(doc_t *d, const char *ruta) {
     return 0;
 }
 
+static int es_f32ruta(const char *r);
+static void f32_plantilla(doc_t *d);
+
 static int doc_carga(doc_t *d, const char *ruta) {
     int r = carga_f32r(d, ruta);
     int i;
@@ -809,6 +812,7 @@ static int doc_carga(doc_t *d, const char *ruta) {
         d->es_f32r = 0;
         d->sucio = 1;
         d->cur = d->anc = 0;
+        if (!d->len && es_f32ruta(ruta)) f32_plantilla(d);
         return -2;   /* corrupto pero texto recuperado */
     }
     /* texto normal */
@@ -842,6 +846,7 @@ static int doc_carga(doc_t *d, const char *ruta) {
         d->cur = d->anc = 0;
         d->slin = d->scol = 0;
         d->u_n = d->r_n = 0;
+        if (!d->len && es_f32ruta(ruta)) f32_plantilla(d);
         return tot >= MAXTXT ? 1 : 0;   /* 1 = truncado */
     }
 }
@@ -2530,6 +2535,9 @@ static void hace_abrir(void) {
     }
 }
 
+static int es_f32ruta(const char *r);
+static void f32_plantilla(doc_t *d);
+
 static void hace_guardar_como(void) {
     doc_t *d = DA();
     char ruta[NNOM];
@@ -2577,6 +2585,8 @@ static void hace_guardar_como(void) {
             (void)distinto;
         }
     }
+    /* Nuevo .f32 vacio: plantilla programa/fin antes de guardar. */
+    if (!d->len && es_f32ruta(ruta)) f32_plantilla(d);
     if (doc_guarda(d, ruta)) {
         if (msg[0]) {
             u_strcpy(dlg_msg, msg);
@@ -2602,6 +2612,19 @@ static int es_f32ruta(const char *r) {
     if (r[l - 1] != '2') return 0;
     (void)i;
     return 1;
+}
+
+/* Plantilla para .f32 nuevos: programa/fin con el cursor en medio.
+   Solo si el documento esta vacio; no toca undo. */
+static void f32_plantilla(doc_t *d) {
+    const char *tpl = "programa\n    \nfin\n";
+    int n = 0;
+    if (!d || d->len) return;
+    while (tpl[n]) n++;
+    if (doc_ins(d, 0, tpl, 0, 0, n, 0)) return;
+    d->cur = d->anc = 13;   /* tras "programa\n    " */
+    d->slin = d->scol = 0;
+    d->sucio = 1;
 }
 
 /* 1 si [ini,fin) recortado es exactamente la palabra w */
@@ -3253,6 +3276,7 @@ int main(void) {
                     q++;
                 }
                 d->ruta[q] = 0;
+                if (es_f32ruta(ruta)) f32_plantilla(d);
                 pon_msg("nuevo archivo");
             } else if (r == -2) {
                 u_strcpy(dlg_msg, "f32r roto: texto recuperado");
@@ -3355,7 +3379,11 @@ int main(void) {
             } else if (dlg == 4) {
                 if (k == 's' || k == 'S' || k == 13) {
                     doc_t *dd = DA();
-                    if (dd) doc_guarda(dd, dlg_ruta);
+                    if (dd) {
+                        if (!dd->len && es_f32ruta(dlg_ruta))
+                            f32_plantilla(dd);
+                        doc_guarda(dd, dlg_ruta);
+                    }
                     dlg = 0;
                 } else if (k == 27 || k == 'n' || k == 'N') {
                     dlg = 0;

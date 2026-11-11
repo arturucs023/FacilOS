@@ -1,0 +1,14 @@
+programa
+    variable a = [1, 2, 3]
+    a[1] = 99
+    escribir a
+    variable s = 0
+    para i desde 1 hasta 4
+        s = s + i
+    finpara
+    escribir s
+    variable r = [nombre: "ana", edad: 30]
+    escribir r.nombre
+    escribir buscar("hola mundo", "mundo")
+    escribir subcadena("hola", 1, 2)
+fin

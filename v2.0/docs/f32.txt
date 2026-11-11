@@ -1,6 +1,11 @@
 F32 Lang v0.2 (FacilOS v2.4.3, rama v2.4.3)
 ===========================================
 
+Documentacion completa y ejemplos en GitHub:
+docs/f32-lang/especificacion-v0.2.md, modulos.md, archivos.md,
+estructuras.md, errores-v0.2.md, ejemplos/ (esta nota es un
+resumen para la ISO).
+
 0. Compatibilidad
 ----------------
 v0.2 conserva la sintaxis 0.1: `programa` ... `fin`, cuerpo
