@@ -226,6 +226,23 @@ static void prueba_urls(void) {
     ok(u_html_resuelve_url("", "rel", sal) != 0,
         "url-sin-base-rel-no");
     ok(u_html_resuelve_url(0, "/x", sal) == -1, "url-args-nul");
+    {
+        /* Esquema https (hito TLS): puerto 443 por defecto. */
+        u_http_url_t uh;
+        ok(u_http_url("https://a/x", &uh) == 0 && uh.esquema == 1 &&
+           uh.puerto == 443 && !u_strcmp(uh.host, "a") &&
+           !u_strcmp(uh.ruta, "/x"), "url-https");
+        ok(u_http_url("https://a:8443/r?q", &uh) == 0 &&
+           uh.esquema == 1 && uh.puerto == 8443 &&
+           !u_strcmp(uh.ruta, "/r?q"), "url-https-puerto");
+        ok(u_http_url("HTTPS://A/X", &uh) == 0 && uh.esquema == 1 &&
+           !u_strcmp(uh.host, "a"), "url-https-mayus");
+        ok(u_http_url("http://a/", &uh) == 0 && uh.esquema == 0 &&
+           uh.puerto == 80, "url-http-sigue");
+        ok(u_http_url("https://", &uh) != 0, "url-https-corta-no");
+        ok(u_http_url("https:/x", &uh) != 0, "url-https-mala-no");
+        ok(u_http_url("http://a:0/", &uh) != 0, "url-puerto-cero-no");
+    }
 }
 
 static void prueba_topes(void) {

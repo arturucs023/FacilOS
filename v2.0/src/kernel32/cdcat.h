@@ -18,8 +18,10 @@
 /* v2.0-etapa5: 48 entradas (2048 B: 12 + 48x32 = 1548). El constructor
    reserva 4 sectores; con 32 se quedaban fuera menu/calculadora/reloj
    al crecer la lista a 37 programas. CD_CAT_ENT es el tamano de
-   entrada (32 B, formato fijo); CD_CAT_MAX el conteo. */
-#define CD_CAT_MAX 48
+   entrada (32 B, formato fijo); CD_CAT_MAX el conteo.
+   Hito TLS: 63 entradas (12 + 63x32 = 2028 <= 2048, sin cambiar el
+   formato ni los sectores). */
+#define CD_CAT_MAX 63
 #define CD_CAT_ENT 32
 #define CD_CAT_NOM 15
 

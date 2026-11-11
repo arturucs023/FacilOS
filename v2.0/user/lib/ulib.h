@@ -407,7 +407,8 @@ typedef struct {
 } u_http_res_t;
 typedef struct {
     char host[256];            /* minusculas, sin punto final */
-    unsigned short puerto;     /* 1..65535, 80 por defecto */
+    unsigned short puerto;     /* 1..65535, 80/443 por defecto */
+    int esquema;               /* 0 http, 1 https (TLS) */
     char ruta[256];            /* empieza por '/', con ?consulta */
     unsigned int ip;           /* si es IPv4 literal */
     int es_ip;                 /* 1 si host era IPv4 literal */

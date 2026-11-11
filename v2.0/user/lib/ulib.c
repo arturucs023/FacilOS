@@ -1506,14 +1506,33 @@ int u_http_url(const char *url, u_http_url_t *u) {
     }
     if (i < 7) return -2;
     {
+        /* http:// (7) o https:// (8, esquema=1). */
         const char *esq = "http://";
-        for (k = 0; k < 7; k++) {
-            char a = url[k];
-            if (a >= 'A' && a <= 'Z') a += 32;
-            if (a != esq[k]) return -2;
+        u->esquema = 0;
+        if (i >= 8) {
+            int htp = 1, j;
+            const char *esqs = "https://";
+            for (j = 0; j < 8; j++) {
+                char a = url[j];
+                if (a >= 'A' && a <= 'Z') a += 32;
+                if (a != esqs[j]) {
+                    htp = 0;
+                    break;
+                }
+            }
+            if (htp) {
+                u->esquema = 1;
+            }
+        }
+        if (!u->esquema) {
+            for (k = 0; k < 7; k++) {
+                char a = url[k];
+                if (a >= 'A' && a <= 'Z') a += 32;
+                if (a != esq[k]) return -2;
+            }
         }
     }
-    i = 7;
+    i = u->esquema ? 8 : 7;
     while (url[i] && url[i] != '/' && url[i] != ':') {
         if (!http_es_host(url[i])) return -3;
         if (h + 1 >= (int)sizeof(u->host)) return -5;
@@ -1541,7 +1560,7 @@ int u_http_url(const char *url, u_http_url_t *u) {
         if (http_ip(u->host, &u->ip)) return -3;
         u->es_ip = 1;
     }
-    u->puerto = 80;
+    u->puerto = u->esquema ? 443 : 80;
     if (url[i] == ':') {
         unsigned int po = 0;
         int nd = 0;

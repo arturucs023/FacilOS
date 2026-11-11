@@ -71,7 +71,36 @@ int toupper(int c) {
     return (c >= 'a' && c <= 'z') ? c - ('a' - 'A') : c;
 }
 
-/* ---- busqueda binaria (aliases) ---- */
+/* ---- busqueda binaria (aliases) y reloj (time() para BearSSL) ---- */
+long long time(long long *t) {
+    unsigned int v6[6];
+    long y, m, d, hh, mi, ss, era, yoe, doy, doe, days;
+    long long secs;
+    if (u_reloj(v6)) return -1;
+    y = (long)v6[0];
+    m = (long)v6[1];
+    d = (long)v6[2];
+    hh = (long)v6[3];
+    mi = (long)v6[4];
+    ss = (long)v6[5];
+    /* El CMOS da el ano con 2 digitos (ver sc_44): 2000-2099. */
+    if (y < 100) y += 2000;
+    if (y < 1970 || y > 2105 || m < 1 || m > 12 || d < 1 || d > 31 ||
+        hh < 0 || hh > 23 || mi < 0 || mi > 59 || ss < 0 || ss > 60)
+        return -1;
+    /* days_from_civil (Hinnant), todo 32 bits con signo. */
+    y -= m <= 2;
+    era = (y >= 0 ? y : y - 399) / 400;
+    yoe = y - era * 400;
+    doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    days = era * 146097 + doe - 719468;
+    secs = (long long)days * 86400LL + (long long)hh * 3600LL +
+           (long long)mi * 60LL + (long long)ss;
+    if (t) *t = secs;
+    return secs;
+}
+
 void *bsearch(const void *key, const void *base, unsigned n,
               unsigned tam,
               int (*cmp)(const void *, const void *)) {

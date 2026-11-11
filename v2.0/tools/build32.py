@@ -208,6 +208,7 @@ run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS), "-c",
      str(LIB / "ulog.c"), "-o", str(BLD / "ulog.o")])
 import struct as _st
 NSOBJS = []
+NSHIM = str(BLD / "nsshim.o")
 if NSHAVE:
     for _nl in NSLIBS:
         for _c in sorted((NSBASE / _nl / "src").rglob("*.c")):
@@ -220,15 +221,58 @@ if NSHAVE:
             NSOBJS.append(_o)
     run([GCC] + PROGFLAGS + ["-I", str(LIB / "nslibc"), "-I", str(LIB),
          "-I", str(APPS), "-c",
-         str(LIB / "nsshim.c"), "-o", str(BLD / "nsshim.o")])
-    NSOBJS.append(str(BLD / "nsshim.o"))
+         str(LIB / "nsshim.c"), "-o", NSHIM])
+    NSOBJS.append(NSHIM)
+# BearSSL 0.6 (hito TLS): cliente TLS 1.2 minimo (ECDHE + AES-GCM/
+# ChaCha20, RSA/ECDSA, x509-minimal). Sin UNIX/Win32 (los relojes y
+# RNG los aporta el programa sobre u_*). Enlazado estatico.
+BRBASE = BASE / "thirdparty" / "bearssl-0.6"
+BRHAVE = (BRBASE / "inc" / "bearssl.h").is_file()
+BRDEF = ["-DBR_USE_WIN32_TIME=0", "-DBR_USE_WIN32_RAND=0",
+         "-DBR_USE_UNIX_TIME=0", "-DBR_USE_URANDOM=0",
+         "-DBR_RDRAND=0", "-DNDEBUG"] if BRHAVE else []
+BRINCS = (["-I", str(BRBASE / "inc"), "-I", str(BRBASE / "src"),
+           "-I", str(LIB / "nslibc")] if BRHAVE else [])
+BRFILES = """ssl/ssl_client.c ssl/ssl_hs_client.c ssl/ssl_engine.c
+ssl/ssl_hashes.c ssl/ssl_io.c ssl/ssl_rec_gcm.c ssl/ssl_rec_chapol.c
+ssl/prf_sha256.c ssl/prf.c x509/x509_minimal.c codec/dec16be.c
+codec/dec32be.c codec/dec64be.c codec/enc16be.c codec/enc32be.c
+codec/enc64be.c codec/ccopy.c
+hash/multihash.c hash/dig_oid.c hash/md5.c hash/md5sha1.c hash/sha1.c
+hash/sha2big.c hash/sha2small.c hash/ghash_ctmul32.c mac/hmac.c
+mac/hmac_ct.c
+rand/hmac_drbg.c rand/sysrng.c rsa/rsa_i31_pub.c rsa/rsa_i31_pkcs1_vrfy.c
+rsa/rsa_pkcs1_sig_unpad.c rsa/rsa_i31_modulus.c ec/ec_prime_i31.c
+ec/ec_secp256r1.c ec/ec_secp384r1.c ec/ec_secp521r1.c ec/ec_pubkey.c
+ec/ec_keygen.c ec/ecdsa_i31_vrfy_asn1.c ec/ecdsa_i31_vrfy_raw.c
+ec/ecdsa_atr.c ec/ecdsa_i31_bits.c symcipher/aes_ct.c
+symcipher/aes_ct_ctr.c symcipher/aes_ct_enc.c symcipher/aes_common.c
+symcipher/chacha20_ct.c symcipher/poly1305_ctmul32.c aead/gcm.c
+int/i31_add.c int/i31_bitlen.c int/i31_decmod.c int/i31_decode.c
+int/i31_decred.c int/i31_encode.c int/i31_fmont.c int/i31_iszero.c
+int/i31_moddiv.c int/i31_modpow.c int/i31_modpow2.c int/i31_montmul.c
+int/i31_mulacc.c int/i31_muladd.c int/i31_ninv31.c int/i31_reduce.c
+int/i31_rshift.c int/i31_sub.c int/i31_tmont.c
+int/i32_div32.c""".split()
+BROBJS = []
+if BRHAVE:
+    if not NSHAVE:
+        run([GCC] + PROGFLAGS + ["-I", str(LIB / "nslibc"),
+             "-I", str(LIB), "-I", str(APPS), "-c",
+             str(LIB / "nsshim.c"), "-o", NSHIM])
+    for _bc in BRFILES:
+        _o = str(BLD / ("br_" + pathlib.Path(_bc).stem + ".o"))
+        run([GCC] + PROGFLAGS + BRDEF + BRINCS +
+            ["-I", str(LIB), "-I", str(APPS), "-w",
+             "-c", str(BRBASE / "src" / _bc), "-o", _o])
+        BROBJS.append(_o)
 
 _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
 
 
 def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
                  al_disco=True, con_ugfx=False, tope=196607,
-                 con_ns=False):
+                 con_ns=False, con_br=False):
     if nom == "editor32":
         run([NASM, "-f", "win32", str(APPS / "editor32.asm"),
              "-o", str(BLD / "editor32.o")])
@@ -247,6 +291,8 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
         CF = CXXFLAGS if es_cpp else PROGFLAGS
         if con_ns:
             CF = CF + NSDEF + NSINCS
+        if con_br:
+            CF = CF + BRDEF + BRINCS
         for fs_ in (fuentes or [nom + ".c"]):
             obj = str(BLD / (pathlib.Path(fs_).stem + ".o"))
             run([CC] + CF + ["-I", str(LIB), "-I", str(APPS), "-c",
@@ -262,6 +308,9 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
             objs.append(str(BLD / "ugfx.o"))
         if con_ns:
             objs += NSOBJS
+        if con_br:
+            objs += BROBJS
+            objs.append(NSHIM)
         run([CC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
              "-Wl,-e,_start", "-Wl,--gc-sections",
              "-T", str(LD / "prog.ld"),
@@ -369,6 +418,9 @@ _apps3 = [
     # startxx + f32cxx + ulib; mismo F32X v3 y limites que C).
     ("cppdemo", ["cppdemo.cpp"], True),
     ("t_cpp", ["t_cpp.cpp"], True),
+    ("t_tls", ["t_tls.c"], True, False, True),
+    # Hito TLS: cliente HTTPS de prueba (BearSSL + confianzas de test).
+    ("https", ["https.c"], True, False, True),
 ]
 for _nom, _fs, _u, *_g in _apps3:
     # v2.4.3: fbrowser/http con cuerpo estatico de 256K (chunked +
@@ -377,8 +429,11 @@ for _nom, _fs, _u, *_g in _apps3:
     # del nucleo, que se comprueba siempre).
     _tope = 196607
     _ns = False
+    _br = len(_g) > 1 and bool(_g[1])
     if _nom in ("fbrowser", "http"):
         _tope = 393216
+    if _nom == "https":
+        _tope = 524288
     if _nom == "fbrowser":
         _tope = 724992
         _ns = True
@@ -386,7 +441,8 @@ for _nom, _fs, _u, *_g in _apps3:
         _tope = 770048
         _ns = True
     haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK,
-                 con_ugfx=bool(_g and _g[0]), tope=_tope, con_ns=_ns)
+                 con_ugfx=bool(_g and _g[0]), tope=_tope, con_ns=_ns,
+                 con_br=_br)
 
 # ---- escribir la ISO con el catalogo (todo dentro del CD) ----
 _todos = _programas + [a[0] for a in _apps3]
