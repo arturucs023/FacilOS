@@ -6,6 +6,11 @@ desconocido (+sugerencias), TER-0041 comillas, TER-0043/0044/0046/0047
 parametros, TER-0015 ya existe, TER-0020 no existe, TER-0023 carpeta
 no vacia.
 
+Varios comandos en una linea con `|` (secuencial, sin tuberia de
+datos: cada uno escribe a consola en orden; respeta comillas).
+Ej: `eco uno | eco dos`. Un `salir` en la cadena es el ultimo
+efecto. Sin anidar `repetir` ni `salir` dentro de `repetir`.
+
 ## ayuda [comando] (documentacion)
 Muestra el catalogo por categorias; con nombre da su ayuda breve.
 Ej: `ayuda`, `ayuda manual`.
@@ -74,6 +79,22 @@ Repite los argumentos. Ej: `eco hola mundo`.
 
 ## ejecutar <programa> [args] (sistema)
 Lanza F32X (puente modal, rc real). Ej: `ejecutar menu`.
+
+## procesos (sistema)
+Lista los procesos actuales: pid, estado, rc, marcos y nombre.
+Ej: `procesos`.
+
+## memoria (sistema)
+Marcos totales, libres y usados; RAM util y entradas E820.
+Ej: `memoria`.
+
+## repetir <n> <comando> (sistema)
+Ejecuta el comando N veces seguidas (de 1 a 100, sin anidar).
+Ej: `repetir 3 eco hola`.
+
+## esperar <ms> (sistema)
+Pausa de 0 a 10000 ms. Util con `|` para demoras.
+Ej: `esperar 500`.
 
 ## salir (sistema)
 Cierra la terminal. Sin opciones.

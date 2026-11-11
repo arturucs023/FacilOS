@@ -380,6 +380,22 @@ static const cmd_t CMDS[] = {
       "Cierra la terminal.",
       "Cierra esta ventana de terminal.",
       "salir", "salir", 0, 0, 0, 0 },
+    { "procesos", "sistema",
+      "Lista los procesos actuales.",
+      "Muestra pid, estado, rc, marcos y nombre de cada proceso.",
+      "procesos", "procesos", 0, 0, 0, 0 },
+    { "memoria", "sistema",
+      "Resume la memoria del sistema.",
+      "Muestra marcos totales, libres y usados, RAM util y entradas E820.",
+      "memoria", "memoria", 0, 0, 0, 0 },
+    { "repetir", "sistema",
+      "Repite un comando N veces.",
+      "Ejecuta el comando indicado N veces seguidas (de 1 a 100, sin anidar).",
+      "repetir <n> <comando>", "repetir 3 eco hola", 2, 4, 0, 0 },
+    { "esperar", "sistema",
+      "Espera los milisegundos indicados.",
+      "Pausa la terminal (de 0 a 10000 ms). Util con | para demoras.",
+      "esperar <ms>", "esperar 500", 1, 1, 0, 0 },
 };
 #define NCMDS (int)(sizeof(CMDS) / sizeof(CMDS[0]))
 
@@ -393,6 +409,7 @@ static int busca_cmd(const char *nom) {
 
 static int sugiere(const char *nom, char dst[4][32]);
 static void ejecuta(ug_win_t *v, const char *ln);
+static void ejecuta_uno(ug_win_t *v, const char *ln);
 static int pop_construye(void);
 static void pop_abre_uno(void);
 static void pop_aplica(void);
@@ -1635,6 +1652,162 @@ static void op_eco(const cmd_t *c) {
     }
     b[t] = 0;
     pon(b);
+}
+
+static void op_procesos(const cmd_t *c) {
+    uproc_t ps[24];
+    int n, i;
+    char b[80], nb[12];
+    int t, q;
+    (void)c;
+    n = u_listar(ps, 24);
+    if (n < 0) { perr(33, "No se pudo listar procesos."); return; }
+    pon(" pid  estado      rc  marcos  nombre");
+    for (i = 0; i < n; i++) {
+        const char *e;
+        t = 0;
+        b[t++] = ' ';
+        u_itoa(ps[i].pid, nb);
+        q = 0;
+        while (nb[q] && t < 70) b[t++] = nb[q++];
+        b[t++] = ' ';
+        b[t++] = ' ';
+        e = u_estado_nombre(ps[i].estado);
+        q = 0;
+        while (e[q] && t < 70) b[t++] = e[q++];
+        b[t++] = ' ';
+        b[t++] = ' ';
+        u_itoa(ps[i].rc, nb);
+        q = 0;
+        while (nb[q] && t < 70) b[t++] = nb[q++];
+        b[t++] = ' ';
+        b[t++] = ' ';
+        u_itoa(ps[i].marcos, nb);
+        q = 0;
+        while (nb[q] && t < 70) b[t++] = nb[q++];
+        b[t++] = ' ';
+        b[t++] = ' ';
+        q = 0;
+        while (ps[i].nombre[q] && t < 78) b[t++] = ps[i].nombre[q++];
+        b[t] = 0;
+        pon(b);
+    }
+    {
+        t = 0;
+        {
+            const char *s = "yo soy pid ";
+            while (*s && t < 60) b[t++] = *s++;
+        }
+        u_itoa(u_mi_pid(), nb);
+        q = 0;
+        while (nb[q] && t < 70) b[t++] = nb[q++];
+        b[t] = 0;
+        pon(b);
+    }
+}
+
+static void op_memoria(const cmd_t *c) {
+    unsigned int m[5];
+    char b[80], nb[12];
+    int t = 0, q;
+    (void)c;
+    if (u_info_memoria(m)) {
+        perr(30, "No se pudo leer la memoria.");
+        return;
+    }
+    {
+        const char *s = "marcos totales=";
+        while (*s && t < 60) b[t++] = *s++;
+    }
+    u_itoa((int)m[0], nb);
+    q = 0;
+    while (nb[q] && t < 70) b[t++] = nb[q++];
+    b[t] = 0;
+    pon(b);
+    t = 0;
+    {
+        const char *s = "marcos libres=";
+        while (*s && t < 60) b[t++] = *s++;
+    }
+    u_itoa((int)m[1], nb);
+    q = 0;
+    while (nb[q] && t < 70) b[t++] = nb[q++];
+    b[t] = 0;
+    pon(b);
+    t = 0;
+    {
+        const char *s = "marcos usados=";
+        while (*s && t < 60) b[t++] = *s++;
+    }
+    u_itoa((int)m[2], nb);
+    q = 0;
+    while (nb[q] && t < 70) b[t++] = nb[q++];
+    b[t] = 0;
+    pon(b);
+    t = 0;
+    {
+        const char *s = "RAM util=";
+        while (*s && t < 60) b[t++] = *s++;
+    }
+    u_itoa((int)(m[3] / 1024), nb);
+    q = 0;
+    while (nb[q] && t < 70) b[t++] = nb[q++];
+    {
+        const char *s = " KB E820=";
+        while (*s && t < 70) b[t++] = *s++;
+    }
+    u_itoa((int)m[4], nb);
+    q = 0;
+    while (nb[q] && t < 70) b[t++] = nb[q++];
+    b[t] = 0;
+    pon(b);
+}
+
+static void op_esperar(const cmd_t *c) {
+    int ms;
+    (void)c;
+    ms = u_atoi(pos_arg[0]);
+    if (ms < 0 || ms > 10000) {
+        perr(48, "Espera de 0 a 10000 ms.");
+        return;
+    }
+    u_dormir(ms);
+}
+
+static void op_repetir(const cmd_t *c) {
+    int n, i;
+    char sub[NENTB + 1];
+    int t = 0;
+    (void)c;
+    n = u_atoi(pos_arg[0]);
+    if (n < 1 || n > 100) {
+        perr(48, "Repite de 1 a 100 veces.");
+        return;
+    }
+    for (i = 1; i < npos; i++) {
+        int q = 0, j, esp = 0;
+        if (t) sub[t++] = ' ';
+        for (j = 0; pos_arg[i][j]; j++) {
+            if (pos_arg[i][j] == ' ') { esp = 1; break; }
+        }
+        if (esp && t < NENTB) sub[t++] = '"';
+        while (pos_arg[i][q] && t < NENTB) sub[t++] = pos_arg[i][q++];
+        if (esp && t < NENTB) sub[t++] = '"';
+    }
+    sub[t] = 0;
+    {
+        /* sin anidar repetir/salir dentro de repetir */
+        char nm[32];
+        int w = 0, k = 0;
+        while (sub[k] == ' ') k++;
+        while (sub[k] && sub[k] != ' ' && w < 31) nm[w++] = sub[k++];
+        nm[w] = 0;
+        if (!u_strcmp(nm, "repetir") || !u_strcmp(nm, "salir")) {
+            perr(48, "No se puede anidar repetir ni salir.");
+            return;
+        }
+    }
+    for (i = 0; i < n; i++) ejecuta_uno(v_term, sub);
 }
 
 /* ---- red propia (v2.3-red F1) ---- */
@@ -3017,6 +3190,42 @@ static int pop_construye(void) {
 /* ---- despacho ---- */
 
 static void ejecuta(ug_win_t *v, const char *ln) {
+    /* Varios comandos con | (secuencial, sin tuberia de datos: cada
+       uno escribe a consola en orden). Respeta "...". Un salir en
+       la cadena es el ultimo efecto. */
+    char seg[NENTB + 1];
+    int p = 0, ini = 0, com = 0;
+    v_term = v;
+    for (;;) {
+        char c = ln[p];
+        if (c == '"') com = !com;
+        if ((c == '|' && !com) || !c) {
+            int k, t = 0, es_salir = 0, j = 0;
+            char nm[32];
+            for (k = ini; k < p && t < NENTB; k++) seg[t++] = ln[k];
+            seg[t] = 0;
+            while (seg[j] == ' ' || seg[j] == '\t') j++;
+            {
+                int w = 0;
+                while (seg[j] && seg[j] != ' ' && seg[j] != '\t' &&
+                       w < 31)
+                    nm[w++] = seg[j++];
+                nm[w] = 0;
+            }
+            if (nm[0]) {
+                es_salir = !u_strcmp(nm, "salir");
+                ejecuta_uno(v, seg);
+                if (es_salir) return;
+            }
+            if (!c) break;
+            ini = p + 1;
+        }
+        if (!ln[p]) break;
+        p++;
+    }
+}
+
+static void ejecuta_uno(ug_win_t *v, const char *ln) {
     int id, bad = 0, mal = 0, motivo = 0;
     char cmd[32];
     int i = 0;
@@ -3176,6 +3385,14 @@ static void ejecuta(ug_win_t *v, const char *ln) {
         op_mostrar_dns(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {
         ug_cierra(v);
+    } else if (!u_strcmp(cmd, "procesos")) {
+        op_procesos(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "memoria")) {
+        op_memoria(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "repetir")) {
+        op_repetir(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "esperar")) {
+        op_esperar(&CMDS[id]);
     }
     (void)i;
 }
