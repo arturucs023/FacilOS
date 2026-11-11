@@ -15,7 +15,9 @@ extern "C" {
  *
  * Modelo: el servidor posee cada ventana (x,y,w,h); el cliente dibuja
  * solo su CONTENIDO (debajo del cromo de 20 px) al recibir DRAW y
- * confirma con ACK. Eventos: FOCO, TECLA, RATON, SALIR.
+ * confirma con ACK. El servidor vuelca una vez por frame en orden Z
+ * (present centralizado: el cliente nunca presenta). Eventos: FOCO,
+ * TECLA, RATON, SALIR.
  */
 
 #define UG_CHROME 20        /* alto de la barra de titulo (servidor) */

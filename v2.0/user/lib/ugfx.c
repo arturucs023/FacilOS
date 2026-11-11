@@ -285,7 +285,7 @@ void ug_comienza(ug_win_t *v) {
     int ch;
     u_texto(0, 0, "", C_NEGRO);
     u_destino(1);   /* v2.2-post: los clientes tambien componen en el
-                       dorso (el present de ug_fin ya lo vuelca) */
+                       dorso (lo vuelca el servidor una vez por frame) */
     v->ox = v->x;
     v->oy = v->y + UG_CHROME;
     /* Recorte por arrendamiento (F8-compositor): ni un pixel fuera
@@ -296,7 +296,11 @@ void ug_comienza(ug_win_t *v) {
 }
 
 void ug_fin(ug_win_t *v) {
-    u_presentar(v->x, v->y, v->w, v->h);
+    /* Sin auto-present (compositor centralizado): el servidor vuelca
+       una vez por frame en orden Z (antes cada cliente presentaba lo
+       suyo en orden de llegada y las solapadas parpadeaban/pegaban
+       cada TICK). Solo ACK; el dano lo anota el servidor. */
+    (void)v;
     u_fija_clip(0, 0, 0, 0);
     u_ipc_enviar(v->srv, "ACK", 4);
 }

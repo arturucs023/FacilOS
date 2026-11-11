@@ -46,6 +46,11 @@ static int arr_id = -1, arr_dx = 0, arr_dy = 0, arr_modo = 0;
 static int arr_movido = 0;   /* el arrastre cambio geometria al menos una vez */
 static int menu_abierto = 0, menu_sel = -1, ultimo_min = -1;
 
+/* Diagnostico de compositor (F8-compositor): traza DRAW/ACK/suelta por
+   serie. Cuesta unas lineas por frame con actividad; en reposo calla.
+   0 = silencio total (produccion). */
+#define SRV_DBG 0
+
 /* Si durante la espera de ACK llega un REG/SYNC, la ventana entra en la
    siguiente pasada de frame. */
 static int nuevo_marco = 0;
@@ -71,6 +76,7 @@ static int fondo_idx = 0;
 #define N_FONDOS 5
 
 static void marca_sucia(int id);
+static void dano_pintado(int k);
 static void atiende_tick(int de, char *b, int r);
 static void atiende_fondo(int de, char *b, int r);
 static void pantalla_recarga(void);   /* VIDEO: relee tamano y reencaja */
@@ -513,10 +519,23 @@ static void cursor_borra(void) {
     asegura_propiedad();
     for (dy = 0; dy < CUR_H; dy++) {
         for (dx = 0; dx < CUR_W; dx++) {
+            unsigned int esp, cur, sav;
             if (!cur_forma(dx, dy)) continue;
-            /* Restaura crudo con marca RGB (el fondo es RGB). */
-            u_pixel(cur_sx + dx, cur_sy + dy,
-                    (int)(0x01000000u | cur_px[dy * CUR_W + dx]));
+            /* Color crudo que dibujo show (u_punto devuelve sin
+               el bit 24 de marca RGB). */
+            esp = cur_borde(dx, dy) ?
+                (16u << 16) | (22u << 8) | 31u :
+                (242u << 16) | (245u << 8) | 249u;
+            cur = u_punto(cur_sx + dx, cur_sy + dy);
+            sav = cur_px[dy * CUR_W + dx];
+            /* Solo restaura si el pixel sigue siendo el cursor o ya
+               es el fondo guardado. Si un repintado (TICK, DRAW
+               tardio) lo cambio, el dorso ya esta bien y restaurar
+               pisaria contenido nuevo: huella fantasma al sacar el
+               raton de una ventana solapada. */
+            if (cur == esp || cur == sav)
+                u_pixel(cur_sx + dx, cur_sy + dy,
+                        (int)(0x01000000u | sav));
         }
     }
     cur_sx = -1;
@@ -798,6 +817,7 @@ static void espera_ack_h(int idx, int tope) {
                 b[2] == 'K') {
                 if (vents[idx].usado && vents[idx].pid == pid) {
                     vents[idx].ack_pend = 0;
+                    dano_pintado(idx);
                     if (t <= 10) espera_paciencia[idx] = 0;
                 }
                 return;
@@ -812,6 +832,7 @@ static void espera_ack_h(int idx, int tope) {
                 for (kk = 0; kk < NVENT; kk++) {
                     if (vents[kk].usado && vents[kk].pid == de) {
                         vents[kk].ack_pend = 0;
+                        dano_pintado(kk);
                         if (cubre_encima(kk)) nuevo_marco = 1;
                     }
                 }
@@ -906,6 +927,11 @@ static void espera_ack_h(int idx, int tope) {
             if (vents[idx].usado && vents[idx].pid == pid) {
                 vents[idx].ack_pend = 1;
                 espera_paciencia[idx] = 1;
+#if SRV_DBG
+                u_print("PEND ");
+                u_print_num(idx);
+                u_print("\n");
+#endif
             }
             return;
         }
@@ -929,6 +955,15 @@ static void marca_sucia(int id) {
    (repintarlo gris en cada tecla era el parpadeo al escribir). */
 static void marca_contenido(int id) {
     if (id >= 0 && id < NVENT && vents[id].usado) win_dirty[id] = 1;
+}
+
+/* Dana la ventana k tras pintar (ACK): el present unico de frame()
+   la vuelca en orden Z. Sin esto solo el auto-present del cliente
+   la mostraba: cada cliente volcaba lo suyo en orden de llegada y
+   las solapadas parpadeaban/pegaban cada TICK. */
+static void dano_pintado(int k) {
+    if (k >= 0 && k < NVENT && vents[k].usado)
+        marca_dano(vents[k].x, vents[k].y, vents[k].w, vents[k].h);
 }
 
 /* Rectangulos que se tocan (bordes excluidos igual que el pintado). */
@@ -1110,7 +1145,10 @@ static void frame(void) {
         }
     }
     asegura_propiedad();
-    dmg_hay = 0;
+    /* Sin reset aqui (F8-compositor): el dano anotado antes de frame
+       (fondo_clip de la union viejo/nuevo en arrastre) debe sobrevivir
+       hasta el volcado unico del final; resetearlo aqui tiraba el
+       borrado y dejaba cromas fantasma. Se resetea tras presentar. */
     if (cur_sx >= 0 && cur_sy >= 0)
         marca_dano(cur_sx, cur_sy, 12, 16);
     cursor_borra();
@@ -1138,6 +1176,15 @@ static void frame(void) {
             sombra(v);
             cromo(v);
             win_cromo[ids[q]] = 0;
+#if SRV_DBG
+            u_print("CROMO ");
+            u_print_num(ids[q]);
+            u_print(" ");
+            u_print_num(v->x);
+            u_print(" ");
+            u_print_num(v->y);
+            u_print("\n");
+#endif
             marca_dano(v->x - 6, v->y - 6, v->w + 12, v->h + 12);
         }
         if (!win_dirty[ids[q]]) continue;
@@ -1232,8 +1279,18 @@ static void frame(void) {
            espera/ACK. El cromo de arriba ya se dibujo; win_dirty queda
            puesto para el repintado de suelta. */
         if (!(arr_id >= 0 && arr_movido)) {
-            if (!u_ipc_enviar(v->pid, m, u_strlen(m) + 1))
+            if (!u_ipc_enviar(v->pid, m, u_strlen(m) + 1)) {
                 win_dirty[ids[q]] = 0;
+#if SRV_DBG
+                u_print("DRAW ");
+                u_print_num(ids[q]);
+                u_print(" ");
+                u_print_num(v->x);
+                u_print(" ");
+                u_print_num(v->y);
+                u_print("\n");
+#endif
+            }
             espera_ack(ids[q]);
         }
         if (vents[ids[q]].usado) dibuja_agarre(&vents[ids[q]]);
@@ -1249,8 +1306,21 @@ static void frame(void) {
        se veia pintar: parpadeo al escribir/arrastrar/redimensionar).
        F8-compositor: solo la region danada (fondo completo si hubo
        bg_dirty); el cursor tiene su propio volcado tras esto. */
-    if (dmg_hay)
+    if (dmg_hay) {
+#if SRV_DBG
+        u_print("VOLC ");
+        u_print_num(dmg_x0);
+        u_print(" ");
+        u_print_num(dmg_y0);
+        u_print(" ");
+        u_print_num(dmg_x1 - dmg_x0);
+        u_print(" ");
+        u_print_num(dmg_y1 - dmg_y0);
+        u_print("\n");
+#endif
         u_presentar(dmg_x0, dmg_y0, dmg_x1 - dmg_x0, dmg_y1 - dmg_y0);
+        dmg_hay = 0;
+    }
     cursor_show();
     cursor_volcar(-1, -1);   /* el fullscreen ya cubre; solo la nueva */
     if (nuevo_marco) {
@@ -1267,6 +1337,19 @@ static void frame(void) {
    unico: sin bucle sobre ACKs (evita tormenta con apps lentas). */
 static void repara_suelta(int rid) {
     int w2;
+#if SRV_DBG
+    if (rid >= 0 && rid < NVENT && vents[rid].usado) {
+        u_print("SUELTA ");
+        u_print_num(rid);
+        u_print(" ");
+        u_print_num(vents[rid].x);
+        u_print(" ");
+        u_print_num(vents[rid].y);
+        u_print(" mov=");
+        u_print_num(arr_movido);
+        u_print("\n");
+    }
+#endif
     bg_dirty = 1;
     frame();
     for (w2 = 0; w2 < 25 && rid >= 0 && rid < NVENT &&
@@ -1598,19 +1681,37 @@ int main(void) {
                 frame();
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
-                /* ACK tardio: la app pinto tarde y presento ella misma:
-                   lo que haya encima queda tapado (la app solo repinta
-                   su rectangulo, sin orden Z). Reponen encima las que
-                   la pisen (ver cubre_encima); a esta no se le reenvia
-                   DRAW (acaba de pintar). */
+                /* ACK tardio: la app pinto tarde (ya sin auto-present:
+                   vuelca el servidor). Lo que haya encima queda tapado
+                   en el dorso: reponen encima las que la pisen (ver
+                   cubre_encima); a esta no se le reenvia DRAW (acaba
+                   de pintar). Sin nada encima se vuelca su rectangulo
+                   directo (si no, quedaria invisible hasta el proximo
+                   frame). */
                 int urge = 0, k;
                 for (k = 0; k < NVENT; k++) {
                     if (vents[k].usado && vents[k].pid == de) {
                         vents[k].ack_pend = 0;
+                        dano_pintado(k);
                         if (cubre_encima(k)) urge = 1;
                     }
                 }
-                if (urge) frame();
+#if SRV_DBG
+                u_print("TARD pid=");
+                u_print_num(de);
+                u_print(" urge=");
+                u_print_num(urge);
+                u_print("\n");
+#endif
+                if (urge) {
+                    frame();
+                } else {
+                    for (k = 0; k < NVENT; k++) {
+                        if (vents[k].usado && vents[k].pid == de)
+                            u_presentar(vents[k].x, vents[k].y,
+                                        vents[k].w, vents[k].h);
+                    }
+                }
             }
             /* ACK y otros se consumen sin mas */
         } else if (!modal_pid && u_hay_tecla()) {
@@ -1729,13 +1830,35 @@ int main(void) {
                                ox + ow : v->x + v->w;
                         int ey = oy + oh > v->y + v->h ?
                                oy + oh : v->y + v->h;
-                        int uw = ex - ux + 4, uh = ey - uy + 4;
+                        /* +8/-4 simetrico: cubre la sombra (3px) tambien a
+                           derecha/abajo; con +4 solo izq/arriba y la
+                           franja vieja sobrevivía al arrastre. */
+                        int uw = ex - ux + 8, uh = ey - uy + 8;
                         ux -= 4;
                         uy -= 4;
                         if (ux < 0) { uw += ux; ux = 0; }
                         if (uy < 0) { uh += uy; uy = 0; }
                         if (ux + uw > PANT_W) uw = PANT_W - ux;
                         if (uy + uh > AREA_H) uh = AREA_H - uy;
+#if SRV_DBG
+                        u_print("MOV ");
+                        u_print_num(ox);
+                        u_print(" ");
+                        u_print_num(oy);
+                        u_print("->");
+                        u_print_num(v->x);
+                        u_print(" ");
+                        u_print_num(v->y);
+                        u_print(" u");
+                        u_print_num(ux);
+                        u_print(" ");
+                        u_print_num(uy);
+                        u_print(" ");
+                        u_print_num(uw);
+                        u_print(" ");
+                        u_print_num(uh);
+                        u_print("\n");
+#endif
                         fondo_clip(ux, uy, uw, uh);
                         marca_toca(ux, uy, uw, uh);
                     }
