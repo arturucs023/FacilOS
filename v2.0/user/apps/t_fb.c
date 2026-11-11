@@ -666,6 +666,169 @@ static void prueba_cablarga(void) {
     }
 }
 
+/* v2.4.4: jar de cookies + POST (sin red: parser y formato). */
+static int cab_igual(const char *s, const char *esp) {
+    int i = 0;
+    while (esp[i] && i < 120) {
+        if (s[i] != esp[i]) return 0;
+        i++;
+    }
+    return esp[i] == 0 && s[i] == 0;
+}
+
+static void prueba_galletas(void) {
+    char sal[512];
+    u_print("t_fb: galletas...\n");
+    u_http_galleta_limpia();
+    ok(u_http_galleta_cab("a", sal, (int)sizeof(sal)) == 0 &&
+       sal[0] == 0, "galleta-vacia");
+    ok(u_http_galleta_guarda("a", "sesion=abc123; Path=/") == 0,
+       "galleta-guarda");
+    ok(u_http_galleta_cab("a", sal, (int)sizeof(sal)) > 0 &&
+       cab_igual(sal, "Cookie: sesion=abc123\r\n"),
+       "galleta-cab-uno");
+    ok(u_http_galleta_guarda("a", "tema=oscuro; Path=/") == 0,
+       "galleta-guarda2");
+    ok(u_http_galleta_cab("a", sal, (int)sizeof(sal)) > 0 &&
+       cab_igual(sal, "Cookie: sesion=abc123; tema=oscuro\r\n"),
+       "galleta-cab-dos");
+    ok(u_http_galleta_guarda("a", "sesion=zzz") == 0 &&
+       u_http_galleta_cab("a", sal, (int)sizeof(sal)) > 0 &&
+       cab_igual(sal, "Cookie: sesion=zzz; tema=oscuro\r\n"),
+       "galleta-reescribe");
+    ok(u_http_galleta_cab("b", sal, (int)sizeof(sal)) == 0 &&
+       sal[0] == 0, "galleta-aisla-host");
+    ok(u_http_galleta_cab("A.COM", sal, (int)sizeof(sal)) == 0 &&
+       sal[0] == 0, "galleta-aisla-mayus");
+    ok(u_http_galleta_guarda("h", "x=1; Expires=ayer; Secure") == 0,
+       "galleta-attrs");
+    ok(u_http_galleta_cab("h", sal, (int)sizeof(sal)) > 0 &&
+       cab_igual(sal, "Cookie: x=1\r\n"), "galleta-attrs-fuera");
+    ok(u_http_galleta_guarda("h", "t=a=b") == 0 &&
+       u_http_galleta_cab("h", sal, (int)sizeof(sal)) > 0 &&
+       cab_igual(sal, "Cookie: x=1; t=a=b\r\n"), "galleta-igual-dentro");
+    ok(u_http_galleta_guarda("", "s=v") != 0, "galleta-sin-host");
+    ok(u_http_galleta_guarda("h", "sinigual") != 0, "galleta-sin-igual");
+    u_http_galleta_limpia();
+    ok(u_http_galleta_cab("a", sal, (int)sizeof(sal)) == 0 &&
+       sal[0] == 0, "galleta-limpia");
+    {
+        /* nth Set-Cookie: dos iguales, tercera ausente */
+        static const char m[] =
+            "HTTP/1.0 200 OK\r\n"
+            "Set-Cookie: uno=1; Path=/\r\n"
+            "Content-Type: text/plain\r\n"
+            "Set-Cookie: dos=2\r\n"
+            "Content-Length: 2\r\n\r\nok";
+        static unsigned char cpo[64];
+        u_http_res_t r;
+        char v[128];
+        int nb = 0, q;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m,
+                             (int)sizeof(m) - 1, cpo, (int)sizeof(cpo),
+                             &nb);
+        ok(q == 1, "galleta-resp-ok");
+        ok(u_http_cabecera_n(&r, "Set-Cookie", 0, v, (int)sizeof(v)) > 0 &&
+           cab_igual(v, "uno=1; Path=/"), "galleta-nth-0");
+        ok(u_http_cabecera_n(&r, "SET-cookie", 1, v, (int)sizeof(v)) > 0 &&
+           cab_igual(v, "dos=2"), "galleta-nth-1-mayus");
+        ok(u_http_cabecera_n(&r, "Set-Cookie", 2, v, (int)sizeof(v)) < 0,
+           "galleta-nth-2-no");
+        ok(u_http_cabecera_n(&r, "Set-Cookie", -1, v,
+                             (int)sizeof(v)) < 0, "galleta-nth-neg");
+    }
+    {
+        /* pide POST: metodo, Content-Length y Tipo */
+        u_http_url_t u;
+        char pet[512];
+        int q;
+        u_http_url("http://a/eco-post", &u);
+        q = u_http_pide_post(&u, 0, 11, pet, (int)sizeof(pet));
+        ok(q > 0, "post-pide-ok");
+        {
+            int i, bien = 1;
+            static const char ini[] = "POST /eco-post HTTP/1.0\r\n";
+            for (i = 0; ini[i]; i++)
+                if (pet[i] != ini[i]) bien = 0;
+            ok(bien, "post-pide-metodo");
+        }
+        {
+            int i = 0, hall = 0;
+            while (pet[i]) {
+                static const char cl[] = "Content-Length: 11\r\n";
+                int j = 0, ok2 = 1;
+                while (cl[j] && pet[i + j]) {
+                    if (pet[i + j] != cl[j]) {
+                        ok2 = 0;
+                        break;
+                    }
+                    j++;
+                }
+                if (ok2 && !cl[j]) {
+                    hall = 1;
+                    break;
+                }
+                i++;
+            }
+            ok(hall, "post-pide-longitud");
+        }
+        {
+            int i = 0, hall = 0;
+            while (pet[i]) {
+                static const char ct[] =
+                    "Content-Type: application/x-www-form-urlencoded\r\n";
+                int j = 0, ok2 = 1;
+                while (ct[j] && pet[i + j]) {
+                    if (pet[i + j] != ct[j]) {
+                        ok2 = 0;
+                        break;
+                    }
+                    j++;
+                }
+                if (ok2 && !ct[j]) {
+                    hall = 1;
+                    break;
+                }
+                i++;
+            }
+            ok(hall, "post-pide-tipo");
+        }
+        ok(u_http_pide_post(&u, "Cookie: s=v\r\n", 3, pet,
+                            (int)sizeof(pet)) > 0,
+           "post-pide-extra");
+        {
+            /* metodo no soportado: -1 sin tocar la red */
+            static unsigned char tb2[64];
+            u_http_res_t r2;
+            u_http_res_inicia(&r2);
+            ok(u_http_trae_x("http://a/x", "PUT", 0, 0, 0, &r2,
+                             tb2, (int)sizeof(tb2), 100) == -1 &&
+               r2.codigo == 0, "traex-metodo-malo");
+        }
+    }
+    {
+        /* parser POST: misma action/campo, marca forma_post */
+        suelta();
+        ok(parsea("<form method=\"post\" action=\"/eco-post\">"
+                 "<input name=\"q\"></form>", "http://a/") == 0,
+           "forma-post-parsea");
+        ok(d.hay_forma == 0 && d.forma_post == 1, "forma-post-marca");
+        ok(!u_strcmp(d.forma, "http://a/eco-post") &&
+           !u_strcmp(d.campo, "q"), "forma-post-datos");
+        suelta();
+        ok(parsea("<form method=\"get\" action=\"/b\">"
+                 "<input name=\"q\"></form>", "http://a/") == 0,
+           "forma-get-parsea");
+        ok(d.hay_forma == 1 && d.forma_post == 0, "forma-get-marca");
+        suelta();
+        ok(parsea("<form action=\"/b\"><input name=\"q\"></form>",
+            "http://a/") == 0, "forma-defecto-parsea");
+        ok(d.hay_forma == 1 && d.forma_post == 0, "forma-defecto-get");
+        suelta();
+    }
+}
+
 static void prueba_layout(void) {
     int nf;
     u_print("t_fb: layout...\n");
@@ -766,7 +929,9 @@ static void prueba_forma(void) {
     ok(parsea("<form action=\"/x\" method=\"post\">"
         "<input name=\"q\"></form>", "http://a/") == 0,
         "forma-post");
-    ok(d.hay_forma == 0, "forma-post-no");
+    ok(d.hay_forma == 0 && d.forma_post == 1, "forma-post-no");
+    ok(!u_strcmp(d.forma, "http://a/x") && !u_strcmp(d.campo, "q"),
+        "forma-post-datos");
     suelta();
     ok(parsea("<p>sin forma</p>", "http://a/") == 0,
         "forma-ausente");
@@ -888,6 +1053,107 @@ static void prueba_viva(const char *base) {    static unsigned char cpo[8192];
             ok(r.cuerpo_n == 15, "viva-cablarga-cuerpo");
     }
     {
+        /* v2.4.4: cookies roundtrip (/galleta -> /eco-cookie) */
+        char u[128], ue[128];
+        u_http_url_t uh;
+        char ck[512];
+        int i = 0;
+        while (base[i] && i < 110) {
+            u[i] = base[i];
+            i++;
+        }
+        u[i++] = '/';
+        u[i++] = 'g';
+        u[i++] = 'a';
+        u[i++] = 'l';
+        u[i++] = 'l';
+        u[i++] = 'e';
+        u[i++] = 't';
+        u[i++] = 'a';
+        u[i] = 0;
+        u_http_galleta_limpia();
+        k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+        ok(k == 0 && r.codigo == 200, "viva-galleta-200");
+        if (k == 0) {
+            char scv[256];
+            int scn = 0, j = 0;
+            if (u_http_url(u, &uh) == 0 && uh.host[0]) {
+                while (u_http_cabecera_n(&r, "Set-Cookie", scn, scv,
+                        (int)sizeof(scv)) >= 0) {
+                    u_http_galleta_guarda(uh.host, scv);
+                    scn++;
+                    if (scn > 32) break;
+                }
+            }
+            ok(scn == 2, "viva-galleta-dos");
+            while (base[j] && j < 110) {
+                ue[j] = base[j];
+                j++;
+            }
+            ue[j++] = '/';
+            ue[j++] = 'e';
+            ue[j++] = 'c';
+            ue[j++] = 'o';
+            ue[j++] = '-';
+            ue[j++] = 'c';
+            ue[j++] = 'o';
+            ue[j++] = 'o';
+            ue[j++] = 'k';
+            ue[j++] = 'i';
+            ue[j++] = 'e';
+            ue[j] = 0;
+            ck[0] = 0;
+            if (uh.host[0])
+                u_http_galleta_cab(uh.host, ck, (int)sizeof(ck));
+            ok(ck[0] != 0, "viva-galleta-jar");
+            k = u_http_trae_x(ue, "GET", ck[0] ? ck : 0, 0, 0, &r,
+                              cpo, (int)sizeof(cpo), 15000);
+            ok(k == 0 && r.codigo == 200, "viva-eco-200");
+            if (k == 0) {
+                static const char esp[] =
+                    "visto: sesion=abc123; tema=oscuro";
+                int le = 0;
+                while (esp[le]) le++;
+                ok((int)r.cuerpo_n == le && cuerpo_igual(cpo, esp),
+                   "viva-eco-cuerpo");
+            }
+        }
+    }
+    {
+        /* v2.4.4: POST real (/eco-post) + 405 si se pide con GET */
+        char u[128];
+        int i = 0;
+        while (base[i] && i < 110) {
+            u[i] = base[i];
+            i++;
+        }
+        u[i++] = '/';
+        u[i++] = 'e';
+        u[i++] = 'c';
+        u[i++] = 'o';
+        u[i++] = '-';
+        u[i++] = 'p';
+        u[i++] = 'o';
+        u[i++] = 's';
+        u[i++] = 't';
+        u[i] = 0;
+        k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+        ok(k == 0 && r.codigo == 405, "viva-post-get-405");
+        {
+            static const unsigned char pb[] = "q=hola";
+            k = u_http_trae_x(u, "POST", 0, pb, 6, &r, cpo,
+                              (int)sizeof(cpo), 15000);
+            ok(k == 0 && r.codigo == 200, "viva-post-200");
+            if (k == 0) {
+                static const char esp[] = "visto: q=hola";
+                int le = 0;
+                while (esp[le]) le++;
+                ok((int)r.cuerpo_n == le && cuerpo_igual(cpo, esp),
+                   "viva-post-cuerpo");
+            }
+        }
+    }
+    {
         char u[128];
         int i = 0;
         while (base[i] && i < 120) {
@@ -999,6 +1265,7 @@ int main(void) {
     prueba_topes();
     prueba_chunked();
     prueba_cablarga();
+    prueba_galletas();
     prueba_layout();
     prueba_css();
     prueba_forma();

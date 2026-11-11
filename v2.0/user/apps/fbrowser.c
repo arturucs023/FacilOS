@@ -131,8 +131,11 @@ static void hist_empuja(const char *u) {
 static void navegar(const char *entrada, int empujar) {
     char u[U_HTML_URL + 1];
     char loc[U_HTTP_VAL];
+    char extra[2048];            /* Cookie: ... del jar (por salto) */
+    unsigned char pbody[2048];   /* cuerpo POST urlencoded */
     u_http_res_t r;
     int k, i, saltos, nbody, redir = 0;
+    int es_post = 0, npost = 0;
     unsigned int t0;
     if (detener) {
         detener = 0;
@@ -190,6 +193,35 @@ static void navegar(const char *entrada, int empujar) {
                 pon_estado("busqueda demasiado larga");
                 return;
             }
+        } else if (tiene_doc && doc.forma_post && doc.forma[0] &&
+                   doc.campo[0]) {
+            /* v2.4.4: formulario POST (misma action/campo; cuerpo
+               urlencoded en vez de ?q=). */
+            codifica_q(entrada, q, (int)sizeof(q));
+            i = 0;
+            while (doc.forma[i] && i < U_HTML_URL) {
+                u[i] = doc.forma[i];
+                i++;
+            }
+            u[i] = 0;
+            {
+                int j = 0, t = 0;
+                while (doc.campo[j] && t < 2000) pbody[t++] = doc.campo[j++];
+                if (t + 1 >= 2000) {
+                    pon_estado("formulario demasiado largo");
+                    return;
+                }
+                pbody[t++] = '=';
+                j = 0;
+                while (q[j] && t + 1 < (int)sizeof(pbody)) pbody[t++] = q[j++];
+                if (q[j]) {
+                    pon_estado("busqueda demasiado larga");
+                    return;
+                }
+                pbody[t] = 0;
+                npost = t;
+                es_post = 1;
+            }
         } else if (!base_busca[0]) {
             pon_estado("sin buscador (crea /fbrowser.cfg)");
             return;
@@ -229,8 +261,19 @@ static void navegar(const char *entrada, int empujar) {
     }
     saltos = 0;
     for (;;) {
+        u_http_url_t uh;
         t0 = ahora();
-        k = u_http_trae(u, &r, cuerpo, U_HTTP_MAX_CPO, FB_ESPERA);
+        extra[0] = 0;
+        if (u_http_url(u, &uh) == 0 && uh.host[0])
+            u_http_galleta_cab(uh.host, extra, (int)sizeof(extra));
+        if (es_post)
+            k = u_http_trae_x(u, "POST", extra[0] ? extra : 0,
+                              npost ? pbody : 0, npost,
+                              &r, cuerpo, U_HTTP_MAX_CPO, FB_ESPERA);
+        else
+            k = u_http_trae_x(u, "GET", extra[0] ? extra : 0,
+                              0, 0, &r, cuerpo, U_HTTP_MAX_CPO,
+                              FB_ESPERA);
         t_ms = (int)((ahora() - t0) * 10u);
         nfetches++;
         codigo = r.codigo;
@@ -275,6 +318,21 @@ static void navegar(const char *entrada, int empujar) {
             pon_estado("sin respuesta (revisa la red)");
             return;
         }
+        {
+            /* v2.4.4: guarda Set-Cookie de la respuesta (tambien en
+               redirecciones: el login tipico los trae en el 302). */
+            u_http_url_t uhr;
+            char scv[U_HTTP_VAL];
+            int scn = 0;
+            if (u_http_url(u, &uhr) == 0 && uhr.host[0]) {
+                while (u_http_cabecera_n(&r, "Set-Cookie", scn, scv,
+                       (int)sizeof(scv)) >= 0) {
+                    u_http_galleta_guarda(uhr.host, scv);
+                    scn++;
+                    if (scn > 32) break;
+                }
+            }
+        }
         if ((codigo == 301 || codigo == 302) && saltos < 3 &&
             !detener) {
             if (u_http_cabecera(&r, "Location", loc,
@@ -284,6 +342,8 @@ static void navegar(const char *entrada, int empujar) {
                     u_strcpy(u, abs);
                     saltos++;
                     redir = 1;
+                    es_post = 0;   /* POST+302: se sigue con GET */
+                    npost = 0;
                     continue;
                 }
                 pon_estado("redireccion no HTTP (sin seguir)");

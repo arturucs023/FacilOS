@@ -1582,12 +1582,16 @@ static int http_pon(char *sal, int smax, int *t, const char *s) {
     return 0;
 }
 
-int u_http_pide(const u_http_url_t *u, const char *extra, char *sal,
-                int smax) {
+/* Constructor comun GET/POST (post=0 GET, 1 POST). npost solo vale
+   en POST y viaja como Content-Length (el cuerpo se envia aparte). */
+static int http_pide_x(int post, const u_http_url_t *u,
+                       const char *extra, int npost, char *sal,
+                       int smax) {
     int t = 0, k;
     if (!u || !sal || smax <= 0) return -1;
     if (!u->host[0] || !u->puerto || u->ruta[0] != '/') return -2;
-    if (http_pon(sal, smax, &t, "GET ")) return -3;
+    if (npost < 0) return -1;
+    if (http_pon(sal, smax, &t, post ? "POST " : "GET ")) return -3;
     for (k = 0; u->ruta[k]; k++) {
         if (t + 1 >= smax) return -3;
         sal[t++] = u->ruta[k];
@@ -1617,6 +1621,28 @@ int u_http_pide(const u_http_url_t *u, const char *extra, char *sal,
                                 "User-Agent: FacilOS32-HTTP/0.1\r\n"
                                 "Accept: */*\r\n"))
         return -3;
+    if (post) {
+        /* POST con cuerpo urlencoded (formularios): longitud exacta,
+           sin chunked (el servidor cierra tras responder). */
+        int v = npost, q = 0;
+        char tmp[12];
+        if (http_pon(sal, smax, &t,
+                     "Content-Type: application/x-www-form-urlencoded\r\n"
+                     "Content-Length: "))
+            return -3;
+        if (!v) tmp[q++] = '0';
+        while (v && q < 11) {
+            tmp[q++] = (char)('0' + v % 10);
+            v /= 10;
+        }
+        if (v || !q) return -3;
+        while (q > 0) {
+            q--;
+            if (t + 1 >= smax) return -3;
+            sal[t++] = tmp[q];
+        }
+        if (http_pon(sal, smax, &t, "\r\n")) return -3;
+    }
     if (extra && extra[0]) {
         /* Cabeceras adicionales validadas (sin framing/control). */
         int o = 0, nl = 0;
@@ -1659,6 +1685,17 @@ int u_http_pide(const u_http_url_t *u, const char *extra, char *sal,
     if (t >= smax) return -3;
     sal[t] = 0;
     return t;
+}
+
+int u_http_pide(const u_http_url_t *u, const char *extra, char *sal,
+                int smax) {
+    return http_pide_x(0, u, extra, 0, sal, smax);
+}
+
+int u_http_pide_post(const u_http_url_t *u, const char *extra, int npost,
+                     char *sal, int smax) {
+    if (npost < 0 || npost > U_HTTP_MAX_CPO) return -1;
+    return http_pide_x(1, u, extra, npost, sal, smax);
 }
 
 /* Valida "Nombre: valor". 0 ok; 1 valida pero sin sitio para el
@@ -2185,12 +2222,182 @@ int u_http_cabecera(const u_http_res_t *r, const char *nombre,
     return -1;
 }
 
-int u_http_trae(const char *url, u_http_res_t *r, unsigned char *cuerpo,
-                int capcuerpo, unsigned int espera_ms) {
+/* v2.4.4: jar de cookies por proceso (solo memoria). */
+static char gal_host[U_HTTP_GAL_N][U_HTTP_GAL_NOM];
+static char gal_nom[U_HTTP_GAL_N][U_HTTP_GAL_NOM];
+static char gal_val[U_HTTP_GAL_N][U_HTTP_GAL_VAL];
+
+void u_http_galleta_limpia(void) {
+    int i, j;
+    for (i = 0; i < U_HTTP_GAL_N; i++) {
+        for (j = 0; j < U_HTTP_GAL_NOM; j++)
+            gal_host[i][j] = gal_nom[i][j] = 0;
+        for (j = 0; j < U_HTTP_GAL_VAL; j++) gal_val[i][j] = 0;
+    }
+}
+
+static int gal_igual(const char *a, const char *b) {
+    int i = 0;
+    for (;;) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return 0;
+        if (!ca) return 1;
+        i++;
+    }
+}
+
+/* "nombre=valor[; attrs]": recorta en ';', quita blancos de borde y
+   copia nombre (hasta '=') y valor en salidas acotadas. 0 ok. */
+static int gal_parte(const char *s, char *nom, char *val) {
+    int i = 0, k = 0;
+    while (s[i] == ' ' || s[i] == '\t') i++;
+    while (s[i] && s[i] != '=' && s[i] != ';' && k + 1 < U_HTTP_GAL_NOM)
+        nom[k++] = s[i++];
+    nom[k] = 0;
+    if (s[i] != '=') return -1;
+    i++;
+    k = 0;
+    while (s[i] && s[i] != ';' && k + 1 < U_HTTP_GAL_VAL)
+        val[k++] = s[i++];
+    val[k] = 0;
+    while (k > 0 && (val[k - 1] == ' ' || val[k - 1] == '\t')) val[--k] = 0;
+    if (!nom[0]) return -1;
+    return 0;
+}
+
+int u_http_galleta_guarda(const char *host, const char *setcookie) {
+    char nm[U_HTTP_GAL_NOM], vl[U_HTTP_GAL_VAL];
+    int i, libre = -1;
+    if (!host || !setcookie || !host[0]) return -1;
+    if (gal_parte(setcookie, nm, vl)) return -1;
+    for (i = 0; i < U_HTTP_GAL_N; i++) {
+        if (!gal_host[i][0]) {
+            if (libre < 0) libre = i;
+            continue;
+        }
+        if (gal_igual(gal_host[i], host) && !u_strcmp(gal_nom[i], nm)) {
+            int k = 0;
+            while (vl[k] && k + 1 < U_HTTP_GAL_VAL) {
+                gal_val[i][k] = vl[k];
+                k++;
+            }
+            gal_val[i][k] = 0;
+            return 0;
+        }
+    }
+    if (libre < 0) return -1;
+    {
+        int k = 0;
+        while (host[k] && k + 1 < U_HTTP_GAL_NOM) {
+            char c = host[k];
+            if (c >= 'A' && c <= 'Z') c += 32;
+            gal_host[libre][k] = c;
+            k++;
+        }
+        gal_host[libre][k] = 0;
+    }
+    {
+        int k = 0;
+        while (nm[k] && k + 1 < U_HTTP_GAL_NOM) {
+            gal_nom[libre][k] = nm[k];
+            k++;
+        }
+        gal_nom[libre][k] = 0;
+    }
+    {
+        int k = 0;
+        while (vl[k] && k + 1 < U_HTTP_GAL_VAL) {
+            gal_val[libre][k] = vl[k];
+            k++;
+        }
+        gal_val[libre][k] = 0;
+    }
+    return 0;
+}
+
+int u_http_galleta_cab(const char *host, char *sal, int smax) {
+    int i, t = 0, n = 0, k;
+    static const char pre[] = "Cookie: ";
+    static const char sep[] = "; ";
+    static const char fin[] = "\r\n";
+    if (!host || !sal || smax <= 0) return -1;
+    for (i = 0; i < U_HTTP_GAL_N; i++)
+        if (gal_host[i][0] && gal_igual(gal_host[i], host)) {
+            int ln = 0, lv = 0;
+            while (gal_nom[i][ln]) ln++;
+            while (gal_val[i][lv]) lv++;
+            if (t + (n ? 2 : 8) + ln + 1 + lv + 2 >= smax) break;
+            if (!n) {
+                for (k = 0; pre[k]; k++) sal[t++] = pre[k];
+            } else {
+                for (k = 0; sep[k]; k++) sal[t++] = sep[k];
+            }
+            for (k = 0; k < ln; k++) sal[t++] = gal_nom[i][k];
+            sal[t++] = '=';
+            for (k = 0; k < lv; k++) sal[t++] = gal_val[i][k];
+            n++;
+        }
+    if (!n) {
+        sal[0] = 0;
+        return 0;
+    }
+    for (k = 0; fin[k]; k++) sal[t++] = fin[k];
+    sal[t] = 0;
+    return t;
+}
+
+int u_http_cabecera_n(const u_http_res_t *r, const char *nombre, int idx,
+                      char *sal, int smax) {
+    int i, k, n = 0;
+    if (!r || !nombre || idx < 0 || !sal || smax <= 0) return -1;
+    for (i = 0; i < r->ncab; i++) {
+        int j = 0, ig = 1;
+        while (nombre[j] && r->hnom[i][j]) {
+            char a = nombre[j], b = r->hnom[i][j];
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (b >= 'A' && b <= 'Z') b += 32;
+            if (a != b) {
+                ig = 0;
+                break;
+            }
+            j++;
+        }
+        if (!(ig && !nombre[j] && !r->hnom[i][j])) continue;
+        if (n++ < idx) continue;
+        {
+            int t = 0;
+            while (r->hval[i][t]) t++;
+            for (k = 0; k < t && k + 1 < smax; k++)
+                sal[k] = r->hval[i][k];
+            sal[k] = 0;
+            return t;
+        }
+    }
+    return -1;
+}
+/* Nucleo comun GET/POST (ver u_http_trae_x). metodo "GET" o "POST"
+   (0 = GET); extra son cabeceras "N: v\r\n" (p. ej. Cookie);
+   post/npost cuerpo a enviar (solo POST). Mismos codigos. */
+static int http_trae_x(const char *url, const char *metodo,
+                       const char *extra, const unsigned char *post,
+                       int npost, u_http_res_t *r, unsigned char *cuerpo,
+                       int capcuerpo, unsigned int espera_ms) {
     u_http_url_t u;
     unsigned int ip, fin;
-    int id, k, nbody = 0;
+    int id, k, nbody = 0, posteo = 0, esget = 0;
     if (!url || !r || !cuerpo || capcuerpo < 1) return -1;
+    if (!metodo || (metodo[0] == 'G' && metodo[1] == 'E' &&
+                    metodo[2] == 'T' && !metodo[3]))
+        esget = 1;
+    else if (metodo[0] == 'P' && metodo[1] == 'O' &&
+             metodo[2] == 'S' && metodo[3] == 'T' && !metodo[4])
+        posteo = 1;
+    else
+        return -1;
+    if (npost < 0 || npost > U_HTTP_MAX_CPO) return -1;
+    if (posteo && npost > 0 && !post) return -1;
     if (capcuerpo > U_HTTP_MAX_CPO) capcuerpo = U_HTTP_MAX_CPO;
     if (u_http_url(url, &u)) return -2;
     if (!espera_ms) espera_ms = 60000;
@@ -2221,7 +2428,12 @@ int u_http_trae(const char *url, u_http_res_t *r, unsigned char *cuerpo,
     if (id <= 0) return -5;
     {
         int npet, env = 0;
-        npet = u_http_pide(&u, 0, http_pet, (int)sizeof(http_pet));
+        if (posteo)
+            npet = u_http_pide_post(&u, extra, npost, http_pet,
+                                    (int)sizeof(http_pet));
+        else
+            npet = u_http_pide(&u, extra, http_pet,
+                               (int)sizeof(http_pet));
         if (npet < 0) {
             u_tcp_abortar(id);
             return -2;
@@ -2248,6 +2460,33 @@ int u_http_trae(const char *url, u_http_res_t *r, unsigned char *cuerpo,
             }
             u_tcp_abortar(id);
             return -5;
+        }
+        /* POST: cuerpo tras las cabeceras, en trozos de 536. */
+        if (posteo && npost > 0) {
+            int envp = 0;
+            while (envp < npost) {
+                int trozo = npost - envp, w;
+                if (trozo > 536) trozo = 536;
+                if ((int)(http_ahora() - fin) >= 0) {
+                    u_tcp_abortar(id);
+                    return -5;
+                }
+                w = u_tcp_enviar(id, post + envp, trozo);
+                if (w > 0) {
+                    if (w != trozo) {
+                        u_tcp_abortar(id);
+                        return -5;
+                    }
+                    envp += w;
+                    continue;
+                }
+                if (w == -8) {
+                    u_dormir(100);
+                    continue;
+                }
+                u_tcp_abortar(id);
+                return -5;
+            }
         }
     }
     for (;;) {
@@ -2308,6 +2547,20 @@ int u_http_trae(const char *url, u_http_res_t *r, unsigned char *cuerpo,
         (void)u_tcp_cerrar(id);
         return 0;
     }
+}
+
+int u_http_trae(const char *url, u_http_res_t *r, unsigned char *cuerpo,
+                int capcuerpo, unsigned int espera_ms) {
+    return http_trae_x(url, "GET", 0, 0, 0, r, cuerpo, capcuerpo,
+                       espera_ms);
+}
+
+int u_http_trae_x(const char *url, const char *metodo, const char *extra,
+                  const unsigned char *post, int npost, u_http_res_t *r,
+                  unsigned char *cuerpo, int capcuerpo,
+                  unsigned int espera_ms) {
+    return http_trae_x(url, metodo, extra, post, npost, r, cuerpo,
+                       capcuerpo, espera_ms);
 }
 
 /* ---- F7-C: HTML minimo (parser + URL + layout; sin JS/CSS) ----
@@ -3469,7 +3722,7 @@ static void html_cierra(html_st_t *e, int tag, int nh) {
         return;
     }
     if (tag == HT_FORM) {
-        if (e->en_forma && !e->f_met && e->f_ok && e->f_campo[0]) {
+        if (e->en_forma && e->f_ok && e->f_campo[0]) {
             int q = 0;
             while (e->f_acc[q] && q < U_HTML_URL - 1) {
                 e->d->forma[q] = e->f_acc[q];
@@ -3482,7 +3735,10 @@ static void html_cierra(html_st_t *e, int tag, int nh) {
                 q++;
             }
             e->d->campo[q] = 0;
-            e->d->hay_forma = 1;
+            if (e->f_met)
+                e->d->forma_post = 1;
+            else
+                e->d->hay_forma = 1;
         }
         e->en_forma = 0;
         nest_saca(e, tag);
@@ -3843,6 +4099,7 @@ int u_html_crea(u_html_doc_t *d) {
     d->forma[0] = 0;
     d->campo[0] = 0;
     d->hay_forma = 0;
+    d->forma_post = 0;
     return 0;
 }
 
@@ -3868,6 +4125,7 @@ void u_html_libera(u_html_doc_t *d) {
     d->forma[0] = 0;
     d->campo[0] = 0;
     d->hay_forma = 0;
+    d->forma_post = 0;
 }
 
 /* Inicializa el estado del parser (comun legacy/Hubbub): mismo
@@ -3908,6 +4166,7 @@ static void html_ini(html_st_t *e, u_html_doc_t *d, const char *base) {
     d->forma[0] = 0;
     d->campo[0] = 0;
     d->hay_forma = 0;
+    d->forma_post = 0;
 }
 
 int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,

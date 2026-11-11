@@ -369,6 +369,13 @@ int u_dns_cache_viva(unsigned int ins, unsigned int ttl,
 #define U_HTTP_MAX_CPO 262144   /* cuerpo acumulado (v2.4.3: 256K) */
 #define U_HTTP_NOM 64          /* nombre de cabecera */
 #define U_HTTP_VAL 256         /* valor de cabecera */
+/* v2.4.4 jar de cookies (solo memoria, sin disco): por proceso
+   (cada programa Ring3 es un proceso: sin fugas entre apps).
+   Coincidencia por host exacto (minusculas); se ignora
+   Path/Domain/Expires/Secure (sesion). Valores largos se truncan. */
+#define U_HTTP_GAL_N 48        /* entradas */
+#define U_HTTP_GAL_NOM 64      /* nombre */
+#define U_HTTP_GAL_VAL 192     /* valor */
 #define U_HTTP_ST_LINEA 0      /* esperando linea de estado */
 #define U_HTTP_ST_CAB 1        /* leyendo cabeceras */
 #define U_HTTP_ST_CUERPO 2     /* leyendo cuerpo */
@@ -429,6 +436,17 @@ int u_http_res_fin(u_http_res_t *r);
    Devuelve long del valor o -1 si no existe. */
 int u_http_cabecera(const u_http_res_t *r, const char *nombre,
                     char *sal, int smax);
+/* Igual pero aparicion idx (0 = primera): para Set-Cookie
+   multiples. Devuelve long o -1 si no hay tantas. */
+int u_http_cabecera_n(const u_http_res_t *r, const char *nombre, int idx,
+                      char *sal, int smax);
+/* Jar de cookies del proceso (ver U_HTTP_GAL_*). host en
+   minusculas (como u_http_url_t.host). 0 ok; guarda ignora
+   entradas vacias o host vacio. cab devuelve 0 si no hay
+   nada para ese host o "Cookie: n=v; ...\r\n" (long sin NUL). */
+void u_http_galleta_limpia(void);
+int u_http_galleta_guarda(const char *host, const char *setcookie);
+int u_http_galleta_cab(const char *host, char *sal, int smax);
 /* Trae una URL completa (DNS + TCP + HTTP + cierre).
    cuerpo[0..capcuerpo) recibe el cuerpo (capcuerpo<=65536).
    espera_ms 0=60000, tope 120000. Devuelve:
@@ -441,6 +459,20 @@ int u_http_cabecera(const u_http_res_t *r, const char *nombre,
 int u_http_trae(const char *url, u_http_res_t *r,
                 unsigned char *cuerpo, int capcuerpo,
                 unsigned int espera_ms);
+/* v2.4.4: trae con metodo y cabeceras extra. metodo "GET" o "POST"
+   (otro -> -1); extra son cabeceras "N: v\r\n" validadas (p. ej.
+   Cookie, o 0); post/npost cuerpo a enviar (solo POST, se ignora
+   en GET). Mismos codigos que u_http_trae; u_http_trae equivale a
+   metodo GET sin extra ni cuerpo. */
+int u_http_trae_x(const char *url, const char *metodo, const char *extra,
+                  const unsigned char *post, int npost, u_http_res_t *r,
+                  unsigned char *cuerpo, int capcuerpo,
+                  unsigned int espera_ms);
+/* Construye peticion POST en sal (como u_http_pide pero con
+   Content-Length: npost y Content-Type: application/x-www-form-
+   urlencoded; el cuerpo se envia aparte). Mismos codigos. */
+int u_http_pide_post(const u_http_url_t *u, const char *extra, int npost,
+                     char *sal, int smax);
 
 /* F7-C: HTML minimo en Ring 3 (patron codec DNS/HTTP). v2.4: CSS
    basico (color/background + negrita/cursiva; sin cascada completa)
@@ -526,6 +558,8 @@ typedef struct {
     char forma[U_HTML_URL];     /* v2.4: action absoluta (GET) o "" */
     char campo[64];             /* v2.4: nombre del input de texto o "" */
     int hay_forma;              /* v2.4: 1 si hay formulario GET usable */
+    int forma_post;             /* v2.4.4: 1 si hay formulario POST usable
+                                   (misma action/campo; method != get) */
 } u_html_doc_t;
 
 /* Crea/libera el documento (reserva heap). 0 ok, -1 sin memoria. */

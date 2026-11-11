@@ -37,6 +37,11 @@ Rutas:
   /busca[?q=...]        : resultados de busqueda de ejemplo.
   /grande-html          : 70 KB con Content-Length (cabe en 256K).
   /grande-chunked       : ~200 KB HTML en trozos chunked de 8K.
+  v2.4.4 (cookies + POST):
+  /galleta             : Set-Cookie sesion=abc123 + tema=oscuro.
+  /eco-cookie          : devuelve el Cookie recibido ("visto: ...").
+  /form-post           : formulario method=post action=/eco-post.
+  /eco-post            : devuelve el cuerpo POST ("visto: ...").
 """
 import socket
 import sys
@@ -56,6 +61,46 @@ def resp(code, motivo, headers, body):
     return h.encode("latin1") + body
 
 
+def cab(txt, nombre):
+    # v2.4.4: valor de cabecera de la peticion (insensible a Mayus).
+    nb = nombre.lower()
+    for lin in txt.split("\r\n")[1:]:
+        if not lin:
+            break
+        p = lin.find(":")
+        if p > 0 and lin[:p].strip().lower() == nb:
+            return lin[p + 1:].strip()
+    return ""
+
+
+def cuerpo_post(cn, d, txt):
+    # v2.4.4: cuerpo segun Content-Length (lo ya leido + resto).
+    n = 0
+    for lin in txt.split("\r\n")[1:]:
+        if not lin:
+            break
+        p = lin.find(":")
+        if p > 0 and lin[:p].strip().lower() == "content-length":
+            try:
+                n = int(lin[p + 1:].strip())
+            except ValueError:
+                n = 0
+            break
+    if n < 0 or n > 16384:
+        return b""
+    partes = d.split(b"\r\n\r\n", 1)
+    cuerpo = partes[1] if len(partes) > 1 else b""
+    while len(cuerpo) < n:
+        try:
+            t = cn.recv(min(4096, n - len(cuerpo)))
+        except OSError:
+            break
+        if not t:
+            break
+        cuerpo += t
+    return cuerpo[:n]
+
+
 def atiende(cn):
     try:
         cn.settimeout(10)
@@ -73,6 +118,7 @@ def atiende(cn):
             return
         lin = txt.split("\r\n", 1)[0]
         partes = lin.split(" ")
+        metodo = partes[0] if partes else ""
         path = partes[1] if len(partes) > 1 else "/"
         print("stub: %r -> %s" % (lin[:80], path), flush=True)
         if path == "/normal" or path == "/conlongitud":
@@ -302,6 +348,49 @@ def atiende(cn):
                 time.sleep(0.02)
             cn.sendall(("0\r\nX-Partes: %d\r\n\r\n" %
                         (len(body) // 8192 + 1)).encode("latin1"))
+        elif path == "/galleta":
+            # v2.4.4: dos Set-Cookie (prueba jar multiple + attrs).
+            body = ("<html><head><title>Galleta</title></head><body>"
+                    "<h1>Sesion</h1><p><a href=\"/eco-cookie\">"
+                    "ver cookie</a></p></body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/html"),
+                          ("Set-Cookie", "sesion=abc123; Path=/"),
+                          ("Set-Cookie", "tema=oscuro; Path=/"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/eco-cookie":
+            ck = cab(txt, "cookie")
+            print("stub: Cookie: %r" % ck, flush=True)
+            body = ("visto: " + (ck if ck else "vacio")).encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/plain"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/form-post":
+            body = ("<html><head><title>FormaPost</title></head><body>"
+                    "<h1>Entra</h1>"
+                    "<form method=\"post\" action=\"/eco-post\">"
+                    "<input name=\"q\"></form>"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/html"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/eco-post":
+            if metodo != "POST":
+                cn.sendall(resp(405, "Method",
+                             [("Content-Type", "text/plain"),
+                              ("Content-Length", "10")],
+                             b"solo POST\n"))
+            else:
+                cpo = cuerpo_post(cn, d, txt)
+                print("stub: POST %d B" % len(cpo), flush=True)
+                body = b"visto: " + cpo
+                cn.sendall(resp(200, "OK",
+                             [("Content-Type", "text/plain"),
+                              ("Content-Length", str(len(body)))],
+                             body))
         else:
             cn.sendall(resp(404, "Not Found",
                              [("Content-Type", "text/plain"),
