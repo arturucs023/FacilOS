@@ -560,6 +560,8 @@ typedef struct {
     int hay_forma;              /* v2.4: 1 si hay formulario GET usable */
     int forma_post;             /* v2.4.4: 1 si hay formulario POST usable
                                    (misma action/campo; method != get) */
+    int img_fil[U_HTML_MAX_IMG]; /* filas por imagen (0 = 1 placeholder);
+                                   lo rellena el visor tras decodificar */
 } u_html_doc_t;
 
 /* Crea/libera el documento (reserva heap). 0 ok, -1 sin memoria. */
@@ -601,6 +603,25 @@ typedef struct {
    Devuelve nfilas (0 = documento vacio) o -1 por args. */
 int u_html_maqueta(const u_html_doc_t *d, int cols,
                    u_html_fila_t *filas, int maxfilas);
+
+/* F7-D: imagenes raster (BMP/GIF) para fbrowser. Solo memoria,
+   sin libc. Decodifica a miniatura RGB acotada (sin ampliar). */
+#define U_IMG_MAX_PX 65536     /* tope de decodificacion (256x256) */
+#define U_IMG_MAX_DIM 512      /* tope por lado */
+#define U_IMG_BOX_W 120        /* caja de miniatura */
+#define U_IMG_BOX_H 64
+#define U_IMG_N 8              /* imagenes por pagina (fbrowser) */
+typedef struct {
+    int w, h;                  /* miniatura 1..BOX (0 si vacia) */
+    unsigned char *px;         /* RGB w*h*3 (heap) o 0 */
+} u_img_t;
+/* BMP (BI_RGB 1/4/8/24/32) o GIF87a/89a (primer frame, con/sin
+   entrelace; transparencia = negro). Rellena o (px en heap).
+   0 ok; -1 args; -2 formato/magica o truncado; -3 no soportado
+   (BMP comprimido, GIF sin tabla); -4 demasiado grande;
+   -5 sin memoria. */
+int u_img_dec(const unsigned char *d, int n, u_img_t *o);
+void u_img_lib(u_img_t *o);
 
 #ifdef __cplusplus
 }

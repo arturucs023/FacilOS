@@ -45,6 +45,10 @@ Rutas:
   redirecciones (sin version: el codigo 301/302 nunca se probo):
   /redir               : 302 a /redir2 (cadena de 2 saltos).
   /redir2              : 302 a /pagina + Set-Cookie ruta=redir.
+  imagenes (BMP/GIF):
+  /foto.bmp            : BMP 24-bit 48x32 (mosaico 8 colores).
+  /foto.gif            : GIF 48x32 (mismo mosaico).
+  /img-bmp             : pagina con <img> bmp + gif.
 """
 import socket
 import sys
@@ -54,6 +58,23 @@ import time
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18080
 
 CUERPO8K = bytes(((i * 131 + 7) & 0xFF) for i in range(8192))
+
+# GIF 48x32 real (8 colores; mismo mosaico que /foto.bmp).
+GIF_FOTO = bytes.fromhex(
+    "47494638376130002000820000e61e1e1ec81e1e50e6f0c81ec828b41"
+    "ec8c8f0f0f01414142c00000000300020004008ff0001081c18a0a041"
+    "0108130e58c89080c38705224a3440b1e2818b18132a64b8f02144891"
+    "12b5ac47871204183053d3a041952a40192254d0240595023428e0b5d"
+    "be842973264d9b02700e50498065019a01800a256a5427cc033d97aa"
+    "6ceaf2694fa440a98ab42a13ab4da91eb99af4aa11ec47903aaffefc8"
+    "a93294ba730c96ee4e8166d559e3295b69dfaf62e49b528cdaeecbb1"
+    "5efd8b51aeb4ef48b11f041b61cb58efcdb15f1dc862ae1523e8c522f"
+    "5dbe20c59eec0c19b347c9141dd72cdd11f4e2c29b473f2ebbf734e1c"
+    "918e5deac7df635ee989c675f6e6ddb2eecc679590f75ddf23870d9ab"
+    "697f2eee9ba26881480517bd6ddd30f4a4ca153751ff0db532e9c4cc0"
+    "b68461e3cfaf0e5d4c7778f8dddf2eec8dc77d2f779febd78f58c3d57"
+    "5f7ff799f6d07a02f2275c81c4f5269f7eec7de799818385e6dd800b0"
+    "6c55b85d54198a06e1a4ee72080220504003b")
 
 
 def resp(code, motivo, headers, body):
@@ -408,6 +429,42 @@ def atiende(cn):
                           ("Set-Cookie", "ruta=redir; Path=/"),
                           ("Content-Length", "0")],
                          b""))
+        elif path == "/foto.bmp":
+            # BMP 24-bit 48x32: 8 bloques de color (4px/6px).
+            import struct as _st
+            pal = [(230, 30, 30), (30, 200, 30), (30, 80, 230),
+                   (240, 200, 30), (200, 40, 180), (30, 200, 200),
+                   (240, 240, 240), (20, 20, 20)]
+            px = b""
+            for yy in range(32):
+                for xx in range(48):
+                    c = pal[(xx // 6 + (31 - yy) // 4) % 8]
+                    px += bytes((c[2], c[1], c[0]))
+            hd = _st.pack("<2sIHHI", b"BM", 54 + len(px), 0, 0, 54)
+            hd += _st.pack("<IIIHHIIIIII", 40, 48, 32, 1, 24, 0,
+                           len(px), 0, 0, 0, 0)
+            body = hd + px
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "image/bmp"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/foto.gif":
+            body = GIF_FOTO
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "image/gif"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/img-bmp":
+            body = ("<html><head><title>Fotos2</title></head><body>"
+                    "<h2>Fotos BMP+GIF</h2>"
+                    "<img src=\"/foto.bmp\" alt=\"mosaico\">"
+                    "<p>Entre medias.</p>"
+                    "<img src=\"/foto.gif\" alt=\"trama\">"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/html"),
+                          ("Content-Length", str(len(body)))],
+                         body))
         else:
             cn.sendall(resp(404, "Not Found",
                              [("Content-Type", "text/plain"),

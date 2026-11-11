@@ -829,6 +829,255 @@ static void prueba_galletas(void) {
     }
 }
 
+/* Vectores de referencia (generados con PIL): BMP24 4x3,
+   GIF 4x3 (2-4 colores) y GIF 16x16 entrelazado. */
+static const unsigned char VBMP24[] = {
+    0x42, 0x4d, 0x5a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, 0x00,
+    0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x03, 0x00,
+    0x00, 0x00, 0x01, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x00,
+    0x00, 0x00, 0xc4, 0x0e, 0x00, 0x00, 0xc4, 0x0e, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff, 0xff, 0xff,
+    0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0x00,
+    0xff, 0xff, 0xff, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff, 0x00, 0xff, 0x00,
+    0xff, 0x00, 0x00, 0xff, 0xff, 0xff,
+};
+static const unsigned char VGIF43[] = {
+    0x47, 0x49, 0x46, 0x38, 0x37, 0x61, 0x04, 0x00, 0x03, 0x00, 0x81, 0x00,
+    0x00, 0xff, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff,
+    0xff, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x03, 0x00, 0x00, 0x08,
+    0x0d, 0x00, 0x01, 0x04, 0x10, 0x30, 0x60, 0xe0, 0x00, 0x00, 0x04, 0x05,
+    0x06, 0x04, 0x00, 0x3b,
+};
+static const unsigned char VGIF16[] = {
+    0x47, 0x49, 0x46, 0x38, 0x37, 0x61, 0x10, 0x00, 0x10, 0x00, 0x83, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x10, 0x0d, 0x1d, 0x20, 0x1a, 0x3a, 0x30, 0x27,
+    0x57, 0x40, 0x34, 0x74, 0x50, 0x41, 0x91, 0x60, 0x4e, 0xae, 0x70, 0x5b,
+    0xcb, 0x80, 0x68, 0xe8, 0x90, 0x75, 0x05, 0xa0, 0x82, 0x22, 0xb0, 0x8f,
+    0x3f, 0xc0, 0x9c, 0x5c, 0xd0, 0xa9, 0x79, 0xe0, 0xb6, 0x96, 0xf0, 0xc3,
+    0xb3, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00, 0x40, 0x08,
+    0x69, 0x00, 0x01, 0x04, 0x10, 0x30, 0x80, 0x40, 0x01, 0x03, 0x07, 0x10,
+    0x24, 0x50, 0xb0, 0x80, 0x41, 0x03, 0x07, 0x0f, 0x14, 0x32, 0x74, 0x08,
+    0x51, 0x20, 0x41, 0x83, 0x08, 0x31, 0x26, 0x5c, 0xd8, 0xf0, 0xe1, 0x03,
+    0x8b, 0x03, 0x28, 0x7e, 0x1c, 0x58, 0xf0, 0xe0, 0x46, 0x86, 0x17, 0x4d,
+    0x4a, 0xec, 0x58, 0x31, 0x00, 0xc2, 0x95, 0x22, 0x41, 0x1a, 0x9c, 0xe8,
+    0x51, 0xa6, 0xca, 0x04, 0x2d, 0x53, 0xbe, 0xe4, 0xe8, 0x90, 0xa4, 0x46,
+    0x98, 0x35, 0x4b, 0xee, 0xa4, 0x99, 0xf3, 0x26, 0xd1, 0x91, 0x17, 0x4f,
+    0xb2, 0x44, 0x2a, 0x94, 0x67, 0x4d, 0x9f, 0x2a, 0x97, 0xda, 0x1c, 0xfa,
+    0x54, 0xa7, 0x52, 0x06, 0x4c, 0x7f, 0x3a, 0x75, 0x10, 0x10, 0x00, 0x3b,
+};
+
+static int px_igual(const unsigned char *px, int r, int g, int b) {
+    return px[0] == r && px[1] == g && px[2] == b;
+}
+
+static void prueba_img(void) {
+    u_print("t_fb: img...\n");
+    ok(u_img_dec(0, 10, 0) == -1, "img-args-nul");
+    {
+        u_img_t o;
+        static unsigned char tb[16];
+        o.w = 1;
+        o.px = tb;
+        ok(u_img_dec(VBMP24, (int)sizeof(VBMP24), 0) == -1,
+           "img-args-sal-nul");
+        u_img_lib(&o);
+        ok(o.px == 0 && o.w == 0, "img-lib-limpia");
+    }
+    {
+        /* BMP 24-bit 4x3: fila 0 = rojo,verde,azul,blanco */
+        u_img_t o;
+        static const unsigned char esp0[12] = {
+            255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255
+        };
+        static const unsigned char esp2[12] = {
+            0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 0
+        };
+        int i, bien0 = 1, bien2 = 1;
+        ok(u_img_dec(VBMP24, (int)sizeof(VBMP24), &o) == 0,
+           "img-bmp24-ok");
+        ok(o.w == 4 && o.h == 3 && o.px != 0, "img-bmp24-dims");
+        for (i = 0; i < 12; i++) {
+            if (o.px[i] != esp0[i]) bien0 = 0;
+            if (o.px[24 + i] != esp2[i]) bien2 = 0;
+        }
+        ok(bien0, "img-bmp24-fila0");
+        ok(bien2, "img-bmp24-fila2");
+        u_img_lib(&o);
+    }
+    {
+        /* BMP 8-bit 4x2 construido (paleta rojo,verde,azul,blanco):
+           fila 0 = 0,1,2,3; fila 1 = 3,2,1,0. */
+        static unsigned char m[80];
+        u_img_t o;
+        int i;
+        for (i = 0; i < 80; i++) m[i] = 0;
+        m[0] = 'B';
+        m[1] = 'M';
+        m[10] = 70;
+        m[14] = 40;
+        m[18] = 4;
+        m[22] = 2;
+        m[26] = 1;
+        m[28] = 8;
+        m[46] = 4;
+        m[54] = 0;
+        m[55] = 0;
+        m[56] = 255;
+        m[58] = 0;
+        m[59] = 255;
+        m[60] = 0;
+        m[62] = 0;
+        m[63] = 0;
+        m[64] = 255;
+        m[65] = 0;
+        m[66] = 255;
+        m[67] = 255;
+        m[68] = 255;
+        m[70] = 3;
+        m[71] = 2;
+        m[72] = 1;
+        m[73] = 0;
+        m[74] = 0;
+        m[75] = 1;
+        m[76] = 2;
+        m[77] = 3;
+        ok(u_img_dec(m, 78, &o) == 0, "img-bmp8-ok");
+        ok(o.w == 4 && o.h == 2, "img-bmp8-dims");
+        ok(px_igual(o.px, 255, 0, 0) &&
+           px_igual(o.px + 9, 255, 255, 255), "img-bmp8-filas");
+        ok(px_igual(o.px + 12, 255, 255, 255) &&
+           px_igual(o.px + 21, 255, 0, 0), "img-bmp8-abajo");
+        u_img_lib(&o);
+    }
+    {
+        /* BMP 1-bit 200x10 blanco: escala a 120x6. */
+        static unsigned char m[512];
+        u_img_t o;
+        int i, j, todo = 1;
+        for (i = 0; i < 512; i++) m[i] = 0;
+        m[0] = 'B';
+        m[1] = 'M';
+        m[10] = 62;
+        m[14] = 40;
+        m[18] = 200;
+        m[22] = 10;
+        m[26] = 1;
+        m[28] = 1;
+        m[58] = 255;
+        m[59] = 255;
+        m[60] = 255;
+        for (j = 0; j < 10; j++)
+            for (i = 0; i < 28; i++) m[62 + j * 28 + i] = 0xFF;
+        ok(u_img_dec(m, 342, &o) == 0, "img-bmp1-ok");
+        ok(o.w == 120 && o.h == 6, "img-bmp1-escala");
+        for (i = 0; i < 120 * 6 * 3; i++)
+            if (o.px[i] != 255) todo = 0;
+        ok(todo, "img-bmp1-blanco");
+        u_img_lib(&o);
+    }
+    {
+        /* BMP RLE (compresion=1) -> -3 sin colgarse. */
+        static unsigned char m[90];
+        u_img_t o;
+        int i;
+        for (i = 0; i < 90; i++) m[i] = VBMP24[i];
+        m[30] = 1;
+        ok(u_img_dec(m, 90, &o) == -3, "img-bmp-rle");
+        ok(o.px == 0, "img-bmp-rle-limpio");
+    }
+    {
+        /* BMP 1000x1000 declarado -> -4 sin reservar. */
+        static unsigned char m[54];
+        u_img_t o;
+        int i;
+        for (i = 0; i < 54; i++) m[i] = 0;
+        m[0] = 'B';
+        m[1] = 'M';
+        m[10] = 54;
+        m[14] = 40;
+        m[18] = 232;
+        m[19] = 3;
+        m[22] = 232;
+        m[23] = 3;
+        m[26] = 1;
+        m[28] = 24;
+        ok(u_img_dec(m, 54, &o) == -4, "img-bmp-grande");
+    }
+    {
+        /* BMP truncado ("BM" + 10 B) -> -2. */
+        static const unsigned char m[] = {
+            'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        };
+        u_img_t o;
+        ok(u_img_dec(m, (int)sizeof(m), &o) == -2,
+           "img-bmp-corto");
+    }
+    {
+        /* GIF 4x3: fila 0 = rojo,verde,azul,blanco. */
+        u_img_t o;
+        ok(u_img_dec(VGIF43, (int)sizeof(VGIF43), &o) == 0,
+           "img-gif-ok");
+        ok(o.w == 4 && o.h == 3 && o.px != 0, "img-gif-dims");
+        ok(px_igual(o.px, 255, 0, 0) &&
+           px_igual(o.px + 3, 0, 255, 0) &&
+           px_igual(o.px + 6, 0, 0, 255) &&
+           px_igual(o.px + 9, 255, 255, 255), "img-gif-fila0");
+        ok(px_igual(o.px + 24, 0, 0, 255) &&
+           px_igual(o.px + 33, 0, 255, 0), "img-gif-fila2");
+        u_img_lib(&o);
+    }
+    {
+        /* GIF 16x16 entrelazado: suma RGB de referencia. */
+        u_img_t o;
+        int i, s = 0;
+        ok(u_img_dec(VGIF16, (int)sizeof(VGIF16), &o) == 0,
+           "img-gif16-ok");
+        ok(o.w == 16 && o.h == 16, "img-gif16-dims");
+        for (i = 0; i < 16 * 16 * 3; i++) s += o.px[i];
+        ok(s == 82688, "img-gif16-suma");
+        u_img_lib(&o);
+    }
+    {
+        /* Magia mala y GIF truncado -> -2. */
+        static const unsigned char m1[] = {
+            'G', 'I', 'F', '8', '0', 'a', 0, 0, 0, 0, 0, 0, 0
+        };
+        static const unsigned char m2[] = {
+            'G', 'I', 'F', '8', '9', 'a'
+        };
+        u_img_t o;
+        ok(u_img_dec(m1, (int)sizeof(m1), &o) == -2,
+           "img-gif-malo");
+        ok(u_img_dec(m2, (int)sizeof(m2), &o) == -2,
+           "img-gif-corto");
+        ok(u_img_dec(VGIF43, 20, &o) == -2, "img-gif-trunco");
+    }
+    {
+        /* Layout: img_fil=3 -> 3 filas E_IMG con mismo indice. */
+        int nf, i, c3 = 0, c1 = 0;
+        suelta();
+        ok(parsea("<img src=\"/i.png\" alt=\"f\">", "http://a/") ==
+           0, "img-maq-parsea");
+        d.img_fil[0] = 3;
+        nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+        for (i = 0; i < nf; i++) {
+            if (filas[i].estilo == U_HTML_E_IMG && filas[i].img == 0)
+                c3++;
+        }
+        ok(nf > 0 && c3 == 3, "img-maq-3filas");
+        suelta();
+        ok(parsea("<img src=\"/i.png\" alt=\"f\">", "http://a/") ==
+           0, "img-maq-parsea2");
+        nf = u_html_maqueta(&d, 40, filas, U_HTML_MAX_FILA);
+        for (i = 0; i < nf; i++) {
+            if (filas[i].estilo == U_HTML_E_IMG && filas[i].img == 0)
+                c1++;
+        }
+        ok(nf > 0 && c1 == 1, "img-maq-1fila");
+        suelta();
+    }
+}
+
 /* Redirecciones 301/302: el codigo las sigue (max 3 saltos) pero
    nunca se probaron. Unitaria del parser + viva del 302 crudo
    (u_http_trae no sigue; el seguimiento lo verifica el harness). */
@@ -1239,6 +1488,49 @@ static void prueba_viva(const char *base) {    static unsigned char cpo[8192];
         }
     }
     {
+        /* Imagenes por cable: BMP y GIF del stub -> decodifican. */
+        char u[128];
+        u_img_t o;
+        int i = 0, s;
+        while (base[i] && i < 110) {
+            u[i] = base[i];
+            i++;
+        }
+        u[i++] = '/';
+        u[i++] = 'f';
+        u[i++] = 'o';
+        u[i++] = 't';
+        u[i++] = 'o';
+        u[i++] = '.';
+        u[i++] = 'b';
+        u[i++] = 'm';
+        u[i++] = 'p';
+        u[i] = 0;
+        k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+        ok(k == 0 && r.codigo == 200, "viva-bmp-200");
+        if (k == 0) {
+            ok(u_img_dec(cpo, (int)r.cuerpo_n, &o) == 0,
+               "img-bmp-red");
+            ok(o.w == 48 && o.h == 32, "img-bmp-red-dims");
+            ok(px_igual(o.px, 230, 30, 30), "img-bmp-red-px0");
+            u_img_lib(&o);
+        }
+        u[i - 3] = 'g';
+        u[i - 2] = 'i';
+        u[i - 1] = 'f';
+        k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+        ok(k == 0 && r.codigo == 200, "viva-gif-200");
+        if (k == 0) {
+            ok(u_img_dec(cpo, (int)r.cuerpo_n, &o) == 0,
+               "img-gif-red");
+            ok(o.w == 48 && o.h == 32, "img-gif-red-dims");
+            s = 0;
+            for (i = 0; i < o.w * o.h * 3; i++) s += o.px[i];
+            ok(s == 574080, "img-gif-red-suma");
+            u_img_lib(&o);
+        }
+    }
+    {
         char u[128];
         int i = 0;
         while (base[i] && i < 120) {
@@ -1352,6 +1644,7 @@ int main(void) {
     prueba_cablarga();
     prueba_galletas();
     prueba_redir();
+    prueba_img();
     prueba_layout();
     prueba_css();
     prueba_forma();

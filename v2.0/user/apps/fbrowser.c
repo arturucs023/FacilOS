@@ -38,6 +38,13 @@ static char base_busca[U_HTML_URL + 1];
 static int detener;
 static int nfetches;
 static int tiene_red;
+/* Miniaturas de la pagina (heap, U_IMG_N maximo). */
+static u_img_t fimg[U_IMG_N];
+
+static void fimg_libera(void) {
+    int i;
+    for (i = 0; i < U_IMG_N; i++) u_img_lib(&fimg[i]);
+}
 
 static unsigned int ahora(void) {
     int t = u_ticks();
@@ -386,6 +393,35 @@ static void navegar(const char *entrada, int empujar) {
         doc = nd;
         tiene_doc = 1;
         filas_cols = 0;
+        /* Imagenes: descarga + decodifica las primeras U_IMG_N
+           (reusa cuerpo: la pagina ya esta en doc). Falla alguna
+           -> placeholder, nunca bloquea la pagina. */
+        {
+            int gi;
+            fimg_libera();
+            for (gi = 0; gi < doc.nimg && gi < U_IMG_N; gi++) {
+                u_http_res_t ri;
+                u_http_url_t uhi;
+                char xh[2048];
+                int ki;
+                if (!doc.img[gi].src[0]) continue;
+                if (u_http_url(doc.img[gi].src, &uhi) != 0 ||
+                    !uhi.host[0])
+                    continue;
+                xh[0] = 0;
+                u_http_galleta_cab(uhi.host, xh, (int)sizeof(xh));
+                u_http_res_inicia(&ri);
+                ki = u_http_trae_x(doc.img[gi].src, "GET",
+                                   xh[0] ? xh : 0, 0, 0, &ri, cuerpo,
+                                   U_HTTP_MAX_CPO, 10000u);
+                if (ki != 0 || ri.codigo != 200) continue;
+                if (u_img_dec(cuerpo, (int)ri.cuerpo_n,
+                              &fimg[gi]) != 0)
+                    continue;
+                if (fimg[gi].h > 0)
+                    doc.img_fil[gi] = (fimg[gi].h + 15) / 16;
+            }
+        }
     }
     u_strcpy(url, u);
     u_strcpy(bar, u);
@@ -519,7 +555,50 @@ static void dibuja(void) {
                 continue;
             }
             if (filas[f].estilo == U_HTML_E_IMG) {
-                int gi = filas[f].img;
+                int gi = filas[f].img, band = f;
+                /* Banda vertical: filas E_IMG consecutivas con el
+                   mismo indice forman la miniatura (16 px cada una). */
+                while (band > 0 &&
+                       filas[band - 1].estilo == U_HTML_E_IMG &&
+                       filas[band - 1].img == gi)
+                    band--;
+                band = f - band;
+                if (gi >= 0 && gi < U_IMG_N && gi < doc.nimg &&
+                    fimg[gi].px && fimg[gi].w > 0 &&
+                    fimg[gi].h > 0 && band * 16 < fimg[gi].h) {
+                    int th = fimg[gi].h, tw = fimg[gi].w, yy, xx;
+                    for (yy = 0; yy < 16 && band * 16 + yy < th;
+                         yy++) {
+                        unsigned char *pr =
+                            fimg[gi].px +
+                            ((band * 16 + yy) * tw) * 3;
+                        for (xx = 0; xx < tw; xx++) {
+                            int rgb = ((int)pr[xx * 3] << 16) |
+                                      ((int)pr[xx * 3 + 1] << 8) |
+                                      (int)pr[xx * 3 + 2];
+                            ug_pixel(&v, x + xx, y + yy,
+                                     0x01000000 | rgb);
+                        }
+                    }
+                    /* Alt solo en la primera banda. */
+                    if (!band) {
+                        if (gi < doc.nimg && doc.img[gi].alt[0]) {
+                            q = 0;
+                            while (doc.img[gi].alt[q] && q < 60) {
+                                tmp[q] = doc.img[gi].alt[q];
+                                q++;
+                            }
+                            tmp[q] = 0;
+                        } else {
+                            tmp[0] = 'i';
+                            tmp[1] = 'm';
+                            tmp[2] = 'g';
+                            tmp[3] = 0;
+                        }
+                        ug_texto(&v, x + tw + 4, y, tmp, C_GRIS);
+                    }
+                    continue;
+                }
                 ug_rect(&v, x, y + 2, 34, 12, T_ACENTO);
                 ug_linea(&v, x, y + 2, x + 34, y + 14, T_ACENTO);
                 ug_linea(&v, x + 34, y + 2, x, y + 14, T_ACENTO);

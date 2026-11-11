@@ -4100,6 +4100,10 @@ int u_html_crea(u_html_doc_t *d) {
     d->campo[0] = 0;
     d->hay_forma = 0;
     d->forma_post = 0;
+    {
+        int qi;
+        for (qi = 0; qi < U_HTML_MAX_IMG; qi++) d->img_fil[qi] = 0;
+    }
     return 0;
 }
 
@@ -4126,6 +4130,10 @@ void u_html_libera(u_html_doc_t *d) {
     d->campo[0] = 0;
     d->hay_forma = 0;
     d->forma_post = 0;
+    {
+        int qi;
+        for (qi = 0; qi < U_HTML_MAX_IMG; qi++) d->img_fil[qi] = 0;
+    }
 }
 
 /* Inicializa el estado del parser (comun legacy/Hubbub): mismo
@@ -4167,6 +4175,10 @@ static void html_ini(html_st_t *e, u_html_doc_t *d, const char *base) {
     d->campo[0] = 0;
     d->hay_forma = 0;
     d->forma_post = 0;
+    {
+        int qi;
+        for (qi = 0; qi < U_HTML_MAX_IMG; qi++) d->img_fil[qi] = 0;
+    }
 }
 
 int u_html_parse(u_html_doc_t *d, const unsigned char *pg, int n,
@@ -4635,15 +4647,24 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
             continue;
         }
         if (bl->tipo == U_HTML_B_IMG) {
-            filas[nf].ini = 0;
-            filas[nf].len = 0;
-            filas[nf].x = 2;
-            filas[nf].estilo = U_HTML_E_IMG;
+            int fr = 1, k;
+            /* Con miniatura decodificada (img_fil>0) la imagen ocupa
+               varias filas de texto (16 px cada una). */
+            if (bl->img >= 0 && bl->img < U_HTML_MAX_IMG &&
+                d->img_fil[bl->img] > 1)
+                fr = d->img_fil[bl->img];
+            if (fr > 16) fr = 16;
+            for (k = 0; k < fr && nf < maxfilas; k++) {
+                filas[nf].ini = 0;
+                filas[nf].len = 0;
+                filas[nf].x = 2;
+                filas[nf].estilo = U_HTML_E_IMG;
                 filas[nf].fg = -1;
                 filas[nf].bg = -1;
-            filas[nf].enlace = -1;
-            filas[nf].img = bl->img;
-            nf++;
+                filas[nf].enlace = -1;
+                filas[nf].img = bl->img;
+                nf++;
+            }
             continue;
         }
         if (bl->tipo == U_HTML_B_LI) {
@@ -4749,4 +4770,437 @@ int u_html_maqueta(const u_html_doc_t *d, int cols,
         }
     }
     return nf;
+}
+
+/* ---- F7-D: imagenes BMP/GIF (miniatura RGB para fbrowser) ----
+   Sin libc: solo u_* y bucles acotados. BMP BI_RGB (1/4/8/24/32)
+   y GIF87a/89a (primer frame, entrelace si/no, transparencia =
+   negro). Todo truncado/comprimido ajeno -> error, nunca cuelgue.
+   La salida es miniatura encajada en U_IMG_BOX_* (sin ampliar). */
+
+static unsigned img_le16(const unsigned char *p) {
+    return (unsigned)p[0] | ((unsigned)p[1] << 8);
+}
+
+static unsigned img_le32(const unsigned char *p) {
+    return (unsigned)p[0] | ((unsigned)p[1] << 8) |
+           ((unsigned)p[2] << 16) | ((unsigned)p[3] << 24);
+}
+
+void u_img_lib(u_img_t *o) {
+    if (!o) return;
+    if (o->px) u_free(o->px);
+    o->px = 0;
+    o->w = o->h = 0;
+}
+
+/* Reduce full[w*h] a la caja (sin ampliar) en o (px en heap). */
+static int img_mini(const unsigned char *full, int w, int h,
+                    u_img_t *o) {
+    int tw = w, th = h;
+    unsigned char *px;
+    int x, y;
+    if (!full || w < 1 || h < 1 || !o) return -1;
+    if (tw > U_IMG_BOX_W) {
+        th = th * U_IMG_BOX_W / tw;
+        tw = U_IMG_BOX_W;
+    }
+    if (th > U_IMG_BOX_H) {
+        tw = tw * U_IMG_BOX_H / th;
+        th = U_IMG_BOX_H;
+    }
+    if (tw < 1) tw = 1;
+    if (th < 1) th = 1;
+    px = (unsigned char *)u_malloc(tw * th * 3);
+    if (!px) return -5;
+    for (y = 0; y < th; y++) {
+        int sy = y * h / th, k;
+        for (x = 0; x < tw; x++) {
+            int sx = x * w / tw;
+            const unsigned char *f = full + (sy * w + sx) * 3;
+            unsigned char *q = px + (y * tw + x) * 3;
+            for (k = 0; k < 3; k++) q[k] = f[k];
+        }
+    }
+    o->w = tw;
+    o->h = th;
+    o->px = px;
+    return 0;
+}
+
+static int img_bmp(const unsigned char *d, int n, u_img_t *o) {
+    unsigned doff, dib;
+    int w, ah, top = 0, bpp;
+    unsigned paloff = 0, entry = 0, ncols = 0;
+    unsigned stride;
+    unsigned char *full = 0;
+    int x, y, q;
+    if (n < 26) return -2;
+    doff = img_le32(d + 10);
+    dib = img_le32(d + 14);
+    if (dib == 12) {
+        if (n < 26) return -2;
+        w = (int)img_le16(d + 18);
+        ah = (int)img_le16(d + 20);
+        if (img_le16(d + 22) != 1) return -2;
+        bpp = (int)img_le16(d + 24);
+        paloff = 26;
+        entry = 3;
+    } else if (dib == 40) {        long wl;
+        int ih;
+        if (n < 54) return -2;
+        wl = (long)((int)img_le32(d + 18));
+        ih = (int)img_le32(d + 22);
+        if (wl < 1 || wl > U_IMG_MAX_DIM) return wl < 1 ? -2 : -4;
+        if (ih == 0 || ih > U_IMG_MAX_DIM || ih < -U_IMG_MAX_DIM)
+            return ih == 0 ? -2 : -4;
+        if (img_le16(d + 26) != 1) return -2;
+        bpp = (int)img_le16(d + 28);
+        if (img_le32(d + 30) != 0) return -3;
+        w = (int)wl;
+        ah = ih < 0 ? -ih : ih;
+        top = ih < 0 ? 1 : 0;
+        paloff = 14 + 40;
+        entry = 4;
+        {
+            unsigned usada = img_le32(d + 46);
+            ncols = (unsigned)1 << bpp;
+            if (bpp > 8) ncols = 0;
+            if (bpp <= 8 && usada > ncols) ncols = usada;
+        }
+    } else {
+        return -2;
+    }
+    if (bpp != 1 && bpp != 4 && bpp != 8 && bpp != 24 && bpp != 32)
+        return -3;
+    if (w < 1 || ah < 1) return -2;
+    if (w > U_IMG_MAX_DIM || ah > U_IMG_MAX_DIM) return -4;
+    if ((long)w * (long)ah > U_IMG_MAX_PX) return -4;
+    if (bpp <= 8) {
+        unsigned hay, minoff = dib == 12 ? 26u : 54u;
+        if (doff < minoff || doff > (unsigned)n) return -2;
+        hay = (doff - paloff) / entry;
+        if (!ncols) ncols = (unsigned)1 << bpp;
+        if (ncols > hay) ncols = hay;
+        if (!ncols) return -2;
+    }
+    if (bpp == 24)
+        stride = ((unsigned)w * 3 + 3) & ~3u;
+    else if (bpp == 32)
+        stride = (unsigned)w * 4;
+    else if (bpp == 8)
+        stride = ((unsigned)w + 3) & ~3u;
+    else if (bpp == 4)
+        stride = (((unsigned)w + 1) / 2 + 3) & ~3u;
+    else
+        stride = (((unsigned)w + 7) / 8 + 3) & ~3u;
+    if (doff > (unsigned)n) return -2;
+    if (doff < (dib == 12 ? 26u : 54u)) return -2;
+    if ((unsigned)ah > ((unsigned)n - doff) / stride) return -2;
+    full = (unsigned char *)u_malloc(w * ah * 3);
+    if (!full) return -5;
+    for (y = 0; y < ah; y++) {
+        int sy = top ? y : ah - 1 - y;
+        const unsigned char *f = d + doff + (unsigned)sy * stride;
+        unsigned char *q0 = full + (unsigned)y * (unsigned)w * 3;
+        for (x = 0; x < w; x++) {
+            unsigned char *q1 = q0 + (unsigned)x * 3;
+            if (bpp == 24) {
+                q1[0] = f[x * 3 + 2];
+                q1[1] = f[x * 3 + 1];
+                q1[2] = f[x * 3];
+            } else if (bpp == 32) {
+                q1[0] = f[x * 4 + 2];
+                q1[1] = f[x * 4 + 1];
+                q1[2] = f[x * 4];
+            } else {
+                unsigned idx;
+                if (bpp == 8)
+                    idx = f[x];
+                else if (bpp == 4)
+                    idx = (x & 1) ? (unsigned)(f[x / 2] & 15)
+                                  : (unsigned)((f[x / 2] >> 4) & 15);
+                else
+                    idx = (unsigned)((f[x / 8] >> (7 - (x & 7))) & 1);
+                if (idx >= ncols) {
+                    q1[0] = q1[1] = q1[2] = 0;
+                } else {
+                    /* Paleta BGR (CORE 3 B, INFO 4 B con relleno). */
+                    const unsigned char *pe =
+                        d + paloff + idx * entry;
+                    q1[0] = pe[2];
+                    q1[1] = pe[1];
+                    q1[2] = pe[0];
+                }
+            }
+        }
+    }
+    q = img_mini(full, w, ah, o);
+    u_free(full);
+    return q;
+}
+
+/* Estado LZW en estaticos (4K entradas no caben en la pila). */
+static int lzw_pre[4096];
+static unsigned char lzw_suf[4096];
+static unsigned char lzw_pila[4096];
+
+static int img_gif(const unsigned char *d, int n, u_img_t *o) {
+    int w, h, p = 13, gct = 0, gsz = 0;
+    const unsigned char *gtab = 0;
+    int trans = -1;
+    unsigned char *full = 0, *idx = 0;
+    int q = -2;
+    if (n < 13) return -2;
+    w = (int)img_le16(d + 6);
+    h = (int)img_le16(d + 8);
+    if (w < 1 || h < 1) return -2;
+    if (w > U_IMG_MAX_DIM || h > U_IMG_MAX_DIM) return -4;
+    if ((long)w * (long)h > U_IMG_MAX_PX) return -4;
+    if (d[10] & 0x80) {
+        gct = 1;
+        gsz = 2 << (d[10] & 7);
+        gtab = d + 13;
+        p = 13 + gsz * 3;
+    }
+    if (p > n) return -2;
+    for (;;) {
+        int sep, etiqueta, tam;
+        if (p >= n) break;
+        sep = d[p++];
+        if (sep == 0x3B) break;
+        if (sep == 0x21) {
+            if (p >= n) break;
+            etiqueta = d[p++];
+            if (etiqueta == 0xF9 && p + 5 < n && d[p] >= 4) {
+                if (d[p + 1] & 1) trans = d[p + 4];
+                p++;
+            }
+            for (;;) {
+                if (p >= n) break;
+                tam = d[p++];
+                if (!tam) break;
+                if (p + tam > n) {
+                    p = n;
+                    break;
+                }
+                p += tam;
+            }
+            continue;
+        }
+        if (sep != 0x2C) {
+            /* Bloque desconocido: se ignora por sub-bloques. */
+            for (;;) {
+                if (p >= n) break;
+                tam = d[p++];
+                if (!tam) break;
+                if (p + tam > n) {
+                    p = n;
+                    break;
+                }
+                p += tam;
+            }
+            continue;
+        }
+        /* Descriptor de imagen (primer frame; el resto se ignora). */
+        {
+            int izq, arr, iw, ih, plc, inter, minc, i;
+            const unsigned char *tab = gtab;
+            int ntab = gsz;
+            if (p + 9 > n) {
+                q = -2;
+                goto mal;
+            }
+            izq = (int)img_le16(d + p);
+            arr = (int)img_le16(d + p + 2);
+            iw = (int)img_le16(d + p + 4);
+            ih = (int)img_le16(d + p + 6);
+            plc = d[p + 8];
+            p += 9;
+            inter = (plc & 0x40) ? 1 : 0;
+            if (iw < 1 || ih < 1 || izq < 0 || arr < 0 ||
+                izq + iw > w || arr + ih > h) {
+                q = -2;
+                goto mal;
+            }
+            if (plc & 0x80) {
+                ntab = 2 << (plc & 7);
+                if (p + ntab * 3 > n) {
+                    q = -2;
+                    goto mal;
+                }
+                tab = d + p;
+                p += ntab * 3;
+            } else if (!gct) {
+                q = -3;
+                goto mal;
+            }
+            if (p >= n) {
+                q = -2;
+                goto mal;
+            }
+            minc = d[p++];
+            if (minc < 2 || minc > 8) {
+                q = -2;
+                goto mal;
+            }
+            full = (unsigned char *)u_malloc((unsigned)w *
+                                             (unsigned)h * 3);
+            if (!full) {
+                q = -5;
+                goto mal;
+            }
+            for (i = 0; i < w * h * 3; i++) full[i] = 0;
+            idx = (unsigned char *)u_malloc((unsigned)iw *
+                                            (unsigned)ih);
+            if (!idx) {
+                q = -5;
+                goto mal;
+            }
+            /* LZW: lee codigos LSB-first de los sub-bloques. */
+            {
+                int claro = 1 << minc, eoi = claro + 1;
+                int proximo = eoi + 1, bits = minc + 1;
+                int npx = 0, cdigo = 0, nbits = 0, fin = 0;
+                int previo = -1, primero = 0, k;
+                for (k = 0; k < claro; k++) {
+                    lzw_pre[k] = -1;
+                    lzw_suf[k] = (unsigned char)k;
+                }
+                while (!fin && p < n) {
+                    int tam2 = d[p++];
+                    int f2;
+                    if (!tam2) break;
+                    if (p + tam2 > n) {
+                        q = -2;
+                        goto mal;
+                    }
+                    for (f2 = 0; f2 < tam2 && !fin; f2++) {
+                        cdigo |= (int)d[p + f2] << nbits;
+                        nbits += 8;
+                        while (!fin && nbits >= bits) {
+                            int cd = cdigo & ((1 << bits) - 1);
+                            int cur, npi = 0;
+                            cdigo >>= bits;
+                            nbits -= bits;
+                            if (cd == claro) {
+                                proximo = eoi + 1;
+                                bits = minc + 1;
+                                previo = -1;
+                                continue;
+                            }
+                            if (cd == eoi) {
+                                fin = 1;
+                                break;
+                            }
+                            cur = cd;
+                            if (cd >= proximo) {
+                                if (previo < 0) {
+                                    q = -2;
+                                    goto mal;
+                                }
+                                cur = previo;
+                                lzw_pila[npi++] = (unsigned char)primero;
+                            }
+                            while (cur >= claro) {
+                                if (cur < 0 || cur >= 4096 ||
+                                    npi >= 4095) {
+                                    q = -2;
+                                    goto mal;
+                                }
+                                lzw_pila[npi++] =
+                                    lzw_suf[cur];
+                                cur = lzw_pre[cur];
+                            }
+                            primero = cur;
+                            lzw_pila[npi++] = (unsigned char)cur;
+                            while (npi > 0 && npx < iw * ih) {
+                                idx[npx++] =
+                                    lzw_pila[--npi];
+                            }
+                            if (previo >= 0 && proximo < 4096) {
+                                lzw_pre[proximo] = previo;
+                                lzw_suf[proximo] =
+                                    (unsigned char)primero;
+                                proximo++;
+                                if (proximo == (1 << bits) &&
+                                    bits < 12)
+                                    bits++;
+                            }
+                            previo = cd;
+                            if (npx >= iw * ih) fin = 1;
+                        }
+                    }
+                    p += tam2;
+                }
+                if (npx < iw * ih) {
+                    q = -2;
+                    goto mal;
+                }
+            }
+            /* Indices -> RGB (transparencia = negro). */
+            {
+                int yy, xx;
+                static const int pasa_ini[4] = { 0, 4, 2, 1 };
+                static const int pasa_paso[4] = { 8, 8, 4, 2 };
+                for (yy = 0; yy < ih; yy++) {
+                    int yd = yy;
+                    if (inter) {
+                        int r2 = yy, ps;
+                        for (ps = 0; ps < 4; ps++) {
+                            if (yy >= pasa_ini[ps] &&
+                                ((yy - pasa_ini[ps]) %
+                                 pasa_paso[ps]) == 0) {
+                                int orden = 0, t2;
+                                for (t2 = 0; t2 < ps; t2++) {
+                                    int c2 = ih - pasa_ini[t2];
+                                    if (c2 > 0)
+                                        orden += (c2 +
+                                            pasa_paso[t2] - 1) /
+                                                 pasa_paso[t2];
+                                }
+                                orden += (yy - pasa_ini[ps]) /
+                                         pasa_paso[ps];
+                                r2 = orden;
+                                break;
+                            }
+                        }
+                        yd = r2;
+                    }
+                    for (xx = 0; xx < iw; xx++) {
+                        int iv = idx[yd * iw + xx];
+                        unsigned char *qp =
+                            full + ((arr + yy) * w + izq + xx) * 3;
+                        if (iv == trans || iv >= ntab) {
+                            qp[0] = qp[1] = qp[2] = 0;
+                        } else {
+                            qp[0] = tab[iv * 3];
+                            qp[1] = tab[iv * 3 + 1];
+                            qp[2] = tab[iv * 3 + 2];
+                        }
+                    }
+                }
+            }
+            q = img_mini(full, w, h, o);
+            u_free(full);
+            u_free(idx);
+            return q;
+        }
+    }
+mal:
+    if (full) u_free(full);
+    if (idx) u_free(idx);
+    return q;
+}
+
+int u_img_dec(const unsigned char *d, int n, u_img_t *o) {
+    if (!d || n < 0 || !o) return -1;
+    o->w = o->h = 0;
+    o->px = 0;
+    if (n >= 2 && d[0] == 'B' && d[1] == 'M')
+        return img_bmp(d, n, o);
+    if (n >= 6 && d[0] == 'G' && d[1] == 'I' && d[2] == 'F' &&
+        d[3] == '8' && (d[4] == '7' || d[4] == '9') && d[5] == 'a')
+        return img_gif(d, n, o);
+    return -2;
 }
