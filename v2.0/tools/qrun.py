@@ -39,7 +39,11 @@ if os.environ.get("QRUN_RED") == "1":
             hp, gp = rr.split(":")
             red += ",hostfwd=tcp::%s-:%s" % (hp.strip(), gp.strip())
     args += ["-netdev", red,
-             "-device", "rtl8139,netdev=red0,mac=52:54:00:12:34:56"]
+             "-device", ("virtio-net-pci,netdev=red0,"
+                         "mac=52:54:00:12:34:56"
+                         if os.environ.get("QRUN_NIC") == "virtio"
+                         else "rtl8139,netdev=red0,"
+                         "mac=52:54:00:12:34:56")]
     if os.environ.get("QRUN_PCAP"):
         args += ["-object",
                  "filter-dump,id=pcap,netdev=red0,file=%s" %

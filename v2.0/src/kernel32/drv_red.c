@@ -1,4 +1,5 @@
 #include "drv_red.h"
+#include "drv_virtio.h"
 #include "pci.h"
 #include "cpu.h"
 #include "libc.h"
@@ -51,6 +52,7 @@
 #define TX_MAX 1536
 
 static int presente = 0;
+static int es_virtio = 0;   /* backend activo: 0 = RTL8139, 1 = virtio */
 static uint16_t iob = 0;
 static uint8_t mi_mac[6];
 static uint8_t irq_lin = 0;
@@ -144,8 +146,17 @@ int red_init(void) {
     red_nucleo_init();   /* cache ARP, KAT IP: siempre, haya o no NIC */
     kprintf("red: buscando RTL8139 (10EC:8139)...\r\n");
     if (pci_busca(0x10EC, 0x8139, &bus, &dev, &fun)) {
-        kprintf("red: sin adaptador (arranque sin red)\r\n");
-        presente = 0;
+        /* Sin RTL: prueba virtio-net legacy (1AF4:1000/1041,
+           VirtualBox y QEMU); si tampoco hay, arranque sin red. */
+        kprintf("red: buscando virtio-net (1AF4:1000/1041)...\r\n");
+        if (vio_probe()) {
+            kprintf("red: sin adaptador (arranque sin red)\r\n");
+            presente = 0;
+            nim_init();
+            return 0;
+        }
+        es_virtio = 1;
+        presente = 1;
         nim_init();
         return 0;
     }
@@ -215,6 +226,7 @@ int red_mac(uint8_t *dst) {
     int i;
     if (!presente) return -1;
     if (!dst) return -1;
+    if (es_virtio) return vio_mac(dst);
     for (i = 0; i < 6; i++) dst[i] = mi_mac[i];
     return 0;
 }
@@ -222,15 +234,18 @@ int red_mac(uint8_t *dst) {
 int red_info(red_if_t *f) {
     int i;
     if (!f) return -1;
-    for (i = 0; i < 6; i++) f->mac[i] = mi_mac[i];
-    f->presente = presente ? 1 : 0;
-    f->irq = irq_lin;
-    f->io_base = iob;
-    f->mtu = 1500;
-    f->rx_ok = c_rx_ok;
-    f->tx_ok = c_tx_ok;
-    f->rx_err = c_rx_err;
-    f->tx_err = c_tx_err;
+    if (es_virtio && vio_info(f)) return -1;
+    if (!es_virtio) {
+        for (i = 0; i < 6; i++) f->mac[i] = mi_mac[i];
+        f->presente = presente ? 1 : 0;
+        f->irq = irq_lin;
+        f->io_base = iob;
+        f->mtu = 1500;
+        f->rx_ok = c_rx_ok;
+        f->tx_ok = c_tx_ok;
+        f->rx_err = c_rx_err;
+        f->tx_err = c_tx_err;
+    }
     {
         uint32_t ok = 0, err = 0;
         red_icmp_contadores(&ok, &err);
@@ -248,6 +263,7 @@ int red_tx(const uint8_t *marco, int tam) {
     unsigned k;
     uint16_t s;
     if (!presente) return -1;
+    if (es_virtio) return vio_tx(marco, tam);
     if (!marco || tam < 14 || tam > 1514) return -2;
     /* F1: una trama en vuelo (flag propio, no el bit OWN: la 8139
        sale de reset con OWN=1 y solo TOK confirma el envio). */
@@ -316,6 +332,7 @@ int red_rx(uint8_t *marco, int max) {
        invalidas seguidas y resetea como en RER. */
     static int der_n = 0;
     if (!presente) return -1;
+    if (es_virtio) return vio_rx(marco, max);
     if (!marco || max <= 0) return -2;
     s = inw_b(R_ISR);
     if (s & INT_RER) outw_b(R_ISR, INT_RER);   /* solo RER: TOK/ROK
