@@ -42,6 +42,9 @@ Rutas:
   /eco-cookie          : devuelve el Cookie recibido ("visto: ...").
   /form-post           : formulario method=post action=/eco-post.
   /eco-post            : devuelve el cuerpo POST ("visto: ...").
+  redirecciones (sin version: el codigo 301/302 nunca se probo):
+  /redir               : 302 a /redir2 (cadena de 2 saltos).
+  /redir2              : 302 a /pagina + Set-Cookie ruta=redir.
 """
 import socket
 import sys
@@ -391,6 +394,20 @@ def atiende(cn):
                              [("Content-Type", "text/plain"),
                               ("Content-Length", str(len(body)))],
                              body))
+        elif path == "/redir":
+            # Cadena de 2 saltos: /redir -> /redir2 -> /pagina.
+            cn.sendall(resp(302, "Found",
+                         [("Location", "/redir2"),
+                          ("Content-Length", "0")],
+                         b""))
+        elif path == "/redir2":
+            # El 302 tambien trae Set-Cookie (el login tipico):
+            # fbrowser lo cosecha antes de seguir.
+            cn.sendall(resp(302, "Found",
+                         [("Location", "/pagina"),
+                          ("Set-Cookie", "ruta=redir; Path=/"),
+                          ("Content-Length", "0")],
+                         b""))
         else:
             cn.sendall(resp(404, "Not Found",
                              [("Content-Type", "text/plain"),

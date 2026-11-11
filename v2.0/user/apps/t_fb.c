@@ -829,6 +829,38 @@ static void prueba_galletas(void) {
     }
 }
 
+/* Redirecciones 301/302: el codigo las sigue (max 3 saltos) pero
+   nunca se probaron. Unitaria del parser + viva del 302 crudo
+   (u_http_trae no sigue; el seguimiento lo verifica el harness). */
+static void prueba_redir(void) {
+    u_print("t_fb: redir...\n");
+    {
+        static const char m[] =
+            "HTTP/1.0 302 Found\r\n"
+            "Location: /redir2\r\n"
+            "Set-Cookie: ruta=redir; Path=/\r\n"
+            "Content-Length: 0\r\n\r\n";
+        static unsigned char cpo[64];
+        u_http_res_t r;
+        char v[128];
+        int nb = 0, q;
+        u_http_res_inicia(&r);
+        q = u_http_res_datos(&r, (const unsigned char *)m,
+                             (int)sizeof(m) - 1, cpo, (int)sizeof(cpo),
+                             &nb);
+        ok(q == 1 && r.codigo == 302, "redir-302");
+        ok(u_http_cabecera(&r, "Location", v, (int)sizeof(v)) > 0 &&
+           cab_igual(v, "/redir2"), "redir-location");
+        ok(u_http_cabecera(&r, "location", v, (int)sizeof(v)) > 0 &&
+           cab_igual(v, "/redir2"), "redir-location-mayus");
+        ok(u_http_cabecera_n(&r, "Set-Cookie", 0, v,
+                             (int)sizeof(v)) > 0 &&
+           cab_igual(v, "ruta=redir; Path=/"), "redir-cookie-302");
+        ok(u_http_cabecera(&r, "Location", v, 4) > 0,
+           "redir-location-corto");
+    }
+}
+
 static void prueba_layout(void) {
     int nf;
     u_print("t_fb: layout...\n");
@@ -1154,6 +1186,59 @@ static void prueba_viva(const char *base) {    static unsigned char cpo[8192];
         }
     }
     {
+        /* redirecciones crudas: u_http_trae no sigue (lo hace
+           fbrowser); aqui el 302 + Location + cookie del 302. */
+        char u[128];
+        char loc[256];
+        int i = 0;
+        while (base[i] && i < 110) {
+            u[i] = base[i];
+            i++;
+        }
+        u[i++] = '/';
+        u[i++] = 'r';
+        u[i++] = 'e';
+        u[i++] = 'd';
+        u[i++] = 'i';
+        u[i++] = 'r';
+        u[i] = 0;
+        k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+        ok(k == 0 && r.codigo == 302, "viva-redir-302");
+        if (k == 0) {
+            ok(u_http_cabecera(&r, "Location", loc,
+                               (int)sizeof(loc)) > 0 &&
+               cab_igual(loc, "/redir2"), "viva-redir-location");
+        }
+        {
+            /* segundo salto: 302 a /pagina + Set-Cookie */
+            int j = 0;
+            while (base[j] && j < 110) {
+                u[j] = base[j];
+                j++;
+            }
+            u[j++] = '/';
+            u[j++] = 'r';
+            u[j++] = 'e';
+            u[j++] = 'd';
+            u[j++] = 'i';
+            u[j++] = 'r';
+            u[j++] = '2';
+            u[j] = 0;
+            k = u_http_trae(u, &r, cpo, (int)sizeof(cpo), 15000);
+            ok(k == 0 && r.codigo == 302, "viva-redir2-302");
+            if (k == 0) {
+                char scv[256];
+                ok(u_http_cabecera(&r, "Location", loc,
+                                   (int)sizeof(loc)) > 0 &&
+                   cab_igual(loc, "/pagina"), "viva-redir2-location");
+                ok(u_http_cabecera_n(&r, "Set-Cookie", 0, scv,
+                                     (int)sizeof(scv)) > 0 &&
+                   cab_igual(scv, "ruta=redir; Path=/"),
+                   "viva-redir2-cookie");
+            }
+        }
+    }
+    {
         char u[128];
         int i = 0;
         while (base[i] && i < 120) {
@@ -1266,6 +1351,7 @@ int main(void) {
     prueba_chunked();
     prueba_cablarga();
     prueba_galletas();
+    prueba_redir();
     prueba_layout();
     prueba_css();
     prueba_forma();
