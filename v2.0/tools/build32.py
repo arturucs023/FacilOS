@@ -189,6 +189,48 @@ if NSHAVE:
         NSINCS += ["-I", str(NSBASE / _nl / "include"),
                    "-I", str(NSBASE / _nl / "src")]
 NSDEF = ["-DF32_NSHUBBUB", "-DNDEBUG"] if NSHAVE else []
+# Hito 1 NetSurf: resto de libs necesarias para el portado
+# (dom, css, bmp/gif, log, utils, psl). Sin enlazar al sistema:
+# solo las usa t_ns. El generador css_property_parser_gen.c es
+# herramienta de host y se excluye del build F32.
+NS1LIBS = ["libnsutils-0.1.1", "libnslog-0.1.3", "libnspsl-0.1.7",
+           "libnsbmp-0.1.7", "libnsgif-1.0.0", "libdom-0.4.2",
+           "libcss-0.9.2"]
+NS1SKIP = {"css_property_parser_gen.c"}
+# -fcommon: el codigo original (2008) declara el tag _ALIGNED como
+# variable global tentativa en src/stylesheet.h; los GCC antiguos
+# lo fundian (common); con -fno-common (defecto desde GCC 10)
+# duplicaria el simbolo. Reproduce el comportamiento upstream.
+# OJO orden de -I por lib: libcss y libparserutils tienen ambas
+# src/utils/utils.h; cada lib compila con su include+src PRIMERO
+# y solo las dependencias que necesita (si no, la quote-include
+# "utils/utils.h" de libcss coge la de parserutils y falla).
+NS1DEPS = {
+    "libnsutils-0.1.1": [],
+    "libnslog-0.1.3": [],
+    "libnspsl-0.1.7": [],
+    "libnsbmp-0.1.7": [],
+    "libnsgif-1.0.0": [],
+    "libdom-0.4.2": ["libparserutils-0.2.5", "libwapcaplet-0.4.3",
+                     "libhubbub-0.3.8"],
+    "libcss-0.9.2": ["libparserutils-0.2.5", "libwapcaplet-0.4.3"],
+}
+NS1INCS = []
+if NSHAVE:
+    NS1INCS = ["-I", str(LIB / "nslibc")]
+    for _nl in NS1LIBS:
+        NS1INCS += ["-I", str(NSBASE / _nl / "include"),
+                    "-I", str(NSBASE / _nl / "src")]
+
+
+def _ns1inc(nl):
+    r = ["-I", str(LIB / "nslibc"),
+         "-I", str(NSBASE / nl / "include"),
+         "-I", str(NSBASE / nl / "src")]
+    for _d in NS1DEPS.get(nl, []):
+        r += ["-I", str(NSBASE / _d / "include"),
+              "-I", str(NSBASE / _d / "src")]
+    return r
 # programas ejemplo F32X (todos con ulib + start)
 run([NASM, "-f", "win32", str(LIB / "start.asm"),
      "-o", str(BLD / "start.o")])
@@ -223,6 +265,22 @@ if NSHAVE:
          "-I", str(APPS), "-c",
          str(LIB / "nsshim.c"), "-o", NSHIM])
     NSOBJS.append(NSHIM)
+NS1OBJS = []
+if NSHAVE:
+    for _nl in NS1LIBS:
+        for _c in sorted((NSBASE / _nl / "src").rglob("*.c")):
+            if _c.name in NS1SKIP:
+                continue
+            # nombre unico con ruta relativa (parse/properties/x.c
+            # y select/properties/x.c colisionarian con solo padre)
+            _rel = _c.relative_to(NSBASE / _nl / "src").with_suffix("")
+            _o = str(BLD / ("ns1_" + _nl.split("-")[0] + "_" +
+                            "_".join(_rel.parts) + ".o"))
+            run([GCC] + PROGFLAGS + ["-I", str(LIB), "-I", str(APPS)] +
+                _ns1inc(_nl) + NSINCS +
+                ["-DWITHOUT_ICONV_FILTER", "-DNDEBUG", "-w", "-fcommon",
+                 "-c", str(_c), "-o", _o])
+            NS1OBJS.append(_o)
 # BearSSL 0.6 (hito TLS): cliente TLS 1.2 minimo (ECDHE + AES-GCM/
 # ChaCha20, RSA/ECDSA, x509-minimal). Sin UNIX/Win32 (los relojes y
 # RNG los aporta el programa sobre u_*). Enlazado estatico.
@@ -272,7 +330,7 @@ _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
 
 def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
                  al_disco=True, con_ugfx=False, tope=196607,
-                 con_ns=False, con_br=False):
+                 con_ns=False, con_br=False, con_ns1=False):
     if nom == "editor32":
         run([NASM, "-f", "win32", str(APPS / "editor32.asm"),
              "-o", str(BLD / "editor32.o")])
@@ -291,6 +349,8 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
         CF = CXXFLAGS if es_cpp else PROGFLAGS
         if con_ns:
             CF = CF + NSDEF + NSINCS
+        if con_ns1:
+            CF = CF + NSDEF + NSINCS + NS1INCS
         if con_br:
             CF = CF + BRDEF + BRINCS
         for fs_ in (fuentes or [nom + ".c"]):
@@ -308,13 +368,28 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
             objs.append(str(BLD / "ugfx.o"))
         if con_ns:
             objs += NSOBJS
+        if con_ns1:
+            objs += NSOBJS + NS1OBJS
         if con_br:
             objs += BROBJS
             objs.append(NSHIM)
-        run([CC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
-             "-Wl,-e,_start", "-Wl,--gc-sections",
-             "-T", str(LD / "prog.ld"),
-             "-o", str(BLD / (nom + ".pe"))] + objs)
+        _link = [CC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
+                 "-Wl,-e,_start", "-Wl,--gc-sections",
+                 "-T", str(LD / "prog.ld"),
+                 "-o", str(BLD / (nom + ".pe"))] + objs
+        # Windows limita la linea a 32K: con muchas libs (NetSurf)
+        # los .o van en fichero de respuesta (@fichero, GCC/ld).
+        if sum(len(a) for a in _link) > 20000:
+            _rsp = BLD / (nom + ".rsp")
+            with open(_rsp, "w") as _f:
+                for _o in objs:
+                    _f.write(pathlib.Path(_o).as_posix() + "\n")
+            _link = [CC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
+                     "-Wl,-e,_start", "-Wl,--gc-sections",
+                     "-T", str(LD / "prog.ld"),
+                     "-o", str(BLD / (nom + ".pe")),
+                     "@" + str(_rsp)]
+        run(_link)
     run([str(pathlib.Path(GCC).parent / "objcopy.exe"), "-O", "binary",
          str(BLD / (nom + ".pe")), str(BLD / (nom + ".plano"))])
     # F32: veto total a UNIX/BSD/Linux/Windows en el binario.
@@ -422,6 +497,8 @@ _apps3 = [
     ("t_f32", ["t_f32.c"], True),
     # Hito TLS: cliente HTTPS de prueba (BearSSL + confianzas de test).
     ("https", ["https.c"], True, False, True),
+    # Hito 1 NetSurf: KAT de libs (dom, css, bmp/gif, log, utils, psl).
+    ("t_ns", ["t_ns.c"], True),
 ]
 for _nom, _fs, _u, *_g in _apps3:
     # v2.4.3: fbrowser/http con cuerpo estatico de 256K (chunked +
@@ -430,6 +507,7 @@ for _nom, _fs, _u, *_g in _apps3:
     # del nucleo, que se comprueba siempre).
     _tope = 196607
     _ns = False
+    _ns1 = False
     _br = len(_g) > 1 and bool(_g[1])
     if _nom in ("fbrowser", "http"):
         _tope = 393216
@@ -441,9 +519,12 @@ for _nom, _fs, _u, *_g in _apps3:
     if _nom == "t_fb":
         _tope = 770048
         _ns = True
+    if _nom == "t_ns":
+        _tope = 770048
+        _ns1 = True
     haz_programa(_nom, False, _fs, 3, _u, al_disco=WANT_DISK,
                  con_ugfx=bool(_g and _g[0]), tope=_tope, con_ns=_ns,
-                 con_br=_br)
+                 con_ns1=_ns1, con_br=_br)
 
 # ---- escribir la ISO con el catalogo (todo dentro del CD) ----
 _todos = _programas + [a[0] for a in _apps3]

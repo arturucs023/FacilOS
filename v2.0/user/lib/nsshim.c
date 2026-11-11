@@ -70,6 +70,95 @@ int tolower(int c) { return baja((unsigned)c); }
 int toupper(int c) {
     return (c >= 'a' && c <= 'z') ? c - ('a' - 'A') : c;
 }
+char *strdup(const char *s) {
+    unsigned n = 0;
+    char *d;
+    if (!s) return 0;
+    while (s[n]) n++;
+    d = (char *)malloc(n + 1u);
+    if (!d) return 0;
+    for (n = 0; s[n]; n++) d[n] = s[n];
+    d[n] = 0;
+    return d;
+}
+char *strchr(const char *s, int c) {
+    if (!s) return 0;
+    while (*s) {
+        if (*s == (char)c) return (char *)s;
+        s++;
+    }
+    return (char)c ? 0 : (char *)s;
+}
+
+/* strtol/strtoul 32 bit (long i386 = 32). Base 0 autodetecta. */
+static unsigned long xdig(char c, int base, int *ok) {
+    unsigned v;
+    if (c >= '0' && c <= '9') v = (unsigned)(c - '0');
+    else if (c >= 'a' && c <= 'z') v = (unsigned)(c - 'a') + 10u;
+    else if (c >= 'A' && c <= 'Z') v = (unsigned)(c - 'A') + 10u;
+    else { *ok = 0; return 0; }
+    if (v >= (unsigned)base) { *ok = 0; return 0; }
+    *ok = 1;
+    return v;
+}
+unsigned long strtoul(const char *s, char **fin, int base) {
+    unsigned long v = 0;
+    const char *ini = s;
+    int neg = 0, dig;
+    if (!s) {
+        if (fin) *fin = (char *)s;
+        return 0;
+    }
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
+    if (*s == '-') { neg = 1; s++; }
+    else if (*s == '+') s++;
+    if (!base) {
+        if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) base = 16;
+        else if (s[0] == '0') base = 8;
+        else base = 10;
+    }
+    if (base == 16 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+    dig = 0;
+    while (*s) {
+        int good = 0;
+        unsigned d = xdig(*s, base, &good);
+        if (!good) break;
+        if (v > (0xfffffffful - d) / (unsigned)base) {
+            v = 0xfffffffful;
+            dig = 1;
+            while (*++s) {
+                xdig(*s, base, &good);
+                if (!good) break;
+            }
+            break;
+        }
+        v = v * (unsigned)base + d;
+        dig = 1;
+        s++;
+    }
+    if (!dig) s = ini;   /* sin digitos: no avanza */
+    if (fin) *fin = (char *)s;
+    return neg ? 0u - v : v;
+}
+long strtol(const char *s, char **fin, int base) {
+    int neg = 0;
+    const char *p = s;
+    unsigned long v;
+    if (!s) {
+        if (fin) *fin = (char *)s;
+        return 0;
+    }
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (*p == '-') neg = 1;
+    v = strtoul(s, fin, base);
+    if (neg) {
+        if (v > 0x80000000ul) return (long)0x80000000ul;
+        return -(long)v;
+    }
+    if (v > 0x7ffffffful) return 0x7fffffffl;
+    return (long)v;
+}
+int abs(int v) { return v < 0 ? -v : v; }
 
 /* ---- busqueda binaria (aliases) y reloj (time() para BearSSL) ---- */
 long long time(long long *t) {
@@ -287,4 +376,214 @@ int fprintf(FILE *f, const char *fmt, ...) {
     }
     __builtin_va_end(ap);
     return 0;
+}
+
+/* ---- stdin/errno dummy (flex/lex y nsutils los nombran) ---- */
+static FILE ns_in;
+FILE *__ns_stdin = &ns_in;
+int errno = 0;
+void exit(int n) {
+    u_print("F32-NetSurf: exit\n");
+    sys_salir(n);
+    for (;;) {
+    }
+}
+int getc(FILE *f) {
+    /* El lexer solo escanea cadenas; leer de fichero no existe. */
+    (void)f;
+    abort();
+    return -1;
+}
+
+/* ---- snprintf/vsnprintf/sprintf (buffer; %d%i%u%x%X%s%c%%,
+   ancho con espacios, .N/.* para %s, modificador l) ----
+   Devuelve la longitud que habria escrito (como ANSI) aunque
+   trunque o d sea 0/NULL; escribe NUL si n > 0.
+   fread/ferror/clearerr: solo para que enlace el lexer flex
+   (lee de cadena; si alguna vez leyera de fichero, aborta). */
+unsigned fread(void *b, unsigned tam, unsigned n, FILE *f) {
+    (void)b;
+    (void)tam;
+    (void)n;
+    (void)f;
+    abort();
+    return 0;
+}
+unsigned fwrite(const void *p, unsigned tam, unsigned n, FILE *f) {
+    /* Solo consola (stdout/stderr); otro FILE se descarta.
+       Existe para el ECHO por defecto del lexer flex. */
+    if ((f == __ns_stdout || f == __ns_stderr) && p && tam && n) {
+        unsigned i, tot = tam * n;
+        for (i = 0; i < tot; i++) {
+            char c[2];
+            c[0] = ((const char *)p)[i];
+            c[1] = 0;
+            u_print(c);
+        }
+        return n;
+    }
+    return 0;
+}
+int ferror(FILE *f) {
+    (void)f;
+    return 0;
+}
+void clearerr(FILE *f) { (void)f; }
+static void bv_ch(char *d, unsigned n, unsigned *t, char c) {
+    if (n > *t + 1u) d[*t] = c;
+    (*t)++;
+}
+static void bv_txt(char *d, unsigned n, unsigned *t, const char *s,
+                   int max) {
+    int i = 0;
+    if (!s) s = "(null)";
+    while (s[i] && (max < 0 || i < max)) {
+        bv_ch(d, n, t, s[i]);
+        i++;
+    }
+}
+static void bv_un(char *d, unsigned n, unsigned *t, unsigned v,
+                  unsigned base, int mayus, int ancho) {
+    char b[12];
+    int i = 0, k;
+    if (!v) b[i++] = '0';
+    while (v && i < 11) {
+        unsigned x = v % base;
+        b[i++] = (char)(x < 10 ? '0' + x : (mayus ? 'A' : 'a') + x - 10);
+        v /= base;
+    }
+    while (i < ancho && i < 11) b[i++] = ' ';
+    for (k = i - 1; k >= 0; k--) bv_ch(d, n, t, b[k]);
+}
+int vsnprintf(char *d, unsigned n, const char *fmt,
+              __builtin_va_list ap) {
+    unsigned t = 0;
+    int i = 0;
+    if (!fmt) return -1;
+    while (fmt[i]) {
+        if (fmt[i] != '%') {
+            bv_ch(d, n, &t, fmt[i++]);
+            continue;
+        }
+        i++;
+        {
+            int ancho = 0, prec = -1, es_l = 0;
+            while (fmt[i] >= '0' && fmt[i] <= '9') {
+                ancho = ancho * 10 + (fmt[i] - '0');
+                i++;
+            }
+            if (fmt[i] == '.') {
+                i++;
+                if (fmt[i] == '*') {
+                    prec = __builtin_va_arg(ap, int);
+                    i++;
+                } else {
+                    prec = 0;
+                    while (fmt[i] >= '0' && fmt[i] <= '9') {
+                        prec = prec * 10 + (fmt[i] - '0');
+                        i++;
+                    }
+                }
+            }
+            while (fmt[i] == 'l') { es_l = 1; i++; }
+            (void)es_l;   /* long i386 = 32 bit: igual que int */
+            if (fmt[i] == 's') {
+                bv_txt(d, n, &t, __builtin_va_arg(ap, const char *),
+                       prec);
+                i++;
+            } else if (fmt[i] == 'd' || fmt[i] == 'i') {
+                int v = __builtin_va_arg(ap, int);
+                if (v < 0) {
+                    bv_ch(d, n, &t, '-');
+                    v = -v;
+                }
+                bv_un(d, n, &t, (unsigned)v, 10u, 0, ancho);
+                i++;
+            } else if (fmt[i] == 'u') {
+                bv_un(d, n, &t, __builtin_va_arg(ap, unsigned), 10u,
+                      0, ancho);
+                i++;
+            } else if (fmt[i] == 'x') {
+                bv_un(d, n, &t, __builtin_va_arg(ap, unsigned), 16u,
+                      0, ancho);
+                i++;
+            } else if (fmt[i] == 'X') {
+                bv_un(d, n, &t, __builtin_va_arg(ap, unsigned), 16u,
+                      1, ancho);
+                i++;
+            } else if (fmt[i] == 'c') {
+                bv_ch(d, n, &t, (char)__builtin_va_arg(ap, int));
+                i++;
+            } else if (fmt[i] == '%') {
+                bv_ch(d, n, &t, '%');
+                i++;
+            } else {
+                bv_ch(d, n, &t, '%');
+                if (fmt[i]) bv_ch(d, n, &t, fmt[i++]);
+            }
+        }
+    }
+    if (n > 0u) d[t < n ? t : n - 1u] = 0;
+    return (int)t;
+}
+int snprintf(char *d, unsigned n, const char *fmt, ...) {
+    __builtin_va_list ap;
+    int r;
+    __builtin_va_start(ap, fmt);
+    r = vsnprintf(d, n, fmt, ap);
+    __builtin_va_end(ap);
+    return r;
+}
+int sprintf(char *d, const char *fmt, ...) {
+    __builtin_va_list ap;
+    int r;
+    __builtin_va_start(ap, fmt);
+    r = vsnprintf(d, 0x7fffffffu, fmt, ap);
+    __builtin_va_end(ap);
+    return r;
+}
+
+/* ---- division 64 bit (el link de programas no lleva -lgcc;
+   solo aritmetica del compilador, sin llamadas al SO).
+   Divisor 0 = 0 (en F32 OS no hay SIGFPE). ---- */
+unsigned long long __udivdi3(unsigned long long a,
+                             unsigned long long b) {
+    unsigned long long q = 0, r = 0;
+    int i;
+    if (!b) return 0;
+    for (i = 63; i >= 0; i--) {
+        r = (r << 1) | ((a >> i) & 1u);
+        if (r >= b) {
+            r -= b;
+            q |= (1ull << i);
+        }
+    }
+    return q;
+}
+unsigned long long __umoddi3(unsigned long long a,
+                             unsigned long long b) {
+    unsigned long long r = 0;
+    int i;
+    if (!b) return 0;
+    for (i = 63; i >= 0; i--) {
+        r = (r << 1) | ((a >> i) & 1u);
+        if (r >= b) r -= b;
+    }
+    return r;
+}
+long long __divdi3(long long a, long long b) {
+    int neg = 0;
+    unsigned long long q;
+    if (a < 0) { neg = !neg; a = -a; }
+    if (b < 0) { neg = !neg; b = -b; }
+    q = __udivdi3((unsigned long long)a, (unsigned long long)b);
+    return neg ? -(long long)q : (long long)q;
+}
+long long __moddi3(long long a, long long b) {
+    int neg = 0;
+    unsigned long long r;
+    if (a < 0) { neg = 1; a = -a; }
+    if (b < 0) b = -b;
+    r = __umoddi3((unsigned long long)a, (unsigned long long)b);
+    return neg ? -(long long)r : (long long)r;
 }

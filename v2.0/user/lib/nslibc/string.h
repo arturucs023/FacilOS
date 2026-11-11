@@ -17,5 +17,7 @@ int strncmp(const char *a, const char *b, unsigned n);
 int strncasecmp(const char *a, const char *b, unsigned n);
 int strcasecmp(const char *a, const char *b);
 char *strncpy(char *d, const char *s, unsigned n);
+char *strdup(const char *s);
+char *strchr(const char *s, int c);
 
 #endif

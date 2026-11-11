@@ -29,7 +29,7 @@ ROOT = BASE.parent                             # raiz del repo
 TOOLS = BASE / "tools"
 STATE = BASE / "build" / ".ftest_state.json"
 LOGS = BASE / "build" / "logs"
-FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32"]
+FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns"]
 TIMEOUT = {"t_fb": 150.0, "t_red": 150.0}
 DFLT_TO = 60.0
 # fichero -> patron de tests afectados ("*" = todos). Lo no listado
@@ -54,6 +54,10 @@ IMPACTO = [
     ("v2.0/user/apps/https.c", "*"),
     ("v2.0/user/apps/t_f32.c", "t_f32"),
     ("v2.0/user/apps/f32.c", "*"),
+    ("v2.0/user/apps/t_ns.c", "t_ns"),
+    ("v2.0/user/lib/nsshim.c", "t_ns"),
+    ("v2.0/user/lib/nslibc/*", "t_ns"),
+    ("v2.0/thirdparty/netsurf/*", "t_ns"),
 ]
 IGNORAR = ["v2.0/thirdparty/", "v2.0/build/", "C:/Temp/", "/tmp/"]
 ISO_INPUTS = (".c", ".h", ".cpp", ".asm", ".ld", ".py")

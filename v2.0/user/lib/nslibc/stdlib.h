@@ -11,5 +11,9 @@ void free(void *p);
 void abort(void);
 void *bsearch(const void *key, const void *base, unsigned n,
               unsigned tam, int (*cmp)(const void *, const void *));
+void exit(int n);
+long strtol(const char *s, char **fin, int base);
+unsigned long strtoul(const char *s, char **fin, int base);
+int abs(int v);
 
 #endif
