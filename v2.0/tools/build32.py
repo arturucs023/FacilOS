@@ -294,14 +294,14 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
         assert bss_tam <= 0x10000, nom + " bss enorme"
     else:
         # v2.2-editor: el editor avanzado (multidoc, undo, buscar, iconos)
-        # supera los 64K clasicos; el nucleo admite plano+bss<=768K
-        # (ver kern_crea_proceso). F7-C: fbrowser roza los 140K
+        # supera los 64K clasicos; el nucleo admite plano+bss<=1536K
+        # (v2.4.3, ver pag.h/exec.c). F7-C: fbrowser roza los 140K
         # (ulib HTTP+DNS+HTML+UGFX); tope 192K plano.
         # v2.4.3: fbrowser/http llevan cuerpo estatico de 256K (chunked
         # + paginas grandes); el tope se pasa por programa.
         assert len(plano) + 20 <= tope, nom + " no cabe en tope"
         assert bss_tam <= 0x40000, nom + " bss enorme"
-        assert len(plano) + bss_tam <= 0xC0000, nom + " +bss > 768K"
+        assert len(plano) + bss_tam <= 0x180000, nom + " +bss > 1536K"
     cab = b"F32X" + _st.pack("<IIII", ver, 0, len(plano) + 20, bss_tam)
     (BLD / nom).write_bytes(cab + plano)
     print(f"OK programa {nom} v{ver} ({len(plano) + 20} bytes, bss {bss_tam})")
@@ -373,7 +373,7 @@ _apps3 = [
 for _nom, _fs, _u, *_g in _apps3:
     # v2.4.3: fbrowser/http con cuerpo estatico de 256K (chunked +
     # paginas grandes); fbrowser y t_fb llevan Hubbub (medido:
-    # fbrowser ~672K, t_fb ~520K; tope holgado bajo el limite 768K
+    # fbrowser ~672K, t_fb ~520K; tope holgado bajo el limite 1536K
     # del nucleo, que se comprueba siempre).
     _tope = 196607
     _ns = False

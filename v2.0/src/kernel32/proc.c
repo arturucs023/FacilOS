@@ -195,7 +195,7 @@ int proc_crea(const char *nombre, unsigned di, uint32_t eip, uint32_t esp) {
     p->esp = esp;
     p->eflags = 0x202;
     p->ppid = proc_actual ? proc_actual->pid : 0;
-    p->brk = 0x300000;
+    p->brk = 0x3B0000;   /* v2.4.3: heap usuario 0x3B0000-0x47FFFF */
     p->rc = -1;
     p->pila_kern = -1;
     for (int i = 0; i < NFD; i++) p->fds[i] = -1;
@@ -223,7 +223,7 @@ int proc_vma_add(proc_t *p, uint32_t ini, uint32_t tam, uint32_t tipo) {
     int i;
     if (!p || !tam) return -1;
     if (tipo == VMAR_HEAP) {
-        /* El heap crece monotono desde 0x300000 pero con brk sin alinear
+        /* El heap crece monotono desde 0x3B0000 pero con brk sin alinear
            los tramos se solapan: union con la region existente. */
         for (i = 0; i < p->nvmars; i++) {
             if (p->vmars[i].tipo == VMAR_HEAP &&

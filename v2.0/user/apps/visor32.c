@@ -10,7 +10,8 @@ static void imprime(const char *s) {
 }
 
 int main(void) {
-    const char *a = (const char *)0x2F0000;
+    /* v2.4.3: los args viven al final de la pila (0x3A0000). */
+    const char *a = (const char *)0x3A0000;
     while (*a == ' ') a++;
     char nom[32];
     int i = 0;

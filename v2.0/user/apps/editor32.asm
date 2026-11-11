@@ -7,7 +7,7 @@
 global _start
 
 _start:
-    mov esi, 0x2F0000         ; ESI=nom (fijo todo el programa)
+    mov esi, 0x3A0000         ; ESI=nom (fijo todo el programa)
 .e2:
     mov al, [esi]
     cmp al, 0
@@ -18,7 +18,7 @@ _start:
     jmp .e2
 .fin_nom:
     mov byte [esi], 0
-    mov ebx, 0x2F0000
+    mov ebx, 0x3A0000
     cmp ebx, esi
     jne .e4
     mov ebx, m_uso
@@ -29,7 +29,7 @@ _start:
 .e4:
     xor ebp, ebp              ; EBP=tam
     mov eax, 3                ; abrir
-    mov ebx, 0x2F0000
+    mov ebx, 0x3A0000
     int 0x80
     test eax, eax
     js .nuevo
@@ -106,12 +106,12 @@ _start:
     je .fin0
     jmp .bucle
 .guarda:
-    mov ebx, 0x2F0000
+    mov ebx, 0x3A0000
     mov eax, 3                ; abrir
     int 0x80
     test eax, eax
     jns .gab
-    mov ebx, 0x2F0000
+    mov ebx, 0x3A0000
     mov eax, 9                ; crear
     int 0x80
     test eax, eax

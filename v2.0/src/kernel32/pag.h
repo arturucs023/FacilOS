@@ -8,10 +8,10 @@
  *   0x000000-0x0FFFFF  BIOS, fuente 0x6000, bootinfo 0x7000, E820 0x5000,
  *                      pila de arranque 0x90000, copias temporales
  *   0x100000-0x1FFFFF  nucleo (codigo, datos, BSS)          supervisor
- *   0x200000-0x2CFFFF  usuario: codigo+BSS (plano+bss<=0xC0000) usuario
- *   0x2D0000           pagina de guardia bajo la pila (no presente)
- *   0x2E0000-0x2FFFFF  pila de usuario 32 pags (args al final) usuario
- *   0x300000-0x47FFFF  usuario: heap (sbrk)                  usuario
+ *   0x200000-0x37FFFF  usuario: codigo+BSS (plano+bss<=0x180000) usuario
+ *   0x380000           pagina de guardia bajo la pila (no presente)
+ *   0x390000-0x3AFFFF  pila de usuario 32 pags (args al final) usuario
+ *   0x3B0000-0x47FFFF  usuario: heap (sbrk, 832K)                usuario
  *   0x480000-0x63FFFF  pilas de anillo 0 + pool FS 0x60000    supervisor
  *   0x800000-0xCFFFFF  heap del kernel 2MB + dorso 2MB        supervisor
  *   (tablas PD/PT en .bss del nucleo, no en 0xC00000)
