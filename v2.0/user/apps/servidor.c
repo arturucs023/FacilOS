@@ -797,6 +797,9 @@ static int cubre_encima(int k) {
             a->y < vents[k].y + vents[k].h &&
             vents[k].y < a->y + a->h) {
             win_dirty[r2] = 1;
+            win_cromo[r2] = 1;   /* igual que el bucle r2 de frame:
+                                    el pintado tardio de abajo tambien
+                                    come el cromo de arriba */
             n++;
         }
     }
@@ -1190,14 +1193,19 @@ static void frame(void) {
         if (!win_dirty[ids[q]]) continue;
         /* La de abajo repinta: las de encima que la toquen tambien,
            o su present deja basura sobre ellas (parpadeo al solapar).
-           Van despues en este mismo pase (orden Z). */
+           Van despues en este mismo pase (orden Z). Contenido Y cromo:
+           el contenido de abajo pisa el cromo de arriba en el dorso
+           (el cromo se pinto antes en este mismo pase); sin cromo la
+           barra quedaba comida de forma persistente. */
         {
             int r2;
             for (r2 = q + 1; r2 < nn; r2++) {
                 ventana_t *a = &vents[ids[r2]];
                 if (a->x < v->x + v->w && v->x < a->x + a->w &&
-                    a->y < v->y + v->h && v->y < a->y + a->h)
+                    a->y < v->y + v->h && v->y < a->y + a->h) {
                     win_dirty[ids[r2]] = 1;
+                    win_cromo[ids[r2]] = 1;
+                }
             }
         }
         m[t++] = 'D';
