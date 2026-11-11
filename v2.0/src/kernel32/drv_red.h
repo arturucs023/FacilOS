@@ -7,7 +7,11 @@
  * 0x800000 con identidad; virt==fis). Sin interrupciones en F1:
  * transmision con espera acotada y recepcion por sondeo. */
 
-/* Ficha para Ring3 (red_interfaz). Copia identica en user/lib/ulib.h. */
+/* Ficha para Ring3 (red_interfaz). Copia identica en user/lib/ulib.h.
+   En caliente rsv[0..3] = ARP/ICMP/UDP (contadores); en frio (sin
+   adaptador, retorno -1) rsv = diagnostico del probe: etapa
+   virtio (2 B), bitmask de NICs PCI vistas y slot; mac =
+   vendor:device del primer dispositivo clase-red. */
 typedef struct {
     uint8_t mac[6];
     uint8_t presente;   /* 1 si hay adaptador y esta activo */

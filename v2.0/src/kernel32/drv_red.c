@@ -53,6 +53,15 @@
 
 static int presente = 0;
 static int es_virtio = 0;   /* backend activo: 0 = RTL8139, 1 = virtio */
+/* Diagnostico sin adaptador: bitmask de NICs PCI vistas
+   (bit0=10EC:8139 bit1=1AF4:1000 bit2=1AF4:1041 bit3=8086:100E
+   bit4=8086:1004 bit5=1022:2000) y primer dispositivo clase red. */
+static uint32_t red_dbg_nics = 0;
+static uint32_t red_dbg_net0 = 0;   /* vendor<<16|device, 0 si ninguno */
+static uint32_t red_dbg_qn = 0;     /* qn1<<16|qn0 leidos (0 si no hubo) */
+static int red_dbg_slot = -1;
+/* Traza de estado en red_info (1 = activa). Solo diagnostico. */
+#define SRV_RED_DBG 0
 static uint16_t iob = 0;
 static uint8_t mi_mac[6];
 static uint8_t irq_lin = 0;
@@ -144,13 +153,75 @@ int red_init(void) {
     uint8_t *crudo;
     int i;
     red_nucleo_init();   /* cache ARP, KAT IP: siempre, haya o no NIC */
+    {
+        /* Volcado PCI (diagnostico, una vez): que hay de verdad. */
+        int dd, ff;
+        for (dd = 0; dd < 32; dd++) {
+            for (ff = 0; ff < 1; ff++) {
+                uint32_t id = pci_cfg_lee(0, dd, ff, 0);
+                if (id != 0xFFFFFFFFu && id != 0) {
+                    uint32_t cl = pci_cfg_lee(0, dd, ff, 0x08);
+                    kprintf("red: pci %x:%x:%x id=%x cl=%x\r\n",
+                            0, dd, ff, id, cl >> 8);
+                }
+            }
+        }
+    }
     kprintf("red: buscando RTL8139 (10EC:8139)...\r\n");
     if (pci_busca(0x10EC, 0x8139, &bus, &dev, &fun)) {
         /* Sin RTL: prueba virtio-net legacy (1AF4:1000/1041,
            VirtualBox y QEMU); si tampoco hay, arranque sin red. */
         kprintf("red: buscando virtio-net (1AF4:1000/1041)...\r\n");
         if (vio_probe()) {
-            kprintf("red: sin adaptador (arranque sin red)\r\n");
+            /* Sin ninguno: escruta que NICs PCI hay (diagnostico
+               para el usuario: se expone por red_info/rsv aunque
+               no haya red). */
+            static const uint16_t ids[6][2] = {
+                { 0x10EC, 0x8139 }, { 0x1AF4, 0x1000 },
+                { 0x1AF4, 0x1041 }, { 0x8086, 0x100E },
+                { 0x8086, 0x1004 }, { 0x1022, 0x2000 }
+            };
+            int b, d, f, k;
+            uint32_t et = 0, vid = 0, vloc = 0, qn = 0;
+            red_dbg_nics = 0;
+            red_dbg_net0 = 0;
+            red_dbg_slot = -1;
+            for (k = 0; k < 6; k++) {
+                if (!pci_busca(ids[k][0], ids[k][1], &b, &d, &f))
+                    red_dbg_nics |= (uint32_t)(1u << k);
+            }
+            for (d = 0; d < 32 && !red_dbg_net0; d++) {
+                for (f = 0; f < 8; f++) {
+                    uint32_t id, cl;
+                    if (f > 0 &&
+                        !(pci_cfg_lee(0, d, 0, 0x0E) & 0x00800000u))
+                        break;
+                    id = pci_cfg_lee(0, d, f, 0);
+                    if (id == 0xFFFFFFFFu) continue;
+                    cl = pci_cfg_lee(0, d, f, 0x08) >> 8;
+                    if ((cl & 0xFF0000u) == 0x020000u) {
+                        red_dbg_net0 = id;
+                        red_dbg_slot = d;
+                        break;
+                    }
+                }
+            }
+            vio_debug(&et, &vid, &vloc, &qn);
+            red_dbg_qn = qn;
+            kprintf("red: sin adaptador (nics=%x et=%x net=%x q=%x)\r\n",
+                    red_dbg_nics, et, red_dbg_net0, qn);
+            {
+                /* Volcado PCI temporal para diagnosticar VBox/QEMU:
+                   un bit por slot con dispositivo (1 bit = presente). */
+                int dd;
+                uint32_t mask = 0;
+                for (dd = 0; dd < 32; dd++) {
+                    uint32_t id = pci_cfg_lee(0, dd, 0, 0);
+                    if (id != 0xFFFFFFFFu && id != 0)
+                        mask |= (uint32_t)(1u << (dd & 31));
+                }
+                kprintf("red: pcimask=%x\r\n", mask);
+            }
             presente = 0;
             nim_init();
             return 0;
@@ -158,6 +229,8 @@ int red_init(void) {
         es_virtio = 1;
         presente = 1;
         nim_init();
+        kprintf("red: listo virtio (presente=%d vio=%d)\r\n",
+                presente, vio_hay());
         return 0;
     }
     bar0 = pci_cfg_lee(bus, dev, fun, 0x10);
@@ -217,6 +290,7 @@ int red_init(void) {
     }
     kprintf("\r\n");
     nim_init();   /* F8: fija presente/activo tras el probe */
+    kprintf("red: listo rtl8139 (presente=%d)\r\n", presente);
     return 0;
 }
 
@@ -233,9 +307,48 @@ int red_mac(uint8_t *dst) {
 
 int red_info(red_if_t *f) {
     int i;
+    uint32_t et = 0, vid = 0, vloc = 0;
     if (!f) return -1;
-    if (es_virtio && vio_info(f)) return -1;
-    if (!es_virtio) {
+    vio_debug(&et, &vid, &vloc, &red_dbg_qn);
+#if SRV_RED_DBG
+    kprintf("red_info: pres=%d esvio=%d vio=%d et=%x nics=%x f=%x\n",
+            presente, es_virtio, vio_hay(), et, red_dbg_nics,
+            (unsigned int)&f);
+#endif
+    if (!presente) {
+        /* Sin adaptador pero con diagnostico: etapa del probe
+           virtio + NICs PCI vistas + primer clase-red (el dhcp
+           las muestra: "sin adaptador (dbg ..)"). En caliente los
+           rsv son contadores; en frio son diagnostico. */
+        for (i = 0; i < 6; i++) f->mac[i] = 0;
+        f->mac[0] = (uint8_t)(red_dbg_net0 & 0xFFu);
+        f->mac[1] = (uint8_t)((red_dbg_net0 >> 8) & 0xFFu);
+        f->mac[2] = (uint8_t)((red_dbg_net0 >> 16) & 0xFFu);
+        f->mac[3] = (uint8_t)((red_dbg_net0 >> 24) & 0xFFu);
+        f->mac[4] = (uint8_t)(red_dbg_qn & 0xFFu);
+        f->mac[5] = (uint8_t)((red_dbg_qn >> 8) & 0xFFu);
+        f->presente = 0;
+        f->irq = 0;
+        f->io_base = 0;
+        f->mtu = 0;
+        f->rx_ok = 0;
+        f->tx_ok = 0;
+        f->rx_err = 0;
+        f->tx_err = 0;
+        f->rsv[0] = (uint8_t)(et & 0xFFu);
+        f->rsv[1] = (uint8_t)((et >> 8) & 0xFFu);
+        f->rsv[2] = (uint8_t)(red_dbg_nics & 0xFFu);
+        if (vid)
+            f->rsv[3] = (uint8_t)((vloc >> 8) & 0xFFu);
+        else if (red_dbg_slot >= 0)
+            f->rsv[3] = (uint8_t)(red_dbg_slot & 0xFFu);
+        else
+            f->rsv[3] = 0xFFu;
+        return -1;
+    }
+    if (es_virtio) {
+        if (vio_info(f)) return -1;
+    } else {
         for (i = 0; i < 6; i++) f->mac[i] = mi_mac[i];
         f->presente = presente ? 1 : 0;
         f->irq = irq_lin;
@@ -255,6 +368,12 @@ int red_info(red_if_t *f) {
         red_udp_contadores(&ok, 0);
         f->rsv[3] = (uint8_t)(ok & 0xFFu);
     }
+#if SRV_RED_DBG
+    kprintf("red_info: rc=%d pres=%d mac=%x:%x:%x rsv=%x %x %x %x\n",
+            presente ? 0 : -1, f->presente, f->mac[0], f->mac[1],
+            f->mac[2], (unsigned int)f->rsv[0], (unsigned int)f->rsv[1],
+            (unsigned int)f->rsv[2], (unsigned int)f->rsv[3]);
+#endif
     return presente ? 0 : -1;
 }
 

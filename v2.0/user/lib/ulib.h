@@ -188,7 +188,10 @@ void u_reiniciar(void);  /* no retorna si el 8042 responde */
 /* ---- red propia (syscalls 52-54, v2.3-red F1; sin POSIX) ---- */
 /* Ficha de 32 B (disposicion identica a drv_red.h del nucleo).
    rsv[0]: ARP en cache; rsv[1]: ICMP ok; rsv[2]: ICMP errores;
-   rsv[3]: UDP recibidos (F4). */
+   rsv[3]: UDP recibidos (F4). Sin adaptador (retorno != 0) los
+   rsv traen diagnostico del probe: rsv[0..1] etapa virtio,
+   rsv[2] bitmask de NICs PCI vistas, rsv[3] slot; mac =
+   vendor:device del primer clase-red (dhcp lo muestra). */
 typedef struct {
     unsigned char mac[6];
     unsigned char presente; /* 1 si hay adaptador activo */

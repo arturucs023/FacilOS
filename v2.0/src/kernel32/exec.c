@@ -1288,11 +1288,14 @@ __attribute__((optimize("O0"))) static void sc_51(regs_t *r, int di)
 __attribute__((optimize("O0"))) static void sc_52(regs_t *r, int di)
  {
         /* v2.3-red F1: ficha del adaptador (32 B en ebx). 0 ok,
-           -1 sin adaptador. */
+           -1 sin adaptador (la ficha trae diagnostico en
+           mac/rsv: ver red_info). */
         red_if_t f;
+        int rc;
+#define SC52_DBG 0
         r->eax = (uint32_t)-1;
         if (!ptr_ok(di, r->ebx, 32, 1)) return;
-        if (red_info(&f)) return;
+        rc = red_info(&f);
         if (di >= 0) {
             if (pag_escribe_usr((unsigned)di, r->ebx, &f, 32))
                 return;
@@ -1301,7 +1304,12 @@ __attribute__((optimize("O0"))) static void sc_52(regs_t *r, int di)
             uint8_t *s = (uint8_t *)&f;
             for (int i = 0; i < 32; i++) d[i] = s[i];
         }
-        r->eax = 0;
+        r->eax = (uint32_t)rc;
+#if SC52_DBG
+        kprintf("sc52: rc=%d pres=%d mac=%x:%x:%x:%x rsv=%x %x %x %x\n",
+                rc, f.presente, f.mac[0], f.mac[1], f.mac[2], f.mac[3],
+                f.rsv[0], f.rsv[1], f.rsv[2], f.rsv[3]);
+#endif
         return;
  }
 

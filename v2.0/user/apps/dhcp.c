@@ -298,7 +298,40 @@ int main(void) {
     }
     for (i = 0; i < 32; i++) ((unsigned char *)&rif)[i] = 0;
     if (u_red_interfaz(&rif) || !rif.presente) {
-        u_print("dhcp: sin adaptador\n");
+        /* Sin adaptador pero con diagnostico del probe (etapa
+           virtio, NICs PCI vistas, primer clase-red en mac[]):
+           se muestra en hex para pedirlo al usuario. */
+        static const char hx[] = "0123456789abcdef";
+        char b[64];
+        int t = 0, q;
+        const char *pre = "dhcp: sin adaptador (dbg et=";
+        while (pre[t]) {
+            b[t] = pre[t];
+            t++;
+        }
+        b[t++] = hx[(rif.rsv[1] >> 4) & 15];
+        b[t++] = hx[rif.rsv[1] & 15];
+        b[t++] = hx[(rif.rsv[0] >> 4) & 15];
+        b[t++] = hx[rif.rsv[0] & 15];
+        {
+            const char *m2 = " nics=";
+            q = 0;
+            while (m2[q]) b[t++] = m2[q++];
+        }
+        b[t++] = hx[(rif.rsv[2] >> 4) & 15];
+        b[t++] = hx[rif.rsv[2] & 15];
+        {
+            const char *m2 = " red=";
+            q = 0;
+            while (m2[q]) b[t++] = m2[q++];
+        }
+        for (q = 0; q < 6; q++) {
+            b[t++] = hx[(rif.mac[q] >> 4) & 15];
+            b[t++] = hx[rif.mac[q] & 15];
+        }
+        b[t++] = '\n';
+        b[t] = 0;
+        u_print(b);
         return 1;
     }
     xid = ((unsigned int)u_mi_pid() * 7919u + ahora()) ^ 0x12340000u;

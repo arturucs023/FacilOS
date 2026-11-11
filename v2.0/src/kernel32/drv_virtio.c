@@ -37,7 +37,7 @@
 
 #define VQ_RX 0
 #define VQ_TX 1
-#define VQ_MAX 256           /* tope de entradas (se usa lo ofrecido) */
+#define VQ_MAX 1024          /* tope de entradas (se usa lo ofrecido) */
 #define VQ_RXBUF 64
 #define VQ_BUFTAM 2048
 #define VQ_HDR 10           /* cabecera de transporte legacy */
@@ -107,6 +107,21 @@ static uint8_t vio_hw[6];
 static uint8_t vio_irq = 0;
 static uint32_t c_rx_ok = 0, c_tx_ok = 0, c_rx_err = 0, c_tx_err = 0;
 
+/* Diagnostico de probe (se expone por red_info aunque no haya
+   adaptador; ver rsv). Bitmask de etapas alcanzadas. */
+static uint32_t vio_dbg_etapa = 0;
+static uint32_t vio_dbg_id = 0;    /* vendor<<16|device emparejado */
+static uint32_t vio_dbg_loc = 0xFFFFFFFFu; /* bus<<16|dev<<8|fn */
+static uint32_t vio_dbg_qn = 0;    /* qn1<<16|qn0 leidos */
+
+void vio_debug(uint32_t *etapa, uint32_t *id, uint32_t *loc,
+                 uint32_t *qn) {
+    if (etapa) *etapa = vio_dbg_etapa;
+    if (id) *id = vio_dbg_id;
+    if (loc) *loc = vio_dbg_loc;
+    if (qn) *qn = vio_dbg_qn;
+}
+
 static uint8_t inb_v(int off) { return inb((uint16_t)(vio_io + off)); }
 static void outb_v(int off, uint8_t v) {
     outb((uint16_t)(vio_io + off), v);
@@ -134,7 +149,7 @@ static int vq_crea(vq_t *q, int qn) {
     uint8_t *base, *crudo;
     uint32_t off_used, total, i, n;
     volatile uint32_t *w;
-    if (qn < 32 || qn > VQ_MAX) return -1;
+    if (qn < 4 || qn > VQ_MAX) return -1;
     q->n = (uint16_t)qn;
     off_used = (16u * (uint32_t)qn + 6u + 2u * (uint32_t)qn + 4095u)
                & ~4095u;
@@ -171,12 +186,19 @@ int vio_probe(void) {
     if (vio_ok) return 0;
     /* legacy 1AF4:1000 primero (VirtualBox), luego transicional
        1AF4:1041 (QEMU): ambos exponen la interfaz legacy. */
-    if (pci_busca(0x1AF4, 0x1000, &bus, &dev, &fun) &&
-        pci_busca(0x1AF4, 0x1041, &bus, &dev, &fun)) {
-        return -1;
+    if (pci_busca(0x1AF4, 0x1000, &bus, &dev, &fun)) {
+        if (pci_busca(0x1AF4, 0x1041, &bus, &dev, &fun))
+            return -1;
+        vio_dbg_id = 0x1AF40000u | 0x1041u;
+    } else {
+        vio_dbg_id = 0x1AF40000u | 0x1000u;
     }
+    vio_dbg_loc = ((uint32_t)bus << 16) | ((uint32_t)dev << 8) |
+                  (uint32_t)fun;
+    vio_dbg_etapa |= 0x0001u;
     bar0 = pci_cfg_lee(bus, dev, fun, 0x10);
     if (!(bar0 & 1u) || !(bar0 & 0xFFFFFFFCu)) return -1;
+    vio_dbg_etapa |= 0x0002u;
     vio_io = (uint16_t)(bar0 & 0xFFFFFFFCu);
     cmd = pci_cfg_lee(bus, dev, fun, 0x04);
     pci_cfg_pon(bus, dev, fun, 0x04, cmd | 0x05u);
@@ -190,6 +212,7 @@ int vio_probe(void) {
     io_espera();
     feat = inl_v(V_IO_FEAT_H);
     if (!(feat & VF_MAC)) return -1;   /* sin MAC no sirve */
+    vio_dbg_etapa |= 0x0004u;
     outl_v(V_IO_FEAT_G, VF_MAC);
     outb_v(V_IO_STATUS, VS_ACK | VS_DRV | VS_FOK);
     io_espera();
@@ -197,24 +220,31 @@ int vio_probe(void) {
         outb_v(V_IO_STATUS, VS_FAILED);
         return -1;
     }
+    vio_dbg_etapa |= 0x0008u;
     for (i = 0; i < 6; i++)
         vio_hw[i] = inb_v(V_IO_CFG + i);
+    vio_dbg_etapa |= 0x0010u;
     /* colas: se usa el tamano ofrecido (hasta VQ_MAX); el layout
-       del used depende de el */
+       del used depende de el. Se acepta desde 4 (algun dispositivo
+       ofrece poco). */
     outw_v(V_IO_QSEL, VQ_RX);
     io_espera();
     qn0 = inw_v(V_IO_QNUM);
     outw_v(V_IO_QSEL, VQ_TX);
     io_espera();
     qn1 = inw_v(V_IO_QNUM);
-    if (qn0 < 32 || qn0 > VQ_MAX || qn1 < 32 || qn1 > VQ_MAX) {
+    vio_dbg_qn = ((uint32_t)(qn1 & 0xFFFF) << 16) |
+                 (uint32_t)(qn0 & 0xFFFF);
+    if (qn0 < 4 || qn0 > VQ_MAX || qn1 < 4 || qn1 > VQ_MAX) {
         outb_v(V_IO_STATUS, VS_FAILED);
         return -1;
     }
+    vio_dbg_etapa |= 0x0020u;
     if (vq_crea(&vq_rx, qn0) || vq_crea(&vq_tx, qn1)) {
         outb_v(V_IO_STATUS, VS_FAILED);
         return -1;
     }
+    vio_dbg_etapa |= 0x0040u;
     /* RX: descriptores de solo-escritura con bufer propio */
     nrx = VQ_RXBUF < vq_rx.n - 1 ? VQ_RXBUF : vq_rx.n - 1;
     for (i = 0; i < nrx; i++) {
@@ -228,6 +258,7 @@ int vio_probe(void) {
                   VRING_DESC_F_WRITE, 0);
         vq_pon(&vq_rx, (uint16_t)i);
     }
+    vio_dbg_etapa |= 0x0080u;
     outw_v(V_IO_QSEL, VQ_RX);
     outl_v(V_IO_QPFN, (uint32_t)vq_rx.desc >> 12);
     outw_v(V_IO_QSEL, VQ_TX);
@@ -235,6 +266,7 @@ int vio_probe(void) {
     outb_v(V_IO_STATUS, VS_ACK | VS_DRV | VS_FOK | VS_DOK);
     io_espera();
     if (inb_v(V_IO_STATUS) & VS_FAILED) return -1;
+    vio_dbg_etapa |= 0x0100u;
     patada(VQ_RX);   /* tras DRIVER_OK: anuncia los bufers RX */
     vio_ok = 1;
     kprintf("red: virtio-net io=");
