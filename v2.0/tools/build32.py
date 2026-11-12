@@ -541,7 +541,7 @@ for _nom, _fs, _u, *_g in _apps3:
         _tope = 770048
         _ns1 = True
     if _nom == "navega":
-        _tope = 1245184
+        _tope = 1310720
         _ns1 = True
     if _nom == "t_fetch":
         _tope = 524288

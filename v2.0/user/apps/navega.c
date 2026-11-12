@@ -40,6 +40,10 @@ typedef struct {
     int bg;                    /* 0xRRGGBB o -1 = ninguno */
     int estilo;                /* 0 normal, 1 vacia, 2 HR, 3 IMG */
     int img;                   /* indice en NV_img o -1 */
+    int sub;                   /* 1 = subrayado (enlaces) */
+    int full;                  /* 1 = fondo a ancho completo */
+    int al;                    /* 0 izq, 1 centro, 2 der */
+    int bd;                    /* 1 = negrita (doble pasada) */
 } nv_fila_t;
 static nv_fila_t NV_filas[NV_MAXFILAS];
 static int NV_nfilas = 0;
@@ -307,6 +311,22 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
                         if (id != T_IMG) continue;
                         want = "alt";
                         cap = 127;
+                    } else if (at->name.len >= 1 &&
+                               at->name.len <= 31) {
+                        /* Hito 6: resto (class, id, title...):
+                           se guardan tal cual para el select */
+                        static char gen[32];
+                        uint32_t gl;
+                        for (gl = 0; gl < at->name.len; gl++) {
+                            unsigned char cc =
+                                at->name.ptr[gl];
+                            gen[gl] = (char)(cc >= 'A' &&
+                                             cc <= 'Z' ?
+                                             cc + ('a' - 'A') :
+                                             cc);
+                        }
+                        gen[gl] = 0;
+                        want = gen;
                     } else {
                         continue;
                     }
@@ -346,6 +366,43 @@ typedef struct {
 } nv_nd_t;
 static nv_nd_t NV_tabla[512];
 static int NV_ntab = 0;
+
+/* Hito 6: libcss libera (unref) cada cadena que le entregamos, y
+   lwc_interna las mismas entre llamadas. Guardamos NUESTRA ref en
+   un registro por documento para que nunca se liberen antes de
+   tiempo (se sueltan al empezar el siguiente documento). */
+#define NV_MAXREF 2048
+static lwc_string *NV_refs[NV_MAXREF];
+static int NV_nref = 0;
+
+static void nv_ref_guarda(lwc_string *s) {
+    if (!s) return;
+    if (NV_nref < NV_MAXREF)
+        NV_refs[NV_nref++] = s;
+    else
+        lwc_string_unref(s);
+}
+
+/* tablas de clases (una por llamada: libcss compara la del nodo
+   con la del candidato en la misma seleccion; un estatico comun
+   se aliasa y todo comparte estilo). Se liberan con el documento. */
+#define NV_MAXTAB 256
+static lwc_string **NV_tabs[NV_MAXTAB];
+static int NV_ntab2 = 0;
+
+static void nv_ref_libera(void) {
+    int i;
+    for (i = 0; i < NV_nref; i++) {
+        if (NV_refs[i]) lwc_string_unref(NV_refs[i]);
+        NV_refs[i] = 0;
+    }
+    NV_nref = 0;
+    for (i = 0; i < NV_ntab2; i++) {
+        if (NV_tabs[i]) u_free(NV_tabs[i]);
+        NV_tabs[i] = 0;
+    }
+    NV_ntab2 = 0;
+}
 
 static css_error nv_set_dato(void *pw, void *nodo, void *dato) {
     int i;
@@ -883,13 +940,12 @@ static css_error nv_sin_defecto(void *pw, uint32_t prop,
     return CSS_INVALID;
 }
 
-static lwc_string *NV_cls_tab[16];
-
 static css_error nv_clases(void *pw, void *nodo,
                            lwc_string ***clases, uint32_t *n) {
     char buf[256];
     int j = 0;
     uint32_t c = 0;
+    lwc_string **tab;
     (void)pw;
     *clases = 0;
     *n = 0;
@@ -900,6 +956,8 @@ static css_error nv_clases(void *pw, void *nodo,
     if (nv_atributo((dom_node *)nodo, "class", buf,
                     (int)sizeof(buf)))
         return CSS_OK;
+    tab = (lwc_string **)u_malloc(16 * (int)sizeof(lwc_string *));
+    if (!tab) return CSS_NOMEM;
     j = 0;
     while (buf[j] && c < 16) {
         char tok[64];
@@ -913,14 +971,24 @@ static css_error nv_clases(void *pw, void *nodo,
         if (t) {
             lwc_string *s = 0;
             if (lwc_intern_string(tok, (size_t)t, &s) !=
-                lwc_error_ok || !s)
+                lwc_error_ok || !s) {
+                u_free(tab);
                 return CSS_NOMEM;
-            NV_cls_tab[c++] = s;
+            }
+            /* ref propia en el registro (libcss libera la suya) */
+            nv_ref_guarda(lwc_string_ref(s));
+            tab[c++] = s;
         }
     }
     if (c) {
-        *clases = NV_cls_tab;
+        *clases = tab;
         *n = c;
+        if (NV_ntab2 < NV_MAXTAB)
+            NV_tabs[NV_ntab2++] = tab;
+        /* si el registro esta lleno, la tabla se pierde (fuga
+           acotada) pero libcss sigue viendo memoria valida */
+    } else {
+        u_free(tab);
     }
     return CSS_OK;
 }
@@ -938,6 +1006,8 @@ static css_error nv_id(void *pw, void *nodo, lwc_string **id) {
     if (!i) return CSS_OK;
     if (lwc_intern_string(buf, (size_t)i, id) != lwc_error_ok)
         return CSS_NOMEM;
+    /* ref propia en el registro (libcss libera la suya) */
+    nv_ref_guarda(lwc_string_ref(*id));
     return CSS_OK;
 }
 
@@ -993,6 +1063,14 @@ static css_unit_ctx NV_uctx;
 static css_media NV_media;
 static int NV_css_ok = 0;
 
+/* Hito 6: reglas de agente de usuario (enlaces azules subrayados,
+   negrita de titulares, como NetSurf). Se fusionan DELANTE de la
+   hoja <style> en una sola stylesheet: el autor gana por orden y
+   por especificidad; la cascada multi-hoja queda fuera. */
+static const char NV_UA_CSS[] =
+    "a:link{color:#0000ee;text-decoration:underline}"
+    "b,strong,h1,h2,h3,h4,h5,h6{font-weight:bold}";
+
 static css_error nv_css_res(void *pw, const char *base,
                             lwc_string *rel, lwc_string **abs) {
     (void)pw;
@@ -1013,7 +1091,10 @@ static void nv_css_fin(void) {
     NV_css_ok = 0;
 }
 
-/* crea ctx + hoja desde el <style> capturado (puede estar vacio) */
+/* crea ctx + hoja unica (UA delante + <style> capturado).
+   Hito 6: se probo ctx separado para la UA (ORIGIN_UA) pero la
+   cascada multi-hoja no aplicaba bien el inline; con una sola
+   hoja todo casa. Se documenta como limite. */
 static int nv_css_ini(const char *css, int n) {
     css_stylesheet_params p;
     css_error e;
@@ -1036,6 +1117,13 @@ static int nv_css_ini(const char *css, int n) {
     p.font = 0;
     p.font_pw = 0;
     if (css_stylesheet_create(&p, &NV_hoja) != CSS_OK || !NV_hoja) {
+        nv_css_fin();
+        return -1;
+    }
+    e = css_stylesheet_append_data(NV_hoja,
+                                   (const uint8_t *)NV_UA_CSS,
+                                   (size_t)(sizeof(NV_UA_CSS) - 1));
+    if (e != CSS_OK && e != CSS_NEEDDATA) {
         nv_css_fin();
         return -1;
     }
@@ -1080,7 +1168,9 @@ static int nv_css_ini(const char *css, int n) {
     return 0;
 }
 
-/* lee color/fondo del estilo calculado; -1 si no fijado */
+/* lee color/fondo del estilo calculado; -1 si no fijado.
+   Hito 6: un fondo con alfa 0 es transparente -> se hereda (-1);
+   asi el color inicial no pinta bandas negras. */
 static void nv_colores(css_computed_style *st, int *fg, int *bg) {
     css_color c;
     *fg = -1;
@@ -1089,7 +1179,8 @@ static void nv_colores(css_computed_style *st, int *fg, int *bg) {
     if (css_computed_color(st, &c) == CSS_COLOR_COLOR)
         *fg = (int)(c & 0xFFFFFF);
     if (css_computed_background_color(st, &c) ==
-        CSS_BACKGROUND_COLOR_COLOR)
+        CSS_BACKGROUND_COLOR_COLOR &&
+        (c & 0xFF000000u) != 0)
         *bg = (int)(c & 0xFFFFFF);
 }
 
@@ -1098,11 +1189,18 @@ static char NV_titulo[NV_MAXTITULO];
 static int NV_fg = -1, NV_bg = -1;
 static int NV_cols = 76;
 static int NV_pend_esp = 0;
+/* Hito 6: subrayado (contador: <a> anidados), fondo de bloque
+   explicito (contador) y alineacion (0 izq, 1 centro, 2 der) */
+static int NV_sub = 0, NV_bgexp = 0, NV_al = 0, NV_b = 0;
+/* ultimo estilo calculado: decoracion, bg explicito, alineacion */
+static int NV_last_dec = 0, NV_last_bgexp = 0, NV_last_al = -1;
+static int NV_last_bold = 0;
 
-/* enlaces (Hito 4): filas [f0,f1] -> URL navegable */
+/* enlaces (Hito 4): filas [f0,f1] -> URL navegable.
+   Hito 6: columnas [c0,c1] del subrayado (celdas de texto). */
 #define NV_MAXENL 64
 typedef struct {
-    int f0, f1;
+    int f0, f1, c0, c1;
     char url[256];
 } nv_enl_t;
 static nv_enl_t NV_enl[NV_MAXENL];
@@ -1140,6 +1238,10 @@ static void nv_linea_nueva(void) {
     NV_filas[NV_nfilas].bg = NV_bg;
     NV_filas[NV_nfilas].estilo = 0;
     NV_filas[NV_nfilas].img = -1;
+    NV_filas[NV_nfilas].sub = 0;
+    NV_filas[NV_nfilas].full = NV_bgexp > 0;
+    NV_filas[NV_nfilas].al = NV_al;
+    NV_filas[NV_nfilas].bd = NV_b > 0;
 }
 
 static void nv_salto(void) {
@@ -1159,6 +1261,9 @@ static void nv_bloque(void) {
     else {
         NV_filas[NV_nfilas].fg = NV_fg;
         NV_filas[NV_nfilas].bg = NV_bg;
+        /* Hito 6: la fila vacia adopta el contexto del bloque */
+        NV_filas[NV_nfilas].full = NV_bgexp > 0;
+        NV_filas[NV_nfilas].al = NV_al;
     }
 }
 
@@ -1177,6 +1282,14 @@ static void nv_pon_byte(unsigned char c) {
     if (nv_ancho_linea() >= NV_cols)
         nv_salto();
     if (NV_nfilas >= NV_MAXFILAS) return;
+    /* Hito 6: la fila adopta el estilo vigente (los elementos en
+       linea cambian fg/bg despues de crearla) */
+    NV_filas[NV_nfilas].fg = NV_fg;
+    NV_filas[NV_nfilas].bg = NV_bg;
+    if (NV_sub > 0)
+        NV_filas[NV_nfilas].sub = 1;
+    if (NV_b > 0)
+        NV_filas[NV_nfilas].bd = 1;
     NV_txt[NV_ntxt++] = c;
 }
 
@@ -1263,6 +1376,7 @@ static int nv_enlace_en(int f) {
 
 /* nv_es_url vive abajo (carga); avance para nv_imagen */
 static int nv_es_url(const char *s);
+static void nv_num(int v);
 
 /* ---- imagenes (Hito 5): decodificacion BMP/GIF a heap ---- */
 static void nv_img_libera(void) {
@@ -1465,14 +1579,20 @@ static void nv_imagen(dom_node *h) {
 /* aplica el estilo CSS del nodo; actualiza NV_fg/NV_bg */
 static void nv_estilo_nodo(dom_node *n) {
     css_select_results *res = 0;
+    NV_last_dec = 0;
+    NV_last_bgexp = 0;
+    NV_last_al = -1;
+    NV_last_bold = 0;
     if (!NV_css_ok || !n) return;
     if (css_select_style(NV_ctx, n, &NV_uctx, &NV_media, 0,
                          &NV_sel, 0, &res) != CSS_OK || !res)
         return;
     if (res->styles[CSS_PSEUDO_ELEMENT_NONE]) {
+        css_computed_style *st =
+            res->styles[CSS_PSEUDO_ELEMENT_NONE];
         int fg = -1, bg = -1;
-        nv_colores(res->styles[CSS_PSEUDO_ELEMENT_NONE],
-                   &fg, &bg);
+        uint8_t ta, fw;
+        nv_colores(st, &fg, &bg);
         if (fg >= 0) {
             NV_fg = fg;
             NV_nestilos++;
@@ -1480,7 +1600,29 @@ static void nv_estilo_nodo(dom_node *n) {
         if (bg >= 0) {
             NV_bg = bg;
             NV_nestilos++;
+            NV_last_bgexp = 1;
         }
+        /* Hito 6: subrayado, alineacion y negrita del nodo */
+        if (css_computed_text_decoration(st) &
+            CSS_TEXT_DECORATION_UNDERLINE)
+            NV_last_dec = CSS_TEXT_DECORATION_UNDERLINE;
+        ta = css_computed_text_align(st);
+        if (ta == CSS_TEXT_ALIGN_CENTER ||
+            ta == CSS_TEXT_ALIGN_LIBCSS_CENTER)
+            NV_last_al = 1;
+        else if (ta == CSS_TEXT_ALIGN_RIGHT ||
+                 ta == CSS_TEXT_ALIGN_LIBCSS_RIGHT)
+            NV_last_al = 2;
+        else if (ta == CSS_TEXT_ALIGN_LEFT ||
+                 ta == CSS_TEXT_ALIGN_LIBCSS_LEFT ||
+                 ta == CSS_TEXT_ALIGN_JUSTIFY)
+            NV_last_al = 0;
+        fw = css_computed_font_weight(st);
+        if (fw == CSS_FONT_WEIGHT_BOLD ||
+            fw == CSS_FONT_WEIGHT_BOLDER ||
+            (fw >= CSS_FONT_WEIGHT_600 &&
+             fw <= CSS_FONT_WEIGHT_900))
+            NV_last_bold = 1;
     }
     css_select_results_destroy(res);
     /* Hito 5: atributo style= como hoja inline (pesa mas que la
@@ -1573,8 +1715,23 @@ static void nv_recorre(dom_node *n, int prof) {
                         }
                     } else {
                         int fg0 = NV_fg, bg0 = NV_bg;
+                        int al0 = NV_al, ebg = 0, eal = -1;
+                        int es_bloque = nv_es_bloque(id);
                         int es_enl = 0, ienl = -1, ntxt0 = 0;
+                        int es_sub = 0, es_bold = 0;
                         nv_estilo_nodo(h);
+                        ebg = NV_last_bgexp;
+                        eal = NV_last_al;
+                        if (NV_last_bold) {
+                            es_bold = 1;
+                            NV_b++;
+                        }
+                        /* Hito 6: fondo explicito y alineacion
+                           rigen el subarbol del bloque */
+                        if (es_bloque) {
+                            if (ebg) NV_bgexp++;
+                            if (eal >= 0) NV_al = eal;
+                        }
                         /* Hito 4: registra el enlace (filas+f0..f1) */
                         if (id == T_A) {
                             char href[256];
@@ -1586,6 +1743,10 @@ static void nv_recorre(dom_node *n, int prof) {
                                 ienl = NV_nenl++;
                                 NV_enl[ienl].f0 = NV_nfilas;
                                 NV_enl[ienl].f1 = NV_nfilas;
+                                NV_enl[ienl].c0 =
+                                    NV_ntxt -
+                                    NV_filas[NV_nfilas].ini;
+                                NV_enl[ienl].c1 = -1;
                                 while (NV_tmpurl[q] && q < 255) {
                                     NV_enl[ienl].url[q] =
                                         NV_tmpurl[q];
@@ -1595,23 +1756,40 @@ static void nv_recorre(dom_node *n, int prof) {
                                 es_enl = 1;
                                 ntxt0 = NV_ntxt;
                             }
+                            /* Hito 6: subraya si la cascada lo pide
+                               (hoja UA por defecto) */
+                            if (NV_last_dec &
+                                CSS_TEXT_DECORATION_UNDERLINE) {
+                                es_sub = 1;
+                                NV_sub++;
+                            }
                         }
                         if (id == T_LI) {
                             nv_bloque();
                             nv_pon_texto(
                                 (const unsigned char *)"  * ",
                                 4, 1);
-                        } else if (nv_es_bloque(id)) {
+                        } else if (es_bloque) {
                             nv_bloque();
                         }
                         {
                             int fg1 = NV_fg, bg1 = NV_bg;
+                            int al1 = NV_al;
                             nv_recorre(h, prof + 1);
                             NV_fg = fg1;
                             NV_bg = bg1;
+                            NV_al = al1;
                         }
-                        if (nv_es_bloque(id))
+                        if (es_bloque)
                             nv_salto();
+                        if (es_sub)
+                            NV_sub--;
+                        if (es_bold)
+                            NV_b--;
+                        if (es_bloque) {
+                            if (ebg) NV_bgexp--;
+                            NV_al = al0;
+                        }
                         if (es_enl && ienl >= 0) {
                             int f1 = NV_nfilas;
                             if (NV_nfilas >= NV_MAXFILAS)
@@ -1625,18 +1803,12 @@ static void nv_recorre(dom_node *n, int prof) {
                                 NV_nenl--;
                             } else {
                                 NV_enl[ienl].f1 = f1;
+                                NV_enl[ienl].c1 = NV_ntxt -
+                                    NV_filas[f1].ini;
                             }
                         }
                         NV_fg = fg0;
                         NV_bg = bg0;
-                        {
-                            /* la linea en curso hereda el estilo
-                               exterior restaurado */
-                            if (NV_nfilas < NV_MAXFILAS) {
-                                NV_filas[NV_nfilas].fg = NV_fg;
-                                NV_filas[NV_nfilas].bg = NV_bg;
-                            }
-                        }
                     }
                 }
             } else if (t == DOM_TEXT_NODE) {
@@ -1708,6 +1880,11 @@ static int nv_procesa(const unsigned char *pg, int n) {
     NV_pend_esp = 0;
     NV_nenl = 0;
     NV_ninline = 0;
+    nv_ref_libera();
+    NV_sub = 0;
+    NV_bgexp = 0;
+    NV_al = 0;
+    NV_b = 0;
     nv_img_libera();
     NV_css_ok = 0;
     nv_linea_nueva();
@@ -1912,12 +2089,62 @@ static void nv_navegar(const char *f, int empuja);
 static void nv_hist_ir(int d);
 static int NV_tiene;
 
+/* Hito 6: la barra es buscador si no parece URL.
+   Sin esquema y sin puntos ni barras: consulta al motor. */
+#define NV_BUSCA_BASE "https://html.duckduckgo.com/html/?q="
+
+static int nv_es_busqueda(const char *s) {
+    int i = 0;
+    while (s[i] == ' ') i++;
+    if (!s[i]) return 0;
+    while (s[i]) {
+        if (s[i] == ':') return 0;
+        if (s[i] == '/' || s[i] == '.') return 0;
+        if (s[i] == ' ') return 1;
+        i++;
+    }
+    return 1;
+}
+
+static void nv_busca_url(const char *q, char *sal) {
+    int t = 0, i = 0;
+    static const char *hex = "0123456789ABCDEF";
+    while (NV_BUSCA_BASE[t]) {
+        sal[t] = NV_BUSCA_BASE[t];
+        t++;
+    }
+    while (q[i] == ' ') i++;
+    while (q[i] && t < NV_MAXURL - 4) {
+        unsigned char c = (unsigned char)q[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            sal[t++] = (char)c;
+            i++;
+        } else if (c == ' ') {
+            sal[t++] = '+';
+            i++;
+        } else {
+            if (t + 3 >= NV_MAXURL) break;
+            sal[t++] = '%';
+            sal[t++] = hex[(c >> 4) & 15];
+            sal[t++] = hex[c & 15];
+            i++;
+        }
+    }
+    while (t > 0 && sal[t - 1] == '+') t--;
+    sal[t] = 0;
+}
+
+/* entrada de la barra / arranque: URL, dominio o busqueda */
+static void nv_ir(const char *texto);
+
 /* -p [url]: sin url = bateria contra stubs; con url = resumen */
 static int nv_modo_p(const char *resto) {
     while (*resto == ' ') resto++;
     if (*resto == 0) {
         /* bateria: necesita http_stub en 18080 (ftest lo arranca) */
-        u_print("navega: bateria Hito 5...\n");
+        u_print("navega: bateria Hito 6...\n");
         nv_ok(nv_pagina("http://10.0.2.2:18080/pagina") == 0,
               "pagina-carga");
         nv_ok(!u_strcmp(NV_titulo, "Inicio Facil"),
@@ -1977,17 +2204,70 @@ static int nv_modo_p(const char *resto) {
             }
             nv_ok(ok, "inl-color");
         }
+        /* Hito 6: fidelidad NetSurf (hoja UA) sobre /enlaces */
+        nv_navegar("http://10.0.2.2:18080/enlaces", 1);
         {
-            int f;
-            u_print("navega: titulo=");
-            u_print(NV_titulo);
-            u_print(" filas=");
-            nv_num(NV_nfilas);
-            u_print(" estilos=");
-            nv_num(NV_nestilos);
-            u_print("\n");
-            for (f = 0; f < NV_nfilas && f < 8; f++)
-                nv_linea_consola(f);
+            int f, k, azul = 0, sub = 0;
+            for (f = 0; f < NV_nfilas; f++) {
+                int m = NV_filas[f].len;
+                for (k = 0; k + 8 <= m; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k,
+                                  "absoluto", 8)) {
+                        if (NV_filas[f].fg == 0x0000EE)
+                            azul = 1;
+                        if (NV_filas[f].sub)
+                            sub = 1;
+                    }
+                }
+            }
+            nv_ok(azul, "ua-azul");
+            nv_ok(sub, "ua-sub");
+        }
+        /* Hito 6: fondo a ancho completo + negrita en /css */
+        nv_navegar("http://10.0.2.2:18080/css", 1);
+        {
+            int f, k, lleno = 0, neg = 0;
+            for (f = 0; f < NV_nfilas; f++) {
+                int m = NV_filas[f].len;
+                for (k = 0; k + 8 <= m; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k,
+                                  "Cabecera", 8)) {
+                        if (NV_filas[f].full)
+                            lleno = 1;
+                        if (NV_filas[f].bd)
+                            neg = 1;
+                    }
+                }
+            }
+            nv_ok(lleno, "ua-lleno");
+            nv_ok(neg, "ua-neg");
+        }
+        /* Hito 6: buscador de la barra (puro, sin red) */
+        {
+            char u[NV_MAXURL + 1];
+            nv_busca_url("hola mundo", u);
+            nv_ok(!u_strcmp(u, "https://html.duckduckgo.com"
+                               "/html/?q=hola+mundo"),
+                  "busca-url");
+            nv_ok(nv_es_busqueda("hola mundo") &&
+                  !nv_es_busqueda("http://x/y") &&
+                  !nv_es_busqueda("example.com"),
+                  "busca-det");
+        }
+        /* Hito 6: clase sobre div (regresion del aliasing) */
+        {
+            static const char m1[] =
+                "<html><head><style>.x{color:red}</style>"
+                "</head><body><div class=\"x\">T</div></body></html>";
+            int k, ok = 0;
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            for (k = 0; k < NV_nfilas; k++)
+                if (NV_filas[k].fg == 0xFF0000) ok = 1;
+            nv_ok(ok, "ua-clsdiv");
         }
         u_print("navega: ");
         nv_num(NV_pruebas);
@@ -2075,6 +2355,36 @@ static void nv_hist_empuja(const char *f) {
     NV_hscroll[NV_nhist] = 0;
     NV_ihist = NV_nhist;
     NV_nhist++;
+}
+
+/* entrada de la barra / arranque: URL, dominio o busqueda */
+static void nv_ir(const char *texto) {
+    const char *s = texto;
+    while (*s == ' ') s++;
+    if (!*s) return;
+    if (nv_es_url(s)) {
+        nv_navegar(s, 1);
+        return;
+    }
+    if (nv_es_busqueda(s)) {
+        nv_busca_url(s, NV_tmpurl);
+        nv_navegar(NV_tmpurl, 1);
+        return;
+    }
+    {
+        int i = 0, j = 0;
+        static char con_esquema[NV_MAXURL + 1];
+        const char *pre = "http://";
+        while (pre[i]) {
+            con_esquema[i] = pre[i];
+            i++;
+        }
+        while (s[j] && i < NV_MAXURL) {
+            con_esquema[i++] = s[j++];
+        }
+        con_esquema[i] = 0;
+        nv_navegar(con_esquema, 1);
+    }
 }
 
 static void nv_hist_ir(int d);
@@ -2193,6 +2503,9 @@ static void nv_navegar(const char *f, int empuja) {
         else
             nv_pon_estado("no se pudo cargar");
     }
+    /* Hito 6: el contenido solo se compone en DRAW del servidor;
+       el dibujo explicito no pega. Se pide un DRAW con TICK. */
+    ug_tick(&NV_v, 1);
 }
 
 static void nv_hist_ir(int d) {
@@ -2304,11 +2617,25 @@ static void nv_dibuja(void) {
             if (NV_filas[f].fg >= 0)
                 color = 0x01000000 |
                     (NV_filas[f].fg & 0xFFFFFF);
+            /* Hito 6: alineacion del bloque */
+            if (NV_filas[f].al == 1 || NV_filas[f].al == 2) {
+                int disp = (cw - 8) - q * UG_FW;
+                if (disp > 0)
+                    x += NV_filas[f].al == 1 ? disp / 2 :
+                                               disp;
+            }
             if (NV_filas[f].bg >= 0) {
-                int wpx = q * UG_FW;
-                ug_relleno(&NV_v, x, y, wpx, UG_FH,
-                           0x01000000 |
-                           (NV_filas[f].bg & 0xFFFFFF));
+                if (NV_filas[f].full) {
+                    /* Hito 6: el bloque cubre todo el ancho */
+                    ug_relleno(&NV_v, 4, y, cw - 8, UG_FH,
+                               0x01000000 |
+                               (NV_filas[f].bg & 0xFFFFFF));
+                } else {
+                    int wpx = q * UG_FW;
+                    ug_relleno(&NV_v, x, y, wpx, UG_FH,
+                               0x01000000 |
+                               (NV_filas[f].bg & 0xFFFFFF));
+                }
             }
             /* Hito 4: enlace con foco -> banda de seleccion */
             if (NV_tiene && NV_foco_enl >= 0 &&
@@ -2322,6 +2649,31 @@ static void nv_dibuja(void) {
                 color = C_BLANCO;
             }
             ug_texto(&NV_v, x, y, tmp, color);
+            /* Hito 6: negrita por doble pasada */
+            if (NV_filas[f].bd && q > 0)
+                ug_texto(&NV_v, x + 1, y, tmp, color);
+            /* Hito 6: subrayado por tramo de enlace */
+            if (NV_filas[f].sub && q > 0) {
+                int li;
+                for (li = 0; li < NV_nenl; li++) {
+                    if (f >= NV_enl[li].f0 &&
+                        f <= NV_enl[li].f1) {
+                        int xs = (f == NV_enl[li].f0) ?
+                            NV_enl[li].c0 : 0;
+                        int xe = (f == NV_enl[li].f1 &&
+                                 NV_enl[li].c1 >= 0) ?
+                            NV_enl[li].c1 : q;
+                        if (xs < 0) xs = 0;
+                        if (xe > q) xe = q;
+                        if (xe > xs) {
+                            ug_linea(&NV_v, x + xs * UG_FW,
+                                     y + UG_FH - 3,
+                                     x + xe * UG_FW - 1,
+                                     y + UG_FH - 3, color);
+                        }
+                    }
+                }
+            }
         }
         /* scrollbar */
         if (NV_nfilas > NV_vis) {
@@ -2363,7 +2715,7 @@ static void nv_asegura_enlace(int idx) {
 static void nv_ev_tecla(int tecla) {
     if (NV_foco_barra) {
         if (tecla == 13) {
-            nv_navegar(NV_bar, 1);
+            nv_ir(NV_bar);
             NV_foco_barra = 0;
         } else if (tecla == 27) {
             int i = 0;
@@ -2383,6 +2735,7 @@ static void nv_ev_tecla(int tecla) {
             ug_campo_tecla(NV_bar, (int)sizeof(NV_bar),
                            &NV_bpos, tecla);
         }
+        ug_tick(&NV_v, 1);
         return;
     }
     if (tecla == 0x101) {
@@ -2425,6 +2778,7 @@ static void nv_ev_tecla(int tecla) {
         NV_foco_enl = -1;
         NV_foco_barra = 1;
     }
+    ug_tick(&NV_v, 1);
 }
 
 static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
@@ -2433,21 +2787,25 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
     if (rueda) {
         NV_desplaza -= rueda * 2;
         if (NV_desplaza < 0) NV_desplaza = 0;
+        ug_tick(&NV_v, 1);
         return;
     }
     if (!clic) return;
     if (ly >= 8 && ly < 36) {
         if (lx >= 8 && lx < 52) {
             nv_hist_ir(-1);
+            ug_tick(&NV_v, 1);
             return;
         }
         if (lx >= 56 && lx < 100) {
             nv_hist_ir(1);
+            ug_tick(&NV_v, 1);
             return;
         }
         if (lx >= 104 && lx < 148) {
             if (NV_url[0])
                 nv_navegar(NV_url, 0);
+            ug_tick(&NV_v, 1);
             return;
         }
         if (lx >= 152 && lx < 196) {
@@ -2459,18 +2817,22 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
             NV_foco_barra = 1;
             nv_pon_estado("");
             NV_red[0] = 0;
+            ug_tick(&NV_v, 1);
             return;
         }
         if (lx >= NV_v.w - 52 && lx < NV_v.w - 8) {
-            nv_navegar(NV_bar, 1);
+            nv_ir(NV_bar);
             NV_foco_barra = 0;
+            ug_tick(&NV_v, 1);
             return;
         }
         if (lx >= 200 && lx < NV_v.w - 60) {
             NV_foco_barra = 1;
+            ug_tick(&NV_v, 1);
             return;
         }
         NV_foco_barra = 0;
+        ug_tick(&NV_v, 1);
         return;
     }
     if (ly >= NV_BAR_H && ly < NV_v.h - NV_EST_H) {
@@ -2495,6 +2857,7 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
             }
         }
     }
+    ug_tick(&NV_v, 1);
 }
 
 int main(void) {
@@ -2553,11 +2916,15 @@ int main(void) {
                         ev.ry - (NV_v.y + UG_CHROME), ev.rbot,
                         ev.rueda);
         } else if (t == UG_EV_DRAW) {
+            /* Hito 6: solo se pinta en DRAW del servidor; el
+               dibujo explicito no se compone. TICK pide el DRAW
+               que muestra la pagina tras la descarga. */
             nv_dibuja();
+            ug_tick(&NV_v, 0);
             if (NV_ini) {
                 NV_ini = 0;
-                nv_navegar(NV_bar, 1);
-                nv_dibuja();
+                nv_ir(NV_bar);
+                ug_tick(&NV_v, 1);
             }
         }
     }
