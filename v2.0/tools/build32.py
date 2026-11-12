@@ -381,7 +381,10 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
             objs += NSOBJS + NS1OBJS
         if con_br:
             objs += BROBJS
-            objs.append(NSHIM)
+            # NSHIM ya viene dentro de NSOBJS (con_ns/con_ns1);
+            # solo se anade suelto sin NetSurf (https/t_fetch).
+            if not con_ns and not con_ns1:
+                objs.append(NSHIM)
             if NSFETCH:
                 objs.append(NSFETCH)
         _link = [CC, "-m32", "-nostdlib", "-Wl,--image-base,0x10000",
@@ -512,6 +515,8 @@ _apps3 = [
     ("t_ns", ["t_ns.c"], True),
     # Hito 2 NetSurf: KAT del fetch HTTP/HTTPS sobre stubs locales.
     ("t_fetch", ["t_fetch.c"], True, False, True),
+    # Hito 3 NetSurf: visor minimo (ugfx + nsfetch + hubbub/dom/css).
+    ("navega", ["navega.c"], True, True, True),
 ]
 for _nom, _fs, _u, *_g in _apps3:
     # v2.4.3: fbrowser/http con cuerpo estatico de 256K (chunked +
@@ -534,6 +539,9 @@ for _nom, _fs, _u, *_g in _apps3:
         _ns = True
     if _nom == "t_ns":
         _tope = 770048
+        _ns1 = True
+    if _nom == "navega":
+        _tope = 1245184
         _ns1 = True
     if _nom == "t_fetch":
         _tope = 524288

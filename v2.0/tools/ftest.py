@@ -29,7 +29,7 @@ ROOT = BASE.parent                             # raiz del repo
 TOOLS = BASE / "tools"
 STATE = BASE / "build" / ".ftest_state.json"
 LOGS = BASE / "build" / "logs"
-FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns", "t_fetch"]
+FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns", "t_fetch", "navega -p"]
 TIMEOUT = {"t_fb": 150.0, "t_red": 150.0}
 DFLT_TO = 60.0
 # fichero -> patron de tests afectados ("*" = todos). Lo no listado
@@ -62,6 +62,7 @@ IMPACTO = [
     ("v2.0/user/lib/nsshim.c", "t_ns"),
     ("v2.0/user/lib/nslibc/*", "t_ns"),
     ("v2.0/thirdparty/netsurf/*", "t_ns"),
+    ("v2.0/user/apps/navega.c", "navega -p"),
 ]
 IGNORAR = ["v2.0/thirdparty/", "v2.0/build/", "C:/Temp/", "/tmp/"]
 ISO_INPUTS = (".c", ".h", ".cpp", ".asm", ".ld", ".py")
@@ -265,7 +266,7 @@ def arranca_qemu(iso, ser, port, cmds, timeout_total, stub=False,
 
 def veredictos(ser):
     txt = pathlib.Path(ser).read_bytes().decode(errors="ignore")
-    partes = re.split(r"facil32:/> ejecutar (\S+)\r?\n", txt)
+    partes = re.split(r"facil32:/> ejecutar (\S+)[^\r\n]*\r?\n", txt)
     res = []
     for i in range(1, len(partes) - 1, 2):
         nom, sal = partes[i], partes[i + 1]
@@ -381,7 +382,8 @@ def main():
         cmds += ["ejecutar " + t, "{WAIT:retorno:,%d}" % to]
     total_to = sum(int(TIMEOUT.get(t, DFLT_TO)) for t in tests) + 180
     qout, infra = arranca_qemu(iso, ser, port, cmds, total_to,
-                               stub=(a.stub or "t_fb" in tests),
+                               stub=(a.stub or "t_fb" in tests or
+                                     "navega -p" in tests),
                                stub_tls=("t_fetch" in tests))
     lineas.append("- QEMU arranque+ejecucion: %.0fs" % (time.time() - t_qemu0))
     for wl in qout.splitlines():
