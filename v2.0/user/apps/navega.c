@@ -11,6 +11,8 @@ void __main(void) {
 #include <dom/dom.h>
 #include <libcss/libcss.h>
 #include <libcss/fpmath.h>
+#include <libnsbmp.h>
+#include <nsgif.h>
 #include "ugfx.h"
 #include "utext.h"
 
@@ -36,7 +38,8 @@ typedef struct {
     int ini, len;
     int fg;                    /* 0xRRGGBB o -1 = defecto */
     int bg;                    /* 0xRRGGBB o -1 = ninguno */
-    int estilo;                /* 0 normal, 1 vacia, 2 HR */
+    int estilo;                /* 0 normal, 1 vacia, 2 HR, 3 IMG */
+    int img;                   /* indice en NV_img o -1 */
 } nv_fila_t;
 static nv_fila_t NV_filas[NV_MAXFILAS];
 static int NV_nfilas = 0;
@@ -227,8 +230,10 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
         return HUBBUB_OK;
     }
     if (nv_es_vacio(id)) {
-        /* BR/HR dejan marca en el DOM; el resto se ignora */
-        if (id != T_BR && id != T_HR) return HUBBUB_OK;
+        /* BR/HR dejan marca en el DOM; IMG tambien (Hito 5:
+           el layout lee src/alt); el resto se ignora */
+        if (id != T_BR && id != T_HR && id != T_IMG)
+            return HUBBUB_OK;
     }
     {
         dom_string *tag = 0;
@@ -250,13 +255,29 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
         if (dom_node_append_child(padre, (dom_node *)el, &hijo) ==
             DOM_NO_ERR) {
             if (hijo) dom_node_unref(hijo);
-            /* Hito 4: guarda href en el <a> (el layout lo lee) */
-            if (id == T_A) {
+            /* Hito 4/5: href en <a>, src/alt en <img>,
+               style en linea en cualquier elemento */
+            {
                 uint32_t ai;
                 for (ai = 0; ai < tk->data.tag.n_attributes; ai++) {
                     const hubbub_attribute *at =
                         &tk->data.tag.attributes[ai];
-                    if (at->name.len == 4 &&
+                    const char *want = 0;
+                    size_t cap = 255;
+                    if (at->name.len == 5 &&
+                        (at->name.ptr[0] == 's' ||
+                         at->name.ptr[0] == 'S') &&
+                        (at->name.ptr[1] == 't' ||
+                         at->name.ptr[1] == 'T') &&
+                        (at->name.ptr[2] == 'y' ||
+                         at->name.ptr[2] == 'Y') &&
+                        (at->name.ptr[3] == 'l' ||
+                         at->name.ptr[3] == 'L') &&
+                        (at->name.ptr[4] == 'e' ||
+                         at->name.ptr[4] == 'E')) {
+                        want = "style";
+                        cap = 511;
+                    } else if (at->name.len == 4 &&
                         (at->name.ptr[0] == 'h' ||
                          at->name.ptr[0] == 'H') &&
                         (at->name.ptr[1] == 'r' ||
@@ -265,11 +286,39 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
                          at->name.ptr[2] == 'E') &&
                         (at->name.ptr[3] == 'f' ||
                          at->name.ptr[3] == 'F')) {
+                        if (id != T_A) continue;
+                        want = "href";
+                    } else if (at->name.len == 3 &&
+                               (at->name.ptr[0] == 's' ||
+                                at->name.ptr[0] == 'S') &&
+                               (at->name.ptr[1] == 'r' ||
+                                at->name.ptr[1] == 'R') &&
+                               (at->name.ptr[2] == 'c' ||
+                                at->name.ptr[2] == 'C')) {
+                        if (id != T_IMG) continue;
+                        want = "src";
+                    } else if (at->name.len == 3 &&
+                               (at->name.ptr[0] == 'a' ||
+                                at->name.ptr[0] == 'A') &&
+                               (at->name.ptr[1] == 'l' ||
+                                at->name.ptr[1] == 'L') &&
+                               (at->name.ptr[2] == 't' ||
+                                at->name.ptr[2] == 'T')) {
+                        if (id != T_IMG) continue;
+                        want = "alt";
+                        cap = 127;
+                    } else {
+                        continue;
+                    }
+                    {
                         dom_string *nm = 0, *v = 0;
                         size_t vl = at->value.len;
-                        if (vl > 255) vl = 255;
+                        int wl = 0;
+                        if (vl > cap) vl = cap;
+                        while (want[wl]) wl++;
                         if (dom_string_create(
-                                (const unsigned char *)"href", 4,
+                                (const unsigned char *)want,
+                                (unsigned)wl,
                                 &nm) == DOM_NO_ERR && nm &&
                             dom_string_create(at->value.ptr, vl,
                                               &v) == DOM_NO_ERR &&
@@ -278,7 +327,6 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
                             dom_string_unref(v);
                         }
                         if (nm) dom_string_unref(nm);
-                        break;
                     }
                 }
             }
@@ -1072,6 +1120,18 @@ static char NV_tmpurl[NV_MAXURL + 1];
 static char NV_red[64];
 static int NV_ult_cod = 0, NV_ult_tam = 0;
 
+/* ---- imagenes (Hito 5): <img> BMP/GIF, pixeles en heap ---- */
+#define NV_MAXIMG 8
+#define NV_IMG_MAXPX 150000    /* tope de decodificacion */
+typedef struct {
+    int w, h;
+    unsigned char *px;         /* RGB, w*h*3 (u_malloc) o 0 */
+    int fila;                  /* primera fila de texto que ocupa */
+} nv_img_t;
+static nv_img_t NV_img[NV_MAXIMG];
+static int NV_nimg = 0;
+static int NV_ninline = 0;     /* elementos con style= aplicado */
+
 static void nv_linea_nueva(void) {
     if (NV_nfilas >= NV_MAXFILAS) return;
     NV_filas[NV_nfilas].ini = NV_ntxt;
@@ -1079,6 +1139,7 @@ static void nv_linea_nueva(void) {
     NV_filas[NV_nfilas].fg = NV_fg;
     NV_filas[NV_nfilas].bg = NV_bg;
     NV_filas[NV_nfilas].estilo = 0;
+    NV_filas[NV_nfilas].img = -1;
 }
 
 static void nv_salto(void) {
@@ -1200,6 +1261,207 @@ static int nv_enlace_en(int f) {
     return -1;
 }
 
+/* nv_es_url vive abajo (carga); avance para nv_imagen */
+static int nv_es_url(const char *s);
+
+/* ---- imagenes (Hito 5): decodificacion BMP/GIF a heap ---- */
+static void nv_img_libera(void) {
+    int i;
+    for (i = 0; i < NV_nimg; i++) {
+        if (NV_img[i].px) u_free(NV_img[i].px);
+        NV_img[i].px = 0;
+    }
+    NV_nimg = 0;
+}
+
+static void *nv_bmp_nuevo(int w, int h, unsigned int estado) {
+    (void)estado;
+    if (w <= 0 || h <= 0 ||
+        (unsigned)w * (unsigned)h > (unsigned)NV_IMG_MAXPX)
+        return 0;
+    return u_malloc((unsigned)(w * h * 4));
+}
+
+static void nv_bmp_borra(void *b) {
+    u_free(b);
+}
+
+static unsigned char *nv_bmp_buf(void *b) {
+    return (unsigned char *)b;
+}
+
+static void *nv_gif_nuevo(int w, int h) {
+    if (w <= 0 || h <= 0 ||
+        (unsigned)w * (unsigned)h > (unsigned)NV_IMG_MAXPX)
+        return 0;
+    return u_malloc((unsigned)(w * h * 4));
+}
+
+static void nv_gif_borra(nsgif_bitmap_t *b) {
+    u_free(b);
+}
+
+static uint8_t *nv_gif_buf(nsgif_bitmap_t *b) {
+    return (uint8_t *)b;
+}
+
+/* BMP ("BM") o GIF ("GIF8") a RGB en heap. 0 ok. */
+static int nv_img_dec(const unsigned char *d, int n,
+                      int *w, int *h, unsigned char **rgb) {
+    int i;
+    *w = 0;
+    *h = 0;
+    *rgb = 0;
+    if (!d || n < 6) return -1;
+    if (d[0] == 'B' && d[1] == 'M') {
+        bmp_image img;
+        bmp_bitmap_callback_vt vt;
+        uint32_t *src;
+        unsigned char *dst;
+        for (i = 0; i < (int)sizeof(vt); i++)
+            ((char *)&vt)[i] = 0;
+        vt.bitmap_create = nv_bmp_nuevo;
+        vt.bitmap_destroy = nv_bmp_borra;
+        vt.bitmap_get_buffer = nv_bmp_buf;
+        if (bmp_create(&img, &vt) != BMP_OK) return -1;
+        if (bmp_analyse(&img, (size_t)n, (uint8_t *)d) !=
+            BMP_OK) {
+            bmp_finalise(&img);
+            return -1;
+        }
+        if (img.width < 1 || img.height < 1 ||
+            img.width > 2000 || img.height > 2000 ||
+            (unsigned)img.width * (unsigned)img.height >
+            (unsigned)NV_IMG_MAXPX) {
+            bmp_finalise(&img);
+            return -1;
+        }
+        if (bmp_decode(&img) != BMP_OK || !img.decoded ||
+            !img.bitmap) {
+            bmp_finalise(&img);
+            return -1;
+        }
+        dst = (unsigned char *)u_malloc(
+            (unsigned)(img.width * img.height * 3));
+        if (!dst) {
+            bmp_finalise(&img);
+            return -1;
+        }
+        src = (uint32_t *)img.bitmap;
+        for (i = 0; i < (int)(img.width * img.height); i++) {
+            uint32_t p = src[i];
+            dst[i * 3] = (unsigned char)(p & 0xFF);
+            dst[i * 3 + 1] = (unsigned char)((p >> 8) & 0xFF);
+            dst[i * 3 + 2] = (unsigned char)((p >> 16) & 0xFF);
+        }
+        *w = (int)img.width;
+        *h = (int)img.height;
+        *rgb = dst;
+        bmp_finalise(&img);
+        return 0;
+    }
+    if (d[0] == 'G' && d[1] == 'I' && d[2] == 'F') {
+        nsgif_t *g = 0;
+        nsgif_bitmap_cb_vt vt;
+        const nsgif_info_t *inf;
+        nsgif_bitmap_t *bm = 0;
+        uint8_t *src;
+        unsigned char *dst;
+        for (i = 0; i < (int)sizeof(vt); i++)
+            ((char *)&vt)[i] = 0;
+        vt.create = nv_gif_nuevo;
+        vt.destroy = nv_gif_borra;
+        vt.get_buffer = nv_gif_buf;
+        vt.set_opaque = 0;
+        vt.test_opaque = 0;
+        vt.modified = 0;
+        if (nsgif_create(&vt, NSGIF_BITMAP_FMT_R8G8B8A8,
+                         &g) != NSGIF_OK || !g)
+            return -1;
+        if (nsgif_data_scan(g, (uint32_t)n, d) != NSGIF_OK) {
+            nsgif_destroy(g);
+            return -1;
+        }
+        nsgif_data_complete(g);
+        inf = nsgif_get_info(g);
+        if (!inf || inf->width < 1 || inf->height < 1 ||
+            inf->frame_count < 1 ||
+            (unsigned)inf->width * (unsigned)inf->height >
+            (unsigned)NV_IMG_MAXPX) {
+            nsgif_destroy(g);
+            return -1;
+        }
+        if (nsgif_frame_decode(g, 0, &bm) != NSGIF_OK || !bm) {
+            nsgif_destroy(g);
+            return -1;
+        }
+        dst = (unsigned char *)u_malloc(
+            (unsigned)(inf->width * inf->height * 3));
+        if (!dst) {
+            nsgif_destroy(g);
+            return -1;
+        }
+        src = nv_gif_buf(bm);
+        for (i = 0; i < (int)(inf->width * inf->height); i++) {
+            dst[i * 3] = src[i * 4];
+            dst[i * 3 + 1] = src[i * 4 + 1];
+            dst[i * 3 + 2] = src[i * 4 + 2];
+        }
+        *w = (int)inf->width;
+        *h = (int)inf->height;
+        *rgb = dst;
+        nsgif_destroy(g);
+        return 0;
+    }
+    /* PNG/JPEG/otros: sin decodificador (documentado) */
+    return -1;
+}
+
+/* vuelca <img>: filas de pixeles o texto alt */
+static void nv_imagen(dom_node *h) {
+    char src[256], alt[128];
+    int i, dw, dh, R;
+    nv_bloque();
+    if (nv_atributo(h, "src", src, (int)sizeof(src))) {
+        if (!nv_atributo(h, "alt", alt, (int)sizeof(alt)) &&
+            alt[0])
+            nv_pon_texto((const unsigned char *)alt,
+                         u_strlen(alt), 0);
+        return;
+    }
+    if (!nv_resuelve(src, NV_tmpurl) && nv_es_url(NV_tmpurl)) {
+        nsfetch_res_t r;
+        if (nsfetch_get(NV_tmpurl, &r) == NSFETCH_OK &&
+            r.codigo == 200 && r.tam > 0) {
+            int w = 0, hh = 0;
+            unsigned char *rgb = 0;
+            if (!nv_img_dec((const unsigned char *)r.cuerpo,
+                            r.tam, &w, &hh, &rgb) &&
+                NV_nimg < NV_MAXIMG) {
+                int slot = NV_nimg++;
+                NV_img[slot].w = w;
+                NV_img[slot].h = hh;
+                NV_img[slot].px = rgb;
+                NV_img[slot].fila = NV_nfilas;
+                dw = w <= 600 ? w : 600;
+                dh = (hh * dw) / w;
+                if (dh < 1) dh = 1;
+                R = (dh + 15) / 16;
+                for (i = 0; i < R; i++) {
+                    if (NV_nfilas >= NV_MAXFILAS) break;
+                    NV_filas[NV_nfilas].estilo = 3;
+                    NV_filas[NV_nfilas].img = slot;
+                    nv_salto();
+                }
+                return;
+            }
+        }
+    }
+    if (!nv_atributo(h, "alt", alt, (int)sizeof(alt)) && alt[0])
+        nv_pon_texto((const unsigned char *)alt,
+                     u_strlen(alt), 0);
+}
+
 /* aplica el estilo CSS del nodo; actualiza NV_fg/NV_bg */
 static void nv_estilo_nodo(dom_node *n) {
     css_select_results *res = 0;
@@ -1221,6 +1483,63 @@ static void nv_estilo_nodo(dom_node *n) {
         }
     }
     css_select_results_destroy(res);
+    /* Hito 5: atributo style= como hoja inline (pesa mas que la
+       hoja <style>; mismo subconjunto: color/fondo) */
+    {
+        char st[512];
+        if (!nv_atributo(n, "style", st, (int)sizeof(st)) &&
+            st[0]) {
+            css_stylesheet_params p;
+            css_stylesheet *hoja = 0;
+            p.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
+            p.level = CSS_LEVEL_21;
+            p.charset = "UTF-8";
+            p.url = "http://navega/";
+            p.title = 0;
+            p.allow_quirks = false;
+            p.inline_style = true;
+            p.resolve = nv_css_res;
+            p.resolve_pw = 0;
+            p.import = 0;
+            p.import_pw = 0;
+            p.color = 0;
+            p.color_pw = 0;
+            p.font = 0;
+            p.font_pw = 0;
+            if (css_stylesheet_create(&p, &hoja) == CSS_OK &&
+                hoja) {
+                css_error e = css_stylesheet_append_data(
+                    hoja, (const uint8_t *)st,
+                    (size_t)u_strlen(st));
+                if ((e == CSS_OK || e == CSS_NEEDDATA) &&
+                    css_stylesheet_data_done(hoja) == CSS_OK) {
+                    css_select_results *ir = 0;
+                    if (css_select_style(NV_ctx, n, &NV_uctx,
+                            &NV_media, hoja, &NV_sel, 0,
+                            &ir) == CSS_OK && ir) {
+                        if (ir->styles[
+                                CSS_PSEUDO_ELEMENT_NONE]) {
+                            int fg = -1, bg = -1;
+                            nv_colores(
+                                ir->styles[
+                                    CSS_PSEUDO_ELEMENT_NONE],
+                                &fg, &bg);
+                            if (fg >= 0) {
+                                NV_fg = fg;
+                                NV_ninline++;
+                            }
+                            if (bg >= 0) {
+                                NV_bg = bg;
+                                NV_ninline++;
+                            }
+                        }
+                        css_select_results_destroy(ir);
+                    }
+                }
+                css_stylesheet_destroy(hoja);
+            }
+        }
+    }
 }
 
 static void nv_recorre(dom_node *n, int prof) {
@@ -1249,6 +1568,8 @@ static void nv_recorre(dom_node *n, int prof) {
                                 NV_filas[NV_nfilas].estilo = 2;
                                 nv_salto();
                             }
+                        } else if (id == T_IMG) {
+                            nv_imagen(h);
                         }
                     } else {
                         int fg0 = NV_fg, bg0 = NV_bg;
@@ -1386,6 +1707,8 @@ static int nv_procesa(const unsigned char *pg, int n) {
     NV_cols = 76;
     NV_pend_esp = 0;
     NV_nenl = 0;
+    NV_ninline = 0;
+    nv_img_libera();
     NV_css_ok = 0;
     nv_linea_nueva();
     if (!pg || n < 0) return -1;
@@ -1594,7 +1917,7 @@ static int nv_modo_p(const char *resto) {
     while (*resto == ' ') resto++;
     if (*resto == 0) {
         /* bateria: necesita http_stub en 18080 (ftest lo arranca) */
-        u_print("navega: bateria Hito 4...\n");
+        u_print("navega: bateria Hito 5...\n");
         nv_ok(nv_pagina("http://10.0.2.2:18080/pagina") == 0,
               "pagina-carga");
         nv_ok(!u_strcmp(NV_titulo, "Inicio Facil"),
@@ -1626,6 +1949,34 @@ static int nv_modo_p(const char *resto) {
         nv_ok(!u_strcmp(NV_titulo, "Enlaces"), "hist-atras");
         nv_hist_ir(1);
         nv_ok(!u_strcmp(NV_titulo, "CSS"), "hist-adelante");
+        /* Hito 5: imagenes BMP + GIF (pagina /img-bmp) */
+        nv_navegar("http://10.0.2.2:18080/img-bmp", 1);
+        nv_ok(NV_tiene, "img-carga");
+        nv_ok(NV_nimg >= 2, "img-num");
+        nv_ok(NV_nimg >= 1 && NV_img[0].w == 48 &&
+              NV_img[0].h == 32, "img-bmp");
+        nv_ok(NV_nimg >= 2 && NV_img[1].w == 48 &&
+              NV_img[1].h == 32, "img-gif");
+        nv_ok(NV_nimg >= 2 && NV_img[0].px != 0 &&
+              NV_img[1].px != 0, "img-px");
+        /* Hito 5: style= en linea (pagina /css) */
+        nv_navegar("http://10.0.2.2:18080/css", 1);
+        nv_ok(NV_ninline >= 1, "inl-num");
+        {
+            int f, k, ok = 0;
+            for (f = 0; f < NV_nfilas; f++) {
+                int m = NV_filas[f].len;
+                for (k = 0; k + 8 <= m; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k,
+                                  "Amarillo", 8)) {
+                        if (NV_filas[f].fg == 0xFFFF00)
+                            ok = 1;
+                    }
+                }
+            }
+            nv_ok(ok, "inl-color");
+        }
         {
             int f;
             u_print("navega: titulo=");
@@ -1910,6 +2261,38 @@ static void nv_dibuja(void) {
             if (NV_filas[f].estilo == 2) {
                 ug_linea(&NV_v, 4, y + 8, cw - 4, y + 8,
                          C_GRIS);
+                continue;
+            }
+            if (NV_filas[f].estilo == 3) {
+                /* Hito 5: banda de imagen (ajuste a 600 px) */
+                int gi = NV_filas[f].img;
+                if (gi >= 0 && gi < NV_nimg &&
+                    NV_img[gi].px && NV_img[gi].w > 0 &&
+                    NV_img[gi].h > 0) {
+                    int band = f - NV_img[gi].fila;
+                    int dw = NV_img[gi].w <= 600 ?
+                        NV_img[gi].w : 600;
+                    int dh = (NV_img[gi].h * dw) /
+                        NV_img[gi].w;
+                    int yy, xx;
+                    if (dh < 1) dh = 1;
+                    for (yy = 0; yy < UG_FH &&
+                         band * UG_FH + yy < dh; yy++) {
+                        int sy = (band * UG_FH + yy) *
+                            NV_img[gi].h / dh;
+                        for (xx = 0; xx < dw &&
+                             x + xx < cw - 4; xx++) {
+                            int sx = xx * NV_img[gi].w / dw;
+                            unsigned char *pp =
+                                NV_img[gi].px +
+                                (sy * NV_img[gi].w + sx) * 3;
+                            ug_pixel(&NV_v, x + xx, y + yy,
+                                     ((int)pp[0] << 16) |
+                                     ((int)pp[1] << 8) |
+                                     (int)pp[2]);
+                        }
+                    }
+                }
                 continue;
             }
             q = NV_filas[f].len;
