@@ -250,6 +250,38 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
         if (dom_node_append_child(padre, (dom_node *)el, &hijo) ==
             DOM_NO_ERR) {
             if (hijo) dom_node_unref(hijo);
+            /* Hito 4: guarda href en el <a> (el layout lo lee) */
+            if (id == T_A) {
+                uint32_t ai;
+                for (ai = 0; ai < tk->data.tag.n_attributes; ai++) {
+                    const hubbub_attribute *at =
+                        &tk->data.tag.attributes[ai];
+                    if (at->name.len == 4 &&
+                        (at->name.ptr[0] == 'h' ||
+                         at->name.ptr[0] == 'H') &&
+                        (at->name.ptr[1] == 'r' ||
+                         at->name.ptr[1] == 'R') &&
+                        (at->name.ptr[2] == 'e' ||
+                         at->name.ptr[2] == 'E') &&
+                        (at->name.ptr[3] == 'f' ||
+                         at->name.ptr[3] == 'F')) {
+                        dom_string *nm = 0, *v = 0;
+                        size_t vl = at->value.len;
+                        if (vl > 255) vl = 255;
+                        if (dom_string_create(
+                                (const unsigned char *)"href", 4,
+                                &nm) == DOM_NO_ERR && nm &&
+                            dom_string_create(at->value.ptr, vl,
+                                              &v) == DOM_NO_ERR &&
+                            v) {
+                            dom_element_set_attribute(el, nm, v);
+                            dom_string_unref(v);
+                        }
+                        if (nm) dom_string_unref(nm);
+                        break;
+                    }
+                }
+            }
             if (!nv_es_vacio(id) &&
                 !tk->data.tag.self_closing)
                 nv_empuja(e, (dom_node *)el, id);
@@ -1019,6 +1051,27 @@ static int NV_fg = -1, NV_bg = -1;
 static int NV_cols = 76;
 static int NV_pend_esp = 0;
 
+/* enlaces (Hito 4): filas [f0,f1] -> URL navegable */
+#define NV_MAXENL 64
+typedef struct {
+    int f0, f1;
+    char url[256];
+} nv_enl_t;
+static nv_enl_t NV_enl[NV_MAXENL];
+static int NV_nenl = 0, NV_foco_enl = -1;
+
+/* historial (Hito 4): pila de URLs con scroll por entrada */
+#define NV_MAXHIST 16
+static char NV_hist[NV_MAXHIST][NV_MAXURL + 1];
+static int NV_hscroll[NV_MAXHIST];
+static int NV_nhist = 0, NV_ihist = -1;
+
+/* base para resolver relativas + ultimo resultado de red */
+static char NV_base[NV_MAXURL + 1];
+static char NV_tmpurl[NV_MAXURL + 1];
+static char NV_red[64];
+static int NV_ult_cod = 0, NV_ult_tam = 0;
+
 static void nv_linea_nueva(void) {
     if (NV_nfilas >= NV_MAXFILAS) return;
     NV_filas[NV_nfilas].ini = NV_ntxt;
@@ -1106,6 +1159,47 @@ static int nv_id_nom(const char *s) {
     return nv_tag_id(b, i);
 }
 
+/* Hito 4: resuelve href contra NV_base en sal[512]. 0 ok, -1 no. */
+static int nv_resuelve(const char *ref, char *sal) {
+    int i;
+    if (!ref || !sal || !ref[0]) return -1;
+    /* https absoluta: el resolver de ulib solo acepta http */
+    if ((ref[0] == 'h' || ref[0] == 'H') &&
+        (ref[1] == 't' || ref[1] == 'T') &&
+        (ref[2] == 't' || ref[2] == 'T') &&
+        (ref[3] == 'p' || ref[3] == 'P') &&
+        (ref[4] == 's' || ref[4] == 'S') &&
+        ref[5] == ':' && ref[6] == '/' && ref[7] == '/') {
+        i = 0;
+        while (ref[i] && ref[i] != '#' && i < 511) {
+            sal[i] = ref[i];
+            i++;
+        }
+        sal[i] = 0;
+        if (i <= 8) return -1;
+        {
+            int j = 8;
+            while (sal[j] == '/') j++;
+            if (!sal[j]) return -1;
+        }
+        return 0;
+    }
+    if (!NV_base[0]) return -1;
+    if (u_html_resuelve_url(NV_base, ref, sal)) return -1;
+    return 0;
+}
+
+/* Hito 4: indice del enlace que cubre la fila f, o -1.
+   Del ultimo al primero: el mas interno gana. */
+static int nv_enlace_en(int f) {
+    int i;
+    for (i = NV_nenl - 1; i >= 0; i--) {
+        if (f >= NV_enl[i].f0 && f <= NV_enl[i].f1)
+            return i;
+    }
+    return -1;
+}
+
 /* aplica el estilo CSS del nodo; actualiza NV_fg/NV_bg */
 static void nv_estilo_nodo(dom_node *n) {
     css_select_results *res = 0;
@@ -1158,7 +1252,29 @@ static void nv_recorre(dom_node *n, int prof) {
                         }
                     } else {
                         int fg0 = NV_fg, bg0 = NV_bg;
+                        int es_enl = 0, ienl = -1, ntxt0 = 0;
                         nv_estilo_nodo(h);
+                        /* Hito 4: registra el enlace (filas+f0..f1) */
+                        if (id == T_A) {
+                            char href[256];
+                            if (!nv_atributo(h, "href", href,
+                                             (int)sizeof(href)) &&
+                                !nv_resuelve(href, NV_tmpurl) &&
+                                NV_nenl < NV_MAXENL) {
+                                int q = 0;
+                                ienl = NV_nenl++;
+                                NV_enl[ienl].f0 = NV_nfilas;
+                                NV_enl[ienl].f1 = NV_nfilas;
+                                while (NV_tmpurl[q] && q < 255) {
+                                    NV_enl[ienl].url[q] =
+                                        NV_tmpurl[q];
+                                    q++;
+                                }
+                                NV_enl[ienl].url[q] = 0;
+                                es_enl = 1;
+                                ntxt0 = NV_ntxt;
+                            }
+                        }
                         if (id == T_LI) {
                             nv_bloque();
                             nv_pon_texto(
@@ -1175,6 +1291,21 @@ static void nv_recorre(dom_node *n, int prof) {
                         }
                         if (nv_es_bloque(id))
                             nv_salto();
+                        if (es_enl && ienl >= 0) {
+                            int f1 = NV_nfilas;
+                            if (NV_nfilas >= NV_MAXFILAS)
+                                f1 = NV_MAXFILAS - 1;
+                            if (NV_ntxt ==
+                                NV_filas[f1].ini &&
+                                f1 > NV_enl[ienl].f0)
+                                f1--;
+                            if (NV_ntxt == ntxt0) {
+                                /* vacio: anula el registro */
+                                NV_nenl--;
+                            } else {
+                                NV_enl[ienl].f1 = f1;
+                            }
+                        }
                         NV_fg = fg0;
                         NV_bg = bg0;
                         {
@@ -1254,6 +1385,7 @@ static int nv_procesa(const unsigned char *pg, int n) {
     NV_bg = -1;
     NV_cols = 76;
     NV_pend_esp = 0;
+    NV_nenl = 0;
     NV_css_ok = 0;
     nv_linea_nueva();
     if (!pg || n < 0) return -1;
@@ -1384,6 +1516,8 @@ static int nv_cargar(const char *f) {
         nsfetch_res_t r;
         int e = nsfetch_get(f, &r);
         if (e != NSFETCH_OK) return -10 - e;
+        NV_ult_cod = r.codigo;
+        NV_ult_tam = r.tam;
         if (r.codigo != 200) return -20;
         pg = (const unsigned char *)r.cuerpo;
         n = r.tam;
@@ -1408,6 +1542,8 @@ static int nv_cargar(const char *f) {
         leido = u_fread(NV_txt, tam, fp);
         u_fclose(fp);
         if (leido != tam) return -32;
+        NV_ult_cod = 0;
+        NV_ult_tam = tam;
         rc = nv_procesa(NV_txt, tam);
         nv_css_fin();
         return rc;
@@ -1448,12 +1584,17 @@ static int nv_pagina(const char *url) {
     return 0;
 }
 
+/* navegar e historial viven abajo (tras el layout); avance para -p */
+static void nv_navegar(const char *f, int empuja);
+static void nv_hist_ir(int d);
+static int NV_tiene;
+
 /* -p [url]: sin url = bateria contra stubs; con url = resumen */
 static int nv_modo_p(const char *resto) {
     while (*resto == ' ') resto++;
     if (*resto == 0) {
         /* bateria: necesita http_stub en 18080 (ftest lo arranca) */
-        u_print("navega: bateria Hito 3...\n");
+        u_print("navega: bateria Hito 4...\n");
         nv_ok(nv_pagina("http://10.0.2.2:18080/pagina") == 0,
               "pagina-carga");
         nv_ok(!u_strcmp(NV_titulo, "Inicio Facil"),
@@ -1466,6 +1607,25 @@ static int nv_modo_p(const char *resto) {
         nv_ok(!u_strcmp(NV_titulo, "CSS"), "css-titulo");
         nv_ok(NV_nestilos >= 2, "css-estilos");
         nv_ok(nv_contiene("Verde por clase"), "css-texto");
+        /* Hito 4: enlaces (misma pagina que el stub /enlaces) */
+        nv_navegar("http://10.0.2.2:18080/enlaces", 1);
+        nv_ok(NV_tiene, "enl-carga");
+        nv_ok(NV_nenl >= 5, "enl-num");
+        nv_ok(!u_strcmp(NV_enl[0].url,
+                        "http://10.0.2.2:18080/pagina"), "enl-abs");
+        nv_ok(!u_strcmp(NV_enl[1].url,
+                        "http://10.0.2.2:18080/pagina"), "enl-raiz");
+        nv_ok(!u_strcmp(NV_enl[2].url,
+                        "http://10.0.2.2:18080/pagina"), "enl-rel");
+        nv_ok(!u_strcmp(NV_enl[5].url, "https://example.com/"),
+              "enl-https");
+        /* Hito 4: historial atras/adelante */
+        nv_navegar("http://10.0.2.2:18080/css", 1);
+        nv_ok(NV_tiene, "hist-carga");
+        nv_hist_ir(-1);
+        nv_ok(!u_strcmp(NV_titulo, "Enlaces"), "hist-atras");
+        nv_hist_ir(1);
+        nv_ok(!u_strcmp(NV_titulo, "CSS"), "hist-adelante");
         {
             int f;
             u_print("navega: titulo=");
@@ -1532,25 +1692,149 @@ static void nv_pon_estado(const char *s) {
     NV_estado[i] = 0;
 }
 
-static void nv_navegar(const char *f, int guarda) {
-    int rc;
-    (void)guarda;
+/* Hito 4: historial con scroll por entrada */
+static void nv_hist_empuja(const char *f) {
+    int i;
+    if (!f || !f[0]) return;
+    if (NV_nhist > 0 && NV_ihist >= 0 && NV_ihist < NV_nhist &&
+        !u_strcmp(NV_hist[NV_ihist], f))
+        return;
+    if (NV_ihist + 1 < NV_nhist)
+        NV_nhist = NV_ihist + 1;    /* recorta el futuro */
+    if (NV_nhist >= NV_MAXHIST) {
+        for (i = 1; i < NV_MAXHIST; i++) {
+            int k = 0;
+            while (NV_hist[i][k]) {
+                NV_hist[i - 1][k] = NV_hist[i][k];
+                k++;
+            }
+            NV_hist[i - 1][k] = 0;
+            NV_hscroll[i - 1] = NV_hscroll[i];
+        }
+        NV_nhist = NV_MAXHIST - 1;
+    }
+    {
+        int k = 0;
+        while (f[k] && k < NV_MAXURL) {
+            NV_hist[NV_nhist][k] = f[k];
+            k++;
+        }
+        NV_hist[NV_nhist][k] = 0;
+    }
+    NV_hscroll[NV_nhist] = 0;
+    NV_ihist = NV_nhist;
+    NV_nhist++;
+}
+
+static void nv_hist_ir(int d);
+
+static void nv_navegar(const char *f, int empuja) {
+    int rc, t0;
+    /* Hito 4: f puede aliasar NV_enl[i].url, que nv_cargar
+       reconstruye; se copia a slot estable antes de cargar. */
+    static char dest[NV_MAXURL + 1];
+    {
+        int i = 0;
+        if (!f || !f[0]) return;
+        while (f[i] && i < NV_MAXURL) {
+            dest[i] = f[i];
+            i++;
+        }
+        dest[i] = 0;
+    }
+    f = dest;
+    /* base para resolver relativas (solo http/https) */
+    if (nv_es_url(f)) {
+        int i = 0;
+        while (f[i] && f[i] != '#' && i < NV_MAXURL) {
+            NV_base[i] = f[i];
+            i++;
+        }
+        NV_base[i] = 0;
+    } else {
+        NV_base[0] = 0;
+    }
+    NV_ult_cod = 0;
+    NV_ult_tam = 0;
+    t0 = u_ticks();
     rc = nv_cargar(f);
+    {
+        int ms = (u_ticks() - t0) * 10;
+        int p = 0, q;
+        if (ms < 0) ms = 0;
+        /* NV_red: "200 110B 30ms" | "fich 1234B 5ms" | "ERR ..." */
+        if (rc == 0 && NV_ult_cod != 0) {
+            u_itoa(NV_ult_cod, NV_red);
+            while (NV_red[p]) p++;
+            NV_red[p++] = ' ';
+            u_itoa(NV_ult_tam, NV_red + p);
+            while (NV_red[p]) p++;
+            NV_red[p++] = 'B';
+            NV_red[p++] = ' ';
+            u_itoa(ms, NV_red + p);
+            while (NV_red[p]) p++;
+            NV_red[p++] = 'm';
+            NV_red[p++] = 's';
+            NV_red[p] = 0;
+        } else if (rc == 0) {
+            q = 0;
+            {
+                const char *t = "fich ";
+                while (t[q]) {
+                    NV_red[q] = t[q];
+                    q++;
+                }
+            }
+            p = q;
+            u_itoa(NV_ult_tam, NV_red + p);
+            while (NV_red[p]) p++;
+            NV_red[p++] = 'B';
+            NV_red[p++] = ' ';
+            u_itoa(ms, NV_red + p);
+            while (NV_red[p]) p++;
+            NV_red[p++] = 'm';
+            NV_red[p++] = 's';
+            NV_red[p] = 0;
+        } else if (rc == -20) {
+            const char *t = "ERR 404";
+            int k = 0;
+            while (t[k] && k < 60) {
+                NV_red[k] = t[k];
+                k++;
+            }
+            NV_red[k] = 0;
+        } else {
+            const char *t = "ERR red";
+            int k = 0;
+            while (t[k] && k < 60) {
+                NV_red[k] = t[k];
+                k++;
+            }
+            NV_red[k] = 0;
+        }
+    }
     if (rc == 0) {
         int i = 0;
         NV_tiene = 1;
+        NV_foco_enl = -1;
         while (f[i] && i < NV_MAXURL) {
             NV_url[i] = f[i];
+            NV_bar[i] = f[i];
             i++;
         }
         NV_url[i] = 0;
+        NV_bar[i] = 0;
+        NV_bpos = i;
         NV_desplaza = 0;
         if (NV_titulo[0])
             nv_pon_estado(NV_titulo);
         else
             nv_pon_estado("sin titulo");
+        if (empuja)
+            nv_hist_empuja(f);
     } else {
         NV_tiene = 0;
+        NV_foco_enl = -1;
         if (rc <= -10 && rc >= -19)
             nv_pon_estado("error de red");
         else if (rc == -20)
@@ -1558,6 +1842,16 @@ static void nv_navegar(const char *f, int guarda) {
         else
             nv_pon_estado("no se pudo cargar");
     }
+}
+
+static void nv_hist_ir(int d) {
+    int j = NV_ihist + d;
+    if (j < 0 || j >= NV_nhist) return;
+    NV_hscroll[NV_ihist] = NV_desplaza;
+    NV_ihist = j;
+    nv_navegar(NV_hist[j], 0);
+    NV_desplaza = NV_hscroll[j];
+    if (NV_desplaza < 0) NV_desplaza = 0;
 }
 
 static void nv_dibuja(void) {
@@ -1568,9 +1862,15 @@ static void nv_dibuja(void) {
     ug_relleno(&NV_v, 0, 0, w, NV_BAR_H, T_PANEL);
     ug_linea(&NV_v, 0, NV_BAR_H - 1, w - 1, NV_BAR_H - 1,
              T_PANEL_BORDE);
-    ug_boton(&NV_v, 8, 8, 44, 28, "R", UG_BOTON_NORMAL);
-    ug_boton(&NV_v, 56, 8, 44, 28, "X", UG_BOTON_NORMAL);
-    ug_campo(&NV_v, 108, 12, w - 108 - 60, NV_bar, NV_bpos,
+    ug_boton(&NV_v, 8, 8, 44, 28, "<",
+             (NV_nhist > 0 && NV_ihist > 0) ? UG_BOTON_NORMAL :
+             UG_BOTON_OFF);
+    ug_boton(&NV_v, 56, 8, 44, 28, ">",
+             (NV_ihist < NV_nhist - 1) ? UG_BOTON_NORMAL :
+             UG_BOTON_OFF);
+    ug_boton(&NV_v, 104, 8, 44, 28, "R", UG_BOTON_NORMAL);
+    ug_boton(&NV_v, 152, 8, 44, 28, "X", UG_BOTON_NORMAL);
+    ug_campo(&NV_v, 200, 12, w - 200 - 60, NV_bar, NV_bpos,
              NV_foco_barra);
     ug_boton(&NV_v, w - 52, 8, 44, 28, "Ir", UG_BOTON_NORMAL);
     cw = w - 14;
@@ -1590,7 +1890,8 @@ static void nv_dibuja(void) {
         ug_texto(&NV_v, 24, NV_BAR_H + 88,
                  "Ej: http://10.0.2.2:18080/pagina", C_GRIS);
         ug_texto(&NV_v, 24, NV_BAR_H + 112,
-                 "Intro=ir r=recargar Retroceso=barra", C_GRIS);
+                 "Intro=ir r=recargar Retroceso=barra Tab=enlace",
+                 C_GRIS);
         ug_texto(&NV_v, 24, NV_BAR_H + 136,
                  "Sin JS, sin imagenes, sin style= (ver NOTAS)",
                  C_GRIS);
@@ -1626,6 +1927,17 @@ static void nv_dibuja(void) {
                            0x01000000 |
                            (NV_filas[f].bg & 0xFFFFFF));
             }
+            /* Hito 4: enlace con foco -> banda de seleccion */
+            if (NV_tiene && NV_foco_enl >= 0 &&
+                NV_foco_enl < NV_nenl &&
+                f >= NV_enl[NV_foco_enl].f0 &&
+                f <= NV_enl[NV_foco_enl].f1) {
+                int wpx = q * UG_FW;
+                if (wpx < 8) wpx = 8;
+                ug_relleno(&NV_v, x, y, wpx, UG_FH,
+                           T_SELECCION);
+                color = C_BLANCO;
+            }
             ug_texto(&NV_v, x, y, tmp, color);
         }
         /* scrollbar */
@@ -1640,9 +1952,29 @@ static void nv_dibuja(void) {
     }
     ug_relleno(&NV_v, 0, h - NV_EST_H, w, NV_EST_H, T_PANEL);
     ug_texto(&NV_v, 8, h - NV_EST_H + 4,
-             NV_estado[0] ? NV_estado : "navega Hito 3",
+             NV_estado[0] ? NV_estado : "navega Hito 4",
              T_PANEL_TEXTO);
+    /* Hito 4: resultado de red a la derecha (codigo, bytes, ms) */
+    if (NV_red[0]) {
+        int lr = 0, xr;
+        while (NV_red[lr]) lr++;
+        xr = w - 8 - lr * UG_FW;
+        if (xr < w / 2) xr = w / 2;
+        ug_texto(&NV_v, xr, h - NV_EST_H + 4, NV_red, C_GRIS);
+    }
     ug_fin(&NV_v);
+}
+
+/* Hito 4: lleva el enlace con foco a la vista */
+static void nv_asegura_enlace(int idx) {
+    int f;
+    if (idx < 0 || idx >= NV_nenl) return;
+    f = NV_enl[idx].f0;
+    if (f < NV_desplaza)
+        NV_desplaza = f;
+    else if (f >= NV_desplaza + NV_vis)
+        NV_desplaza = f - NV_vis + 1;
+    if (NV_desplaza < 0) NV_desplaza = 0;
 }
 
 static void nv_ev_tecla(int tecla) {
@@ -1659,6 +1991,11 @@ static void nv_ev_tecla(int tecla) {
             NV_bar[i] = 0;
             NV_bpos = i;
             NV_foco_barra = 0;
+        } else if (tecla == 9) {
+            /* Tab en barra: primer enlace */
+            NV_foco_barra = 0;
+            NV_foco_enl = (NV_tiene && NV_nenl > 0) ? 0 : -1;
+            nv_asegura_enlace(NV_foco_enl);
         } else {
             ug_campo_tecla(NV_bar, (int)sizeof(NV_bar),
                            &NV_bpos, tecla);
@@ -1681,11 +2018,28 @@ static void nv_ev_tecla(int tecla) {
         NV_desplaza = NV_nfilas - NV_vis;
         if (NV_desplaza < 0) NV_desplaza = 0;
     } else if (tecla == 8) {
-        NV_foco_barra = 1;
+        nv_hist_ir(-1);
     } else if (tecla == 'r' || tecla == 'R') {
         if (NV_url[0])
             nv_navegar(NV_url, 0);
-    } else if (tecla == 13 || tecla == 27) {
+    } else if (tecla == 9) {
+        /* Tab: siguiente enlace (al final, vuelve a la barra) */
+        if (NV_tiene && NV_nenl > 0 && NV_foco_enl + 1 < NV_nenl) {
+            NV_foco_enl++;
+            nv_asegura_enlace(NV_foco_enl);
+        } else {
+            NV_foco_enl = -1;
+            NV_foco_barra = 1;
+        }
+    } else if (tecla == 13) {
+        /* Intro: sigue el enlace con foco */
+        if (NV_tiene && NV_foco_enl >= 0 &&
+            NV_foco_enl < NV_nenl)
+            nv_navegar(NV_enl[NV_foco_enl].url, 1);
+        else if (!NV_tiene)
+            NV_foco_barra = 1;
+    } else if (tecla == 27) {
+        NV_foco_enl = -1;
         NV_foco_barra = 1;
     }
 }
@@ -1701,17 +2055,27 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
     if (!clic) return;
     if (ly >= 8 && ly < 36) {
         if (lx >= 8 && lx < 52) {
+            nv_hist_ir(-1);
+            return;
+        }
+        if (lx >= 56 && lx < 100) {
+            nv_hist_ir(1);
+            return;
+        }
+        if (lx >= 104 && lx < 148) {
             if (NV_url[0])
                 nv_navegar(NV_url, 0);
             return;
         }
-        if (lx >= 56 && lx < 100) {
+        if (lx >= 152 && lx < 196) {
             NV_tiene = 0;
+            NV_foco_enl = -1;
             NV_url[0] = 0;
             NV_bar[0] = 0;
             NV_bpos = 0;
             NV_foco_barra = 1;
             nv_pon_estado("");
+            NV_red[0] = 0;
             return;
         }
         if (lx >= NV_v.w - 52 && lx < NV_v.w - 8) {
@@ -1719,7 +2083,7 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
             NV_foco_barra = 0;
             return;
         }
-        if (lx >= 108 && lx < NV_v.w - 60) {
+        if (lx >= 200 && lx < NV_v.w - 60) {
             NV_foco_barra = 1;
             return;
         }
@@ -1737,6 +2101,15 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
             else if (rel > pos + tam)
                 NV_desplaza += NV_vis;
             if (NV_desplaza < 0) NV_desplaza = 0;
+        } else if (lx < NV_v.w - 12) {
+            /* Hito 4: clic en enlace */
+            int f = NV_desplaza +
+                (ly - NV_BAR_H) / UG_FH, idx;
+            if (f >= 0 && f < NV_nfilas) {
+                idx = nv_enlace_en(f);
+                if (idx >= 0)
+                    nv_navegar(NV_enl[idx].url, 1);
+            }
         }
     }
 }
