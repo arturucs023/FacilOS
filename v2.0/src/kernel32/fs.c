@@ -49,9 +49,9 @@ static uint32_t nsec_de(uint32_t tam) { return (tam + 511) / 512; }
 /* v1.8: sin disco de datos (la ISO es de solo lectura) el area de datos
    extendida tambien vive en RAM, para que los ficheros de varios sectores
    funcionen igual que con disco, sin persistencia. 512 sectores = 256 KB
-   en 0x600000 (hace falta ~6.3 MB de RAM; QEMU arranca con 32 MB). */
+   en 0x780000 (hace falta ~8 MB de RAM; QEMU arranca con 32 MB). */
 #define POOL_SEC 512
-#define POOL_DIR ((uint8_t *)0x600000)
+#define POOL_DIR ((uint8_t *)0x780000)
 
 /* Sectores de datos disponibles: con disco, hasta el final de la imagen;
    sin disco, los 64 del espejo + los 512 del pool. */

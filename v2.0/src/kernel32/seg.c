@@ -90,8 +90,8 @@ int lanzar_usuario2(uint32_t entry, uint32_t uesp, int fresco) {
     if (fresco) {
         tss.esp0 = IRQ_PILA0;
     } else {
-        if (pila_anon == 0) pila_anon = 0x580000;
-        if (pila_anon <= 0x480000) pila_anon = 0x480000;
+        if (pila_anon == 0) pila_anon = 0x700000;
+        if (pila_anon <= 0x600000) pila_anon = 0x600000;
         pila_anon -= 0x10000;
         tss.esp0 = pila_anon;
     }

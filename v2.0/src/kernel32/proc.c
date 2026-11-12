@@ -195,7 +195,7 @@ int proc_crea(const char *nombre, unsigned di, uint32_t eip, uint32_t esp) {
     p->esp = esp;
     p->eflags = 0x202;
     p->ppid = proc_actual ? proc_actual->pid : 0;
-    p->brk = 0x3B0000;   /* v2.4.3: heap usuario 0x3B0000-0x47FFFF */
+    p->brk = 0x530000; /* v2.4.4: heap usuario 0x530000-0x5FFFFF */
     p->rc = -1;
     p->pila_kern = -1;
     for (int i = 0; i < NFD; i++) p->fds[i] = -1;
@@ -223,7 +223,7 @@ int proc_vma_add(proc_t *p, uint32_t ini, uint32_t tam, uint32_t tipo) {
     int i;
     if (!p || !tam) return -1;
     if (tipo == VMAR_HEAP) {
-        /* El heap crece monotono desde 0x3B0000 pero con brk sin alinear
+        /* El heap crece monotono desde 0x530000 pero con brk sin alinear
            los tramos se solapan: union con la region existente. */
         for (i = 0; i < p->nvmars; i++) {
             if (p->vmars[i].tipo == VMAR_HEAP &&
@@ -296,7 +296,7 @@ void proc_fusiona(void) {
                se desmapea por rangos: el directorio es privado y al
                liberarlo caen sus dos tablas con todo lo mapeado. Desmapear
                0x200000 con PAG_TAMANO (4 MB) alcanzaba las copias
-               supervisor de 0x480000-0x5FFFFF y liberaba marcos
+               supervisor de 0x600000-0x7FFFFF y liberaba marcos
                reservados del nucleo. */
             pag_libera_dir((int)p->di);
             p->di = 0;

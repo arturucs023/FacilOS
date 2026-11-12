@@ -129,7 +129,7 @@ static void lee_e820(void) {
 static void reserva_fijas(void) {
     reserva(0, 0x100000);          /* BIOS, fuente, bootinfo, E820, pila, copias */
     reserva(0x100000, 0x200000);   /* nucleo */
-    reserva(0x480000, 0x640000);   /* pilas de anillo 0 + pool del FS */
+    reserva(0x600000, 0x7C0000);   /* pilas de anillo 0 + pool del FS */
     reserva(0x800000, 0xD00000);   /* heap del kernel, dorso, tablas */
     reserva(0xE00000, 0xF00000);   /* pilas de anillo 0 de los procesos */
     reserva(0x1000000, 0x1800000);   /* F8: cola alta del catalogo (8 MB) */
@@ -479,13 +479,13 @@ void pag_inicia(void) {
        supervisor: ningun proceso puede escribir ahi. */
     uint32_t sup = PAG_PRESENTE | PAG_ESCRITURA;
     /* 0-2 MB (nucleo), 16-24 MB (cola alta del catalogo ISO),
-       4.75-6.25 MB (pilas de anillo 0 y pool del FS),
-       8-13 MB (heap, dorso, tablas). El resto NO se mapea: 2-3 MB y
-       2-4.75 MB son para los procesos, y sin mapear aqui no hay
-       aliasing entre un marco de usuario y la identidad del nucleo. */
+       6-7.75 MB (pilas de anillo 0 y pool del FS),
+       8-13 MB (heap, dorso, tablas). El resto NO se mapea: 2-6 MB
+       son para los procesos, y sin mapear aqui no hay aliasing
+       entre un marco de usuario y la identidad del nucleo. */
     mapea_rango(0, 0x000000, 0x200000, sup);
     mapea_rango(0, 0x1000000, 0x1800000, sup); /* F8: cola alta 8 MB */
-    mapea_rango(0, 0x480000, 0x640000, sup);
+    mapea_rango(0, 0x600000, 0x7C0000, sup);
     mapea_rango(0, 0x800000, 0xD00000, sup);
     mapea_rango(0, 0xE00000, 0xF00000, sup);
     mapea_lfb();

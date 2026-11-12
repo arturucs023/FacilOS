@@ -26,11 +26,12 @@
 int exec_base_dir = 0;
 regs_t *syscall_regs_ptr = 0;
 
-/* v2.4.3: monton usuario 0x3B0000-0x480000 (832K). Antes 1.5 MB, pero
-   el codigo+BSS sube de 768K a 1536K (0x180000) y la pila se mueve
-   a 0x390000; el hueco 0x200000-0x480000 es el mismo. */
-#define UHEAP_FIN 0x480000
-#define UBRK_INI 0x3B0000
+/* v2.4.4: monton usuario 0x530000-0x600000 (832K). El hueco de
+   codigo+BSS sube de 1536K a 3 MB (0x300000) y la pila se mueve
+   a 0x510000-0x52FFFF (args/esp en 0x520000, como antes en
+   0x3A0000 dentro de 0x390000-0x3AFFFF). */
+#define UHEAP_FIN 0x600000
+#define UBRK_INI 0x530000
 
 static int *fds(void) { return proc_actual->fds; }
 static uint32_t *fds_pos(void) { return proc_actual->fds_pos; }
@@ -186,9 +187,9 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
     plano = tam < hc ? tam : tam - hc;
     /* F8: el segundo tope (hc+plano+bss) es redundante con el primero
        (plano+bss), pero se conserva como guarda de cabecera.
-       v2.4.3: codigo+BSS hasta 0x180000 (1.5 MB). */
+       v2.4.4: codigo+BSS hasta 0x300000 (3 MB). */
     if (tam != fr || ent >= plano || bss > 0x40000 ||
-        plano + bss > 0x180000 || hc + plano + bss > 0x1A0000)
+        plano + bss > 0x300000 || hc + plano + bss > 0x320000)
         return -102;
 
     int di = pag_nuevo_dir();
@@ -199,23 +200,23 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
         pag_libera_dir(di);
         return -105;
     }
-    /* pila de usuario: 0x390000-0x3AFFFF. Debajo (0x380000) queda sin
+    /* pila de usuario: 0x510000-0x52FFFF. Debajo (0x500000) queda sin
        mapear a proposito: es la pagina de guardia. */
-    if (pag_mapa_nuevas(di, 0x390000, PILA_USR_PAGS * PAG_MARCO, usr)) {
+    if (pag_mapa_nuevas(di, 0x510000, PILA_USR_PAGS * PAG_MARCO, usr)) {
         pag_desmapa(di, 0x200000, plano + bss);
         pag_libera_dir(di);
         return -105;
     }
-    /* argumentos del programa en 0x3A0000 (u_args). El esp inicial
+    /* argumentos del programa en 0x520000 (u_args). El esp inicial
      * apunta al inicio: el `call _main` de start.asm apila hacia abajo
-     * (0x39FFFC) y los args quedan intactos encima. Apuntar al final
+     * (0x51FFFC) y los args quedan intactos encima. Apuntar al final
      * los pisaba con la direccion de retorno (dhcp leia basura). */
-    uint32_t esp_ini = 0x3A0000;
+    uint32_t esp_ini = 0x520000;
     if (args) {
         uint32_t k = 0;
         while (k < 255 && args[k]) k++;
-        if (pag_escribe_usr(di, 0x3A0000, args, k + 1)) {
-            pag_desmapa(di, 0x390000, PILA_USR_PAGS * PAG_MARCO);
+        if (pag_escribe_usr(di, 0x520000, args, k + 1)) {
+            pag_desmapa(di, 0x510000, PILA_USR_PAGS * PAG_MARCO);
             pag_desmapa(di, 0x200000, plano + bss);
             pag_libera_dir(di);
             return -103;
@@ -226,13 +227,13 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
     while (off < tam) {
         uint32_t n = tam - off > 512 ? 512 : tam - off;
         if (lee_origen(&o, off, trozo, (int)n) != (int)n) {
-            pag_desmapa(di, 0x390000, PILA_USR_PAGS * PAG_MARCO);
+            pag_desmapa(di, 0x510000, PILA_USR_PAGS * PAG_MARCO);
             pag_desmapa(di, 0x200000, plano + bss);
             pag_libera_dir(di);
             return -103;
         }
         if (pag_escribe_usr(di, 0x200000 + (off - hc), trozo, n)) {
-            pag_desmapa(di, 0x390000, PILA_USR_PAGS * PAG_MARCO);
+            pag_desmapa(di, 0x510000, PILA_USR_PAGS * PAG_MARCO);
             pag_desmapa(di, 0x200000, plano + bss);
             pag_libera_dir(di);
             return -105;
@@ -242,7 +243,7 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
     /* pila de anillo 0: zona reservada 0xE00000, mapeada por identidad */
     uint32_t cima = proc_toma_pila_kernel();
     if (!cima) {
-        pag_desmapa(di, 0x390000, PILA_USR_PAGS * PAG_MARCO);
+        pag_desmapa(di, 0x510000, PILA_USR_PAGS * PAG_MARCO);
         pag_desmapa(di, 0x200000, plano + bss);
         pag_libera_dir(di);
         return -105;
@@ -250,7 +251,7 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
     int pid = proc_crea(base, di, 0x200000 + ent, esp_ini);
     if (pid < 0) {
         proc_devuelve_pila_kernel(proc_slot_de_pila(cima));
-        pag_desmapa(di, 0x390000, PILA_USR_PAGS * PAG_MARCO);
+        pag_desmapa(di, 0x510000, PILA_USR_PAGS * PAG_MARCO);
         pag_desmapa(di, 0x200000, plano + bss);
         pag_libera_dir(di);
         return -104;
@@ -266,18 +267,18 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
        F8: si la anotacion o la VMA fallan, se aborta (transaccional):
        antes se ignoraba y la fusion delataba FUGA con marcos huerfanos. */
     if (anota_rango(p, di, 0x200000, plano + bss) ||
-        anota_rango(p, di, 0x390000, PILA_USR_PAGS * PAG_MARCO)) {
+        anota_rango(p, di, 0x510000, PILA_USR_PAGS * PAG_MARCO)) {
         proc_devuelve_pila_kernel(proc_slot_de_pila(cima));
-        pag_desmapa(di, 0x390000, PILA_USR_PAGS * PAG_MARCO);
+        pag_desmapa(di, 0x510000, PILA_USR_PAGS * PAG_MARCO);
         pag_desmapa(di, 0x200000, plano + bss);
         pag_libera_dir(di);
         return -105;
     }
     /* regiones virtuales del proceso (v2.0) */
     if (proc_vma_add(p, 0x200000, plano + bss, VMAR_CODIGO) ||
-        proc_vma_add(p, 0x390000, PILA_USR_PAGS * PAG_MARCO, VMAR_PILA)) {
+        proc_vma_add(p, 0x510000, PILA_USR_PAGS * PAG_MARCO, VMAR_PILA)) {
         proc_devuelve_pila_kernel(proc_slot_de_pila(cima));
-        pag_desmapa(di, 0x390000, PILA_USR_PAGS * PAG_MARCO);
+        pag_desmapa(di, 0x510000, PILA_USR_PAGS * PAG_MARCO);
         pag_desmapa(di, 0x200000, plano + bss);
         pag_libera_dir(di);
         return -105;
