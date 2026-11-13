@@ -15,9 +15,11 @@ v2.4.3 (esta rama, en desarrollo): evolución importante sobre v2.3-red.
   se enumeran y se inyectan en el camino PS/2 (`usb_ohci.c`,
   `teclado_usb_tecla`, `ps2_inyecta_usb`). Probado en QEMU
   (`pci-ohci` + `usb-kbd` + `usb-mouse`).
-- **Navegador con CSS básico**: color/fondo por etiqueta, clase e inline,
+- **Navegador NetSurf con CSS básico**: color/fondo por etiqueta, clase e inline,
   negrita/cursiva; formularios GET (sirve un SearXNG propio por HTTP).
-  Sin JS; sin HTTPS (ver `docs/network/TLS.md`).
+  Sin JS; con HTTPS (BearSSL TLS 1.2 + 42 raíces, ver
+  `docs/network/TLS.md`). `netsurf` es el único navegador (con
+  buscador por defecto DuckDuckGo HTML).
 - ISO: `v2.0/build/iso/FacilOS-v2.4.3.iso` (solo la de esta rama).
 
 Batería v2.4 en QEMU: `t1_lib` 258/0, `tutf8` 26/0, `mem32` 15/0,

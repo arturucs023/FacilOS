@@ -95,7 +95,7 @@ static const char *t_fondo_nombre(int i) {
  * 28 ed_deshacer, 29 ed_rehacer, 30 ed_cortar, 31 ed_copiar,
  * 32 ed_pegar, 33 ed_negrita, 34 ed_cursiva, 35 ed_subrayado,
  * 36 ed_color, 37 ed_buscar, 38 ed_reemplazar, 39 ed_todo,
- * 40 ed_cerrar_doc, 41 apagar, 42 reiniciar, 43 fbrowser. */
+ * 40 ed_cerrar_doc, 41 apagar, 42 reiniciar, 43 netsurf. */
 static const char *const T_ICONOS[44][16] = {
     { /* 0 F32: roseta azul con F blanca */
       ".....KKKKKK.....",
@@ -828,7 +828,7 @@ static const char *const T_ICONOS[44][16] = {
       "..KKKKKKKKKKKK..",
       "................",
       "................" },
-    { /* 43 fbrowser: globo azul con meridianos */
+    { /* 43 netsurf: globo azul con meridianos */
       ".....KKKKKK.....",
       "...KKBBBBBBKK...",
       "..KBBBBBBBBBBK..",

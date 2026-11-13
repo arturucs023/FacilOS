@@ -1,9 +1,8 @@
-# BearSSL en FacilOS (hito TLS, hito 1: stub local)
+# BearSSL en FacilOS (hito TLS + hito HTTPS-real v2.5)
 
-Alcance decidido: **cliente TLS 1.2 minimo** (ECDHE + AES-GCM/ChaCha20,
+Alcance: **cliente TLS 1.2 minimo** (ECDHE + AES-GCM/ChaCha20,
 RSA/ECDSA, x509-minimal). Sin TLS 1.3, sin sesion externa, sin
-verificacion OCSP. Solo valida contra la CA de test (stub local);
-internet real necesita bundle de raices (pendiente).
+verificacion OCSP.
 
 ## Fuentes (MIT, https://bearssl.org)
 
@@ -31,15 +30,20 @@ MinGW) y `nsshim.c` lo implementa sobre `u_reloj` (ano CMOS de
 - `t_tls` (KAT sin red: SHA-256, HMAC, GCM ida+vuelta+retoque,
   ECDH P-256, ECDSA P-256): **8 pruebas 0 fallos** en QEMU.
 
-## Limites conocidos del hito 1
+## Limites conocidos (actualizado v2.5)
 
-- Confianza: solo ancla de test (`https.c`, CA autofirmada para
-  10.0.2.2). No validar contra ella = fallo (correcto).
-- Entropia: semilla de reloj+ticks+tiempos de red (suficiente para
-  el stub; revisar antes de internet real).
-- Sin SNI problematico: se envia el hostname de la URL; el stub
-  responde a 10.0.2.2 con SAN dNSName.
+- Confianza: ancla de test (`nsta.h`, CA autofirmada para
+  10.0.2.2, stub local) + 42 raices reales generadas del almacen
+  Windows con `v2.0/tools/gen_nsca.py` (`user/lib/nsca.h`, RSA +
+  ECDSA P-256/384/521, lo que soporta BearSSL i31). Regenerar el
+  bundle tras reinstalar Windows: exportar `Cert:\LocalMachine\Root`
+  a `C:\Temp\roots\*.cer` y correr `gen_nsca.py`.
+- Entropia: semilla de reloj+ticks+jitter (suficiente para el
+  stub; revisar antes de internet real).
+- SNI: se envia el hostname de la URL; el stub responde a
+  10.0.2.2 con SAN dNSName. Verificacion de nombre via x509-minimal.
 - `u_http_url` acepta `https://` (puerto 443 por defecto);
-  fbrowser sigue rechazando https (integracion pendiente).
+  `netsurf` usa `nsfetch` (HTTP+HTTPS via BearSSL, GET con redirecciones).
+  `fbrowser` retirado en v2.5 (duplicado: `netsurf` es el navegador).
 - Catalogo del nucleo ampliado a 63 entradas (cabian 48; hacian
   falta 49 con `https`).

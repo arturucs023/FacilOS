@@ -605,12 +605,13 @@ static void prueba_chunked(void) {
     }
 }
 
-/* v2.4.3: tolerancia a cabeceras largas desconocidas (CSP reales de
-   600+ B, caso iana.org): se ignoran; el framing sigue estricto y la
-   linea sigue topada en U_HTTP_MAX_LIN (1024). */
+/* v2.5: tolerancia a cabeceras largas desconocidas (CSP reales de
+   600+ B, caso iana.org; DDG llega a ~2K): se ignoran; el framing
+   sigue estricto y la linea sigue topada en U_HTTP_MAX_LIN (4096). */
 static void prueba_cablarga(void) {
     static unsigned char cpo[512];
-    static unsigned char msg[2048];
+    static unsigned char msg[8192];
+
     u_print("t_fb: cablarga...\n");
     {
         /* X-Relleno 600 B + CL: debe ignorarse y entregar el cuerpo */
@@ -669,13 +670,13 @@ static void prueba_cablarga(void) {
         ok(q == -1, "cablarga-cl-rigida");
     }
     {
-        /* linea > U_HTTP_MAX_LIN (1100 B) sigue siendo error */
+        /* linea > U_HTTP_MAX_LIN (5000 B) sigue siendo error */
         static const char p1[] = "HTTP/1.0 200 OK\r\nX-Larga: ";
         static const char p2[] = "\r\n\r\nxx";
         int o = 0, i, nb = 0, q;
         u_http_res_t r;
         for (i = 0; p1[i]; i++) msg[o++] = (unsigned char)p1[i];
-        for (i = 0; i < 1100; i++) msg[o++] = (unsigned char)'C';
+        for (i = 0; i < 5000; i++) msg[o++] = (unsigned char)'C';
         for (i = 0; p2[i]; i++) msg[o++] = (unsigned char)p2[i];
         u_http_res_inicia(&r);
         q = u_http_res_datos(&r, msg, o, cpo, (int)sizeof(cpo), &nb);

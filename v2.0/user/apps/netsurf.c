@@ -16,7 +16,7 @@ void __main(void) {
 #include "ugfx.h"
 #include "utext.h"
 
-/* navega (Hito 3 NetSurf): visor minimo web/local.
+/* netsurf (Hito 3 NetSurf): visor minimo web/local.
  * fetch (nsfetch) o fichero -> hubbub -> libdom -> select CSS
  * (color/fondo) -> layout de texto -> ventana ugfx con scroll.
  * Sin JS, sin imagenes, sin formularios, sin atributos style
@@ -30,6 +30,38 @@ void __main(void) {
 #define NV_MAXURL 512
 #define NV_W 640
 #define NV_H 460
+
+/* Tema claro profesional (fondo blanco, tinta oscura, acento azul).
+   RGB24 de tema.h (bit24 = color crudo para el nucleo). */
+#define NS_BLANCO RGB24(255, 255, 255)
+#define NS_TINTA RGB24(24, 32, 48)
+#define NS_TITULO RGB24(0, 102, 204)
+#define NS_ENLACE RGB24(0, 102, 204)
+#define NS_PANEL RGB24(214, 226, 245)
+#define NS_BORDE RGB24(170, 180, 195)
+#define NS_EST RGB24(230, 233, 238)
+#define NS_GRIS RGB24(100, 110, 125)
+#define NS_CAMPO_FOCO RGB24(255, 255, 255)
+
+/* Pagina de bienvenida (sin red): se muestra al abrir sin URL.
+   Etiquetas del motor (h1/p/a/ul/li/br/hr) + CSS basica. */
+#define NV_BIENV_URL "netsurf:bienvenida"
+static const char NV_BIENV_HTML[] =
+    "<html><head><title>Bienvenido a NetSurf</title></head>"
+    "<body>"
+    "<h1>Welcome to NetSurf</h1>"
+    "<p>NetSurf para FacilOS: navegador rapido con motor NetSurf "
+    "(hubbub/dom/css). Escribe una direccion o una busqueda en la "
+    "barra superior y pulsa Enter.</p>"
+    "<p><a href=\"https://marginalia-search.com/search?query=FacilOS\">"
+    "Buscar con Marginalia</a></p>"
+    "<ul>"
+    "<li><a href=\"http://info.cern.ch/\">CERN (primera web)</a></li>"
+    "<li><a href=\"http://example.com/\">Example</a></li>"
+    "<li><a href=\"https://www.wikipedia.org/\">Wikipedia</a></li>"
+    "<li><a href=\"https://html.duckduckgo.com/html/\">DuckDuckGo HTML</a></li>"
+    "</ul>"
+    "</body></html>";
 
 static unsigned char NV_txt[NV_MAXTEXTO];
 static int NV_ntxt = 0;
@@ -1104,7 +1136,7 @@ static int nv_css_ini(const char *css, int n) {
     p.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
     p.level = CSS_LEVEL_21;
     p.charset = "UTF-8";
-    p.url = "http://navega/";
+    p.url = "http://netsurf/";
     p.title = 0;
     p.allow_quirks = false;
     p.inline_style = false;
@@ -1636,7 +1668,7 @@ static void nv_estilo_nodo(dom_node *n) {
             p.params_version = CSS_STYLESHEET_PARAMS_VERSION_1;
             p.level = CSS_LEVEL_21;
             p.charset = "UTF-8";
-            p.url = "http://navega/";
+            p.url = "http://netsurf/";
             p.title = 0;
             p.allow_quirks = false;
             p.inline_style = true;
@@ -1718,7 +1750,7 @@ static void nv_recorre(dom_node *n, int prof) {
                         int al0 = NV_al, ebg = 0, eal = -1;
                         int es_bloque = nv_es_bloque(id);
                         int es_enl = 0, ienl = -1, ntxt0 = 0;
-                        int es_sub = 0, es_bold = 0;
+                        int es_sub = 0, es_bold = 0, es_h = 0;
                         nv_estilo_nodo(h);
                         ebg = NV_last_bgexp;
                         eal = NV_last_al;
@@ -1775,6 +1807,14 @@ static void nv_recorre(dom_node *n, int prof) {
                         {
                             int fg1 = NV_fg, bg1 = NV_bg;
                             int al1 = NV_al;
+                            /* v2.5-pro: titulares en azul marca +
+                               negrita (fuente fija 8x16: el color y la
+                               doble pasada hacen de "grande"). */
+                            es_h = (id == T_H1 || id == T_H2);
+                            if (es_h) {
+                                NV_fg = NS_TITULO;
+                                NV_b++;
+                            }
                             nv_recorre(h, prof + 1);
                             NV_fg = fg1;
                             NV_bg = bg1;
@@ -1785,6 +1825,8 @@ static void nv_recorre(dom_node *n, int prof) {
                         if (es_sub)
                             NV_sub--;
                         if (es_bold)
+                            NV_b--;
+                        if (es_h)
                             NV_b--;
                         if (es_bloque) {
                             if (ebg) NV_bgexp--;
@@ -2012,13 +2054,24 @@ static int nv_cargar(const char *f) {
     const unsigned char *pg = 0;
     int n = 0, rc;
     if (!f || !f[0]) return -1;
+    if (!u_strcmp(f, NV_BIENV_URL)) {
+        int i = 0;
+        while (NV_BIENV_HTML[i]) i++;
+        NV_ult_cod = 200;
+        NV_ult_tam = i;
+        pg = (const unsigned char *)NV_BIENV_HTML;
+        n = i;
+        rc = nv_procesa(pg, n);
+        nv_css_fin();
+        return rc;
+    }
     if (nv_es_url(f)) {
         nsfetch_res_t r;
         int e = nsfetch_get(f, &r);
         if (e != NSFETCH_OK) return -10 - e;
         NV_ult_cod = r.codigo;
         NV_ult_tam = r.tam;
-        if (r.codigo != 200) return -20;
+        if (r.codigo < 200 || r.codigo > 299) return -20;
         pg = (const unsigned char *)r.cuerpo;
         n = r.tam;
         rc = nv_procesa(pg, n);
@@ -2090,8 +2143,10 @@ static void nv_hist_ir(int d);
 static int NV_tiene;
 
 /* Hito 6: la barra es buscador si no parece URL.
-   Sin esquema y sin puntos ni barras: consulta al motor. */
-#define NV_BUSCA_BASE "https://html.duckduckgo.com/html/?q="
+   Sin esquema y sin puntos ni barras: consulta al motor.
+   Marginalia (GET simple, sin cookies/JS) devuelve resultados
+   reales; DuckDuckGo exige sesion (solo enlace manual). */
+#define NV_BUSCA_BASE "https://marginalia-search.com/search?query="
 
 static int nv_es_busqueda(const char *s) {
     int i = 0;
@@ -2144,7 +2199,7 @@ static int nv_modo_p(const char *resto) {
     while (*resto == ' ') resto++;
     if (*resto == 0) {
         /* bateria: necesita http_stub en 18080 (ftest lo arranca) */
-        u_print("navega: bateria Hito 6...\n");
+        u_print("netsurf: bateria Hito 6...\n");
         nv_ok(nv_pagina("http://10.0.2.2:18080/pagina") == 0,
               "pagina-carga");
         nv_ok(!u_strcmp(NV_titulo, "Inicio Facil"),
@@ -2248,8 +2303,8 @@ static int nv_modo_p(const char *resto) {
         {
             char u[NV_MAXURL + 1];
             nv_busca_url("hola mundo", u);
-            nv_ok(!u_strcmp(u, "https://html.duckduckgo.com"
-                               "/html/?q=hola+mundo"),
+            nv_ok(!u_strcmp(u, "https://marginalia-search.com"
+                               "/search?query=hola+mundo"),
                   "busca-url");
             nv_ok(nv_es_busqueda("hola mundo") &&
                   !nv_es_busqueda("http://x/y") &&
@@ -2269,7 +2324,7 @@ static int nv_modo_p(const char *resto) {
                 if (NV_filas[k].fg == 0xFF0000) ok = 1;
             nv_ok(ok, "ua-clsdiv");
         }
-        u_print("navega: ");
+        u_print("netsurf: ");
         nv_num(NV_pruebas);
         u_print(" pruebas ");
         nv_num(NV_fallos);
@@ -2281,7 +2336,7 @@ static int nv_modo_p(const char *resto) {
         int rc = nv_cargar(resto);
         int f;
         if (rc) {
-            u_print("navega: no se pudo cargar (");
+            u_print("netsurf: no se pudo cargar (");
             nv_num(rc);
             u_print(")\n");
             return 1;
@@ -2309,6 +2364,24 @@ static char NV_url[NV_MAXURL + 1];
 static char NV_estado[160];
 static int NV_desplaza, NV_vis, NV_bpos;
 static int NV_tiene, NV_foco_barra, NV_b_antes;
+/* Buscador integrado de la bienvenida: casilla central. */
+static char NV_qbuf[128];
+static int NV_qpos, NV_qfoco;
+/* 1 si la pagina visible es la bienvenida interna. */
+static int nv_bienv(void) {
+    return NV_tiene && !u_strcmp(NV_url, NV_BIENV_URL);
+}
+/* Geometria del panel de busqueda (compartida dibujo/clic). */
+static void nv_qgeom(int w, int *fx, int *fy, int *fw, int *bx) {
+    int fww = w - 220;
+    if (fww < 200) fww = 200;
+    if (fww > 420) fww = 420;
+    *fx = (w - fww - 76) / 2;
+    if (*fx < 8) *fx = 8;
+    *fy = NV_BAR_H + 30;
+    *fw = fww;
+    *bx = *fx + fww + 8;
+}
 /* 1 = URL inicial pendiente: se carga en el primer DRAW (con la
    geometria ya conocida y un repintado explicito, porque el primer
    pintado a veces no se compone). */
@@ -2362,6 +2435,10 @@ static void nv_ir(const char *texto) {
     const char *s = texto;
     while (*s == ' ') s++;
     if (!*s) return;
+    if (!u_strcmp(s, NV_BIENV_URL)) {
+        nv_navegar(s, 1);
+        return;
+    }
     if (nv_es_url(s)) {
         nv_navegar(s, 1);
         return;
@@ -2394,6 +2471,8 @@ static void nv_navegar(const char *f, int empuja) {
     /* Hito 4: f puede aliasar NV_enl[i].url, que nv_cargar
        reconstruye; se copia a slot estable antes de cargar. */
     static char dest[NV_MAXURL + 1];
+    /* La bienvenida deja el foco en su casilla de busqueda. */
+    NV_qfoco = !u_strcmp(f, NV_BIENV_URL);
     {
         int i = 0;
         if (!f || !f[0]) return;
@@ -2522,43 +2601,94 @@ static void nv_dibuja(void) {
     int w = NV_v.w, h = NV_v.h, i;
     int cw, ch, cols;
     ug_comienza(&NV_v);
-    ug_limpia(&NV_v, T_VENT_FONDO);
-    ug_relleno(&NV_v, 0, 0, w, NV_BAR_H, T_PANEL);
+    ug_limpia(&NV_v, NS_BLANCO);
+    /* Barra superior clara con borde inferior */
+    ug_relleno(&NV_v, 0, 0, w, NV_BAR_H, NS_BLANCO);
     ug_linea(&NV_v, 0, NV_BAR_H - 1, w - 1, NV_BAR_H - 1,
-             T_PANEL_BORDE);
-    ug_boton(&NV_v, 8, 8, 44, 28, "<",
+             NS_BORDE);
+    ug_boton(&NV_v, 8, 8, 36, 28, "<",
              (NV_nhist > 0 && NV_ihist > 0) ? UG_BOTON_NORMAL :
              UG_BOTON_OFF);
-    ug_boton(&NV_v, 56, 8, 44, 28, ">",
+    ug_boton(&NV_v, 48, 8, 36, 28, ">",
              (NV_ihist < NV_nhist - 1) ? UG_BOTON_NORMAL :
              UG_BOTON_OFF);
-    ug_boton(&NV_v, 104, 8, 44, 28, "R", UG_BOTON_NORMAL);
-    ug_boton(&NV_v, 152, 8, 44, 28, "X", UG_BOTON_NORMAL);
-    ug_campo(&NV_v, 200, 12, w - 200 - 60, NV_bar, NV_bpos,
+    ug_boton(&NV_v, 88, 8, 36, 28, "R", UG_BOTON_NORMAL);
+    ug_boton(&NV_v, 128, 8, 36, 28, "X", UG_BOTON_NORMAL);
+    ug_boton(&NV_v, 168, 8, 36, 28, "H", UG_BOTON_NORMAL);
+    ug_campo(&NV_v, 212, 12, w - 212 - 68, NV_bar, NV_bpos,
              NV_foco_barra);
-    ug_boton(&NV_v, w - 52, 8, 44, 28, "Ir", UG_BOTON_NORMAL);
+    /* Ir con acento de marca */
+    ug_relleno(&NV_v, w - 60, 8, 44, 28, T_ACENTO);
+    ug_texto(&NV_v, w - 60 + 14, 8 + 6, "Ir", C_BLANCO);
     cw = w - 14;
     if (cw < 80) cw = 80;
     cols = cw / UG_FW;
     ch = h - NV_BAR_H - NV_EST_H;
     if (ch < UG_FH) ch = UG_FH;
-    NV_vis = ch / UG_FH;
-    if (NV_vis < 1) NV_vis = 1;
+    {
+        /* En la bienvenida el panel de busqueda ocupa la parte
+           superior; el contenido baja. */
+        int margen = nv_bienv() ? 92 : 0;
+        ch -= margen;
+        if (ch < UG_FH) ch = UG_FH;
+        NV_vis = ch / UG_FH;
+        if (NV_vis < 1) NV_vis = 1;
+        if (margen) {
+            int fx, fy, fw, bx, qx;
+            char *hint = "Escribe una palabra y pulsa Intro";
+            nv_qgeom(w, &fx, &fy, &fw, &bx);
+            ug_relleno(&NV_v, 0, NV_BAR_H, w, margen, NS_PANEL);
+            ug_linea(&NV_v, 0, NV_BAR_H + margen - 1, w - 1,
+                     NV_BAR_H + margen - 1, NS_BORDE);
+            ug_texto(&NV_v, fx, fy - 16, "Buscador",
+                     NS_TITULO);
+            ug_relleno(&NV_v, fx, fy, fw, 20, NS_BLANCO);
+            ug_rect(&NV_v, fx, fy, fw, 20,
+                    NV_qfoco ? NS_TITULO : NS_BORDE);
+            if (NV_qbuf[0]) {
+                int nq = 0;
+                static char vq[120];
+                while (NV_qbuf[nq] && nq < 119) {
+                    vq[nq] = NV_qbuf[nq];
+                    nq++;
+                }
+                vq[nq] = 0;
+                ug_texto(&NV_v, fx + 4, fy + 2, vq, NS_TINTA);
+                if (NV_qfoco)
+                    ug_relleno(&NV_v, fx + 4 + nq * UG_FW,
+                               fy + 3, 7, 14, NS_TINTA);
+            } else {
+                int nq = 0;
+                while (hint[nq]) nq++;
+                if (nq * UG_FW < fw - 8)
+                    ug_texto(&NV_v, fx + 4, fy + 2, hint,
+                             NS_GRIS);
+                if (NV_qfoco)
+                    ug_relleno(&NV_v, fx + 4, fy + 3, 7, 14,
+                               NS_TINTA);
+            }
+            ug_relleno(&NV_v, bx, fy, 68, 20, T_ACENTO);
+            ug_texto(&NV_v, bx + 10, fy + 2, "Buscar", C_BLANCO);
+        }
+    }
     if (!NV_tiene) {
-        ug_texto(&NV_v, 24, NV_BAR_H + 40, "navega",
-                 C_AMARILLO);
+        ug_texto(&NV_v, 24, NV_BAR_H + 40, "netsurf",
+                 NS_TITULO);
+        ug_texto(&NV_v, 24, NV_BAR_H + 40, "netsurf",
+                 NS_TITULO);
         ug_texto(&NV_v, 24, NV_BAR_H + 64,
                  NV_estado[0] ? NV_estado :
                  "Escribe una direccion y pulsa Intro.",
-                 T_PANEL_TEXTO);
+                 NS_TINTA);
         ug_texto(&NV_v, 24, NV_BAR_H + 88,
-                 "Ej: http://10.0.2.2:18080/pagina", C_GRIS);
+                 "Ej: http://info.cern.ch/ (sin TLS) o una busqueda.",
+                 NS_GRIS);
         ug_texto(&NV_v, 24, NV_BAR_H + 112,
-                 "Intro=ir r=recargar Retroceso=barra Tab=enlace",
-                 C_GRIS);
+                 "Intro=ir  R=recargar  H=inicio  Retroceso=barra",
+                 NS_GRIS);
         ug_texto(&NV_v, 24, NV_BAR_H + 136,
-                 "Sin JS, sin imagenes, sin style= (ver NOTAS)",
-                 C_GRIS);
+                 "Tab=enlace  Sin JS.",
+                 NS_GRIS);
     } else {
         int maxd = NV_nfilas - NV_vis;
         char tmp[160];
@@ -2567,8 +2697,9 @@ static void nv_dibuja(void) {
         if (NV_desplaza < 0) NV_desplaza = 0;
         for (i = 0; i < NV_vis; i++) {
             int f = NV_desplaza + i;
-            int y = NV_BAR_H + i * UG_FH, q, k;
-            int x = 4, color = T_PANEL_TEXTO;
+            int y = NV_BAR_H + (nv_bienv() ? 92 : 0) + i * UG_FH,
+                q, k;
+            int x = 4, color = NS_TINTA;
             if (f >= NV_nfilas) break;
             if (NV_filas[f].estilo == 1) continue;
             if (NV_filas[f].estilo == 2) {
@@ -2617,6 +2748,8 @@ static void nv_dibuja(void) {
             if (NV_filas[f].fg >= 0)
                 color = 0x01000000 |
                     (NV_filas[f].fg & 0xFFFFFF);
+            else if (NV_filas[f].sub)
+                color = NS_ENLACE;
             /* Hito 6: alineacion del bloque */
             if (NV_filas[f].al == 1 || NV_filas[f].al == 2) {
                 int disp = (cw - 8) - q * UG_FW;
@@ -2685,17 +2818,17 @@ static void nv_dibuja(void) {
                        C_GRIS);
         }
     }
-    ug_relleno(&NV_v, 0, h - NV_EST_H, w, NV_EST_H, T_PANEL);
+    ug_relleno(&NV_v, 0, h - NV_EST_H, w, NV_EST_H, NS_EST);
     ug_texto(&NV_v, 8, h - NV_EST_H + 4,
-             NV_estado[0] ? NV_estado : "navega Hito 4",
-             T_PANEL_TEXTO);
+             NV_estado[0] ? NV_estado : "netsurf",
+             NS_TINTA);
     /* Hito 4: resultado de red a la derecha (codigo, bytes, ms) */
     if (NV_red[0]) {
         int lr = 0, xr;
         while (NV_red[lr]) lr++;
         xr = w - 8 - lr * UG_FW;
         if (xr < w / 2) xr = w / 2;
-        ug_texto(&NV_v, xr, h - NV_EST_H + 4, NV_red, C_GRIS);
+        ug_texto(&NV_v, xr, h - NV_EST_H + 4, NV_red, NS_GRIS);
     }
     ug_fin(&NV_v);
 }
@@ -2713,6 +2846,38 @@ static void nv_asegura_enlace(int idx) {
 }
 
 static void nv_ev_tecla(int tecla) {
+    /* Red de seguridad: en la bienvenida, una tecla imprimible sin
+       foco claro va a la casilla (evita perder pulsaciones). */
+    if (!NV_foco_barra && !NV_qfoco && NV_tiene && nv_bienv() &&
+        tecla >= 32 && tecla < 127)
+        NV_qfoco = 1;
+    /* Casilla de busqueda de la bienvenida (tiene prioridad si la
+       barra no la tiene). */
+    if (NV_qfoco && !NV_foco_barra) {
+        if (tecla == 13) {
+            if (NV_qbuf[0]) {
+                static char tmpq[NV_MAXURL + 1];
+                NV_qfoco = 0;
+                nv_busca_url(NV_qbuf, tmpq);
+                nv_navegar(tmpq, 1);
+            }
+        } else if (tecla == 27) {
+            NV_qfoco = 0;
+            NV_foco_barra = 1;
+        } else if (tecla == 8) {
+            if (NV_qpos > 0) {
+                NV_qpos--;
+                NV_qbuf[NV_qpos] = 0;
+            }
+        } else if (tecla >= 32 && tecla < 127) {
+            if (NV_qpos < (int)sizeof(NV_qbuf) - 1) {
+                NV_qbuf[NV_qpos++] = (char)tecla;
+                NV_qbuf[NV_qpos] = 0;
+            }
+        }
+        ug_tick(&NV_v, 1);
+        return;
+    }
     if (NV_foco_barra) {
         if (tecla == 13) {
             nv_ir(NV_bar);
@@ -2766,6 +2931,7 @@ static void nv_ev_tecla(int tecla) {
         } else {
             NV_foco_enl = -1;
             NV_foco_barra = 1;
+            NV_qfoco = 0;
         }
     } else if (tecla == 13) {
         /* Intro: sigue el enlace con foco */
@@ -2777,6 +2943,7 @@ static void nv_ev_tecla(int tecla) {
     } else if (tecla == 27) {
         NV_foco_enl = -1;
         NV_foco_barra = 1;
+        NV_qfoco = 0;
     }
     ug_tick(&NV_v, 1);
 }
@@ -2792,50 +2959,87 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
     }
     if (!clic) return;
     if (ly >= 8 && ly < 36) {
-        if (lx >= 8 && lx < 52) {
+        if (lx >= 8 && lx < 44) {
             nv_hist_ir(-1);
             ug_tick(&NV_v, 1);
             return;
         }
-        if (lx >= 56 && lx < 100) {
+        if (lx >= 48 && lx < 84) {
             nv_hist_ir(1);
             ug_tick(&NV_v, 1);
             return;
         }
-        if (lx >= 104 && lx < 148) {
+        if (lx >= 88 && lx < 124) {
             if (NV_url[0])
                 nv_navegar(NV_url, 0);
             ug_tick(&NV_v, 1);
             return;
         }
-        if (lx >= 152 && lx < 196) {
+        if (lx >= 128 && lx < 164) {
             NV_tiene = 0;
             NV_foco_enl = -1;
             NV_url[0] = 0;
             NV_bar[0] = 0;
             NV_bpos = 0;
             NV_foco_barra = 1;
+            NV_qfoco = 0;
             nv_pon_estado("");
             NV_red[0] = 0;
             ug_tick(&NV_v, 1);
             return;
         }
-        if (lx >= NV_v.w - 52 && lx < NV_v.w - 8) {
+        if (lx >= 168 && lx < 204) {
+            nv_navegar(NV_BIENV_URL, 1);
+            ug_tick(&NV_v, 1);
+            return;
+        }
+        if (lx >= NV_v.w - 60 && lx < NV_v.w - 16) {
             nv_ir(NV_bar);
             NV_foco_barra = 0;
             ug_tick(&NV_v, 1);
             return;
         }
-        if (lx >= 200 && lx < NV_v.w - 60) {
+        if (lx >= 212 && lx < NV_v.w - 68) {
             NV_foco_barra = 1;
+            NV_qfoco = 0;
             ug_tick(&NV_v, 1);
             return;
         }
         NV_foco_barra = 0;
+        NV_qfoco = 0;
         ug_tick(&NV_v, 1);
         return;
     }
     if (ly >= NV_BAR_H && ly < NV_v.h - NV_EST_H) {
+        int margen = nv_bienv() ? 92 : 0;
+        if (margen && ly < NV_BAR_H + margen) {
+            /* Panel de busqueda de la bienvenida */
+            int fx, fy, fw, bx;
+            nv_qgeom(NV_v.w, &fx, &fy, &fw, &bx);
+            if (lx >= fx && lx < fx + fw && ly >= fy &&
+                ly < fy + 20) {
+                NV_qfoco = 1;
+                NV_foco_barra = 0;
+                ug_tick(&NV_v, 1);
+                return;
+            }
+            if (lx >= bx && lx < bx + 68 && ly >= fy &&
+                ly < fy + 20) {
+                if (NV_qbuf[0]) {
+                    static char tmpq[NV_MAXURL + 1];
+                    NV_qfoco = 0;
+                    nv_busca_url(NV_qbuf, tmpq);
+                    nv_navegar(tmpq, 1);
+                }
+                ug_tick(&NV_v, 1);
+                return;
+            }
+            /* Resto del panel: enfoca la casilla. */
+            NV_qfoco = 1;
+            NV_foco_barra = 0;
+            ug_tick(&NV_v, 1);
+            return;
+        }
         if (lx >= NV_v.w - 12 && NV_nfilas > NV_vis) {
             int th = NV_vis * UG_FH;
             int rel = ly - NV_BAR_H;
@@ -2849,7 +3053,10 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
         } else if (lx < NV_v.w - 12) {
             /* Hito 4: clic en enlace */
             int f = NV_desplaza +
-                (ly - NV_BAR_H) / UG_FH, idx;
+                (ly - NV_BAR_H - (nv_bienv() ? 92 : 0)) /
+                UG_FH, idx;
+            if ((ly - NV_BAR_H - (nv_bienv() ? 92 : 0)) < 0)
+                f = -1;
             if (f >= 0 && f < NV_nfilas) {
                 idx = nv_enlace_en(f);
                 if (idx >= 0)
@@ -2873,7 +3080,7 @@ int main(void) {
     while (*a >= '0' && *a <= '9') a++;
     while (*a == ' ') a++;
     if (srv <= 0) {
-        u_print("Uso: navega <srv> [url] | navega -p [url]\n");
+        u_print("Uso: netsurf <srv> [url] | netsurf -p [url]\n");
         return 99;
     }
     NV_ntxt = 0;
@@ -2888,11 +3095,28 @@ int main(void) {
     NV_vis = 20;
     NV_tiene = 0;
     NV_foco_barra = 1;
+    NV_qpos = 0;
+    NV_qbuf[0] = 0;
+    NV_qfoco = 0;
     NV_b_antes = 0;
-    if (ug_abre(&NV_v, srv, NV_W, NV_H, "navega"))
+    if (ug_abre(&NV_v, srv, NV_W, NV_H, "netsurf"))
         return 98;
     ug_edit(&NV_v, 1);
-    if (*a) {
+    if (!*a) {
+        /* Sin URL: bienvenida interna (sin red), como NetSurf. */
+        int i = 0;
+        while (NV_BIENV_URL[i] && i < NV_MAXURL) {
+            NV_bar[i] = NV_BIENV_URL[i];
+            i++;
+        }
+        NV_bar[i] = 0;
+        NV_bpos = i;
+        /* Foco directo en la casilla de busqueda (sin raton). */
+        NV_foco_barra = 0;
+        NV_qfoco = 1;
+        NV_ini = 1;
+        nv_pon_estado("bienvenido");
+    } else if (*a) {
         int i = 0;
         while (a[i] && i < NV_MAXURL) {
             NV_bar[i] = a[i];

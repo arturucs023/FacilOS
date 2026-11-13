@@ -23,7 +23,7 @@
 #define EST_FIN 4
 
 #define PILA_USR_PAGS 32        /* 128 KB de pila de usuario */
-#define MARCOS_MAX 768          /* marcos por proceso (codigo+BSS+pila+heap) */
+#define MARCOS_MAX 1536         /* marcos por proceso (codigo+BSS+pila+heap, 6 MB) */
 
 typedef struct {
     int usado;

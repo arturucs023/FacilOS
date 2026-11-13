@@ -29,7 +29,7 @@ ROOT = BASE.parent                             # raiz del repo
 TOOLS = BASE / "tools"
 STATE = BASE / "build" / ".ftest_state.json"
 LOGS = BASE / "build" / "logs"
-FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns", "t_fetch", "navega -p"]
+FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns", "t_fetch", "netsurf -p"]
 TIMEOUT = {"t_fb": 150.0, "t_red": 150.0}
 DFLT_TO = 60.0
 # fichero -> patron de tests afectados ("*" = todos). Lo no listado
@@ -49,7 +49,6 @@ IMPACTO = [
     ("v2.0/user/apps/t_cpp.cpp", "t_cpp"),
     ("v2.0/user/apps/cppdemo.cpp", "t_cpp"),
     ("v2.0/user/apps/t_fb.c", "t_fb"),
-    ("v2.0/user/apps/fbrowser.c", "t_fb"),
     ("v2.0/user/apps/t_tls.c", "t_tls"),
     ("v2.0/user/apps/https.c", "*"),
     ("v2.0/user/apps/t_f32.c", "t_f32"),
@@ -62,7 +61,7 @@ IMPACTO = [
     ("v2.0/user/lib/nsshim.c", "t_ns"),
     ("v2.0/user/lib/nslibc/*", "t_ns"),
     ("v2.0/thirdparty/netsurf/*", "t_ns"),
-    ("v2.0/user/apps/navega.c", "navega -p"),
+    ("v2.0/user/apps/netsurf.c", "netsurf -p"),
 ]
 IGNORAR = ["v2.0/thirdparty/", "v2.0/build/", "C:/Temp/", "/tmp/"]
 ISO_INPUTS = (".c", ".h", ".cpp", ".asm", ".ld", ".py")
@@ -383,7 +382,7 @@ def main():
     total_to = sum(int(TIMEOUT.get(t, DFLT_TO)) for t in tests) + 180
     qout, infra = arranca_qemu(iso, ser, port, cmds, total_to,
                                stub=(a.stub or "t_fb" in tests or
-                                     "navega -p" in tests),
+                                     "netsurf -p" in tests),
                                stub_tls=("t_fetch" in tests))
     lineas.append("- QEMU arranque+ejecucion: %.0fs" % (time.time() - t_qemu0))
     for wl in qout.splitlines():

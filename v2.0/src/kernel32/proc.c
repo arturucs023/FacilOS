@@ -195,7 +195,7 @@ int proc_crea(const char *nombre, unsigned di, uint32_t eip, uint32_t esp) {
     p->esp = esp;
     p->eflags = 0x202;
     p->ppid = proc_actual ? proc_actual->pid : 0;
-    p->brk = 0x530000; /* v2.4.4: heap usuario 0x530000-0x5FFFFF */
+    p->brk = 0x630000; /* v2.5: heap usuario 0x630000-0x7FFFFF */
     p->rc = -1;
     p->pila_kern = -1;
     for (int i = 0; i < NFD; i++) p->fds[i] = -1;

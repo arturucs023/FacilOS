@@ -78,8 +78,8 @@ int cdcat_leer(int i, uint32_t off, void *buf, uint32_t n) {
     if (!listo || i < 0 || i >= n_ents) return 0;
     uint32_t tam = rd32(ents[i].tam);
     /* F8: tam del catalogo sin verificar (ISO manipulada): el mismo
-     * tope que el cargador (plano+bss<=0x300000 + 20 de cabecera). */
-    if (tam < 16 || tam > 0x300014u) return 0;
+     * tope que el cargador (plano+bss<=0x400000 + 20 de cabecera). */
+    if (tam < 16 || tam > 0x400014u) return 0;
     if (off >= tam) return 0;
     if (n > tam - off) n = tam - off;
     pedido = (int)n;
@@ -146,8 +146,8 @@ int cdcat_prepara(void) {
         return -1;
     }
     uint32_t plano = tam < hc ? tam : tam - hc;
-    /* v2.4.4: mismo tope que exec.c (3 MB). */
-    if (ent >= plano || bss > 0x40000 || plano + bss > 0x300000)
+    /* v2.5: mismo tope que exec.c (4 MB). */
+    if (ent >= plano || bss > 0x40000 || plano + bss > 0x400000)
         return -1;
     for (uint32_t k = 0; k < bss; k++) d[plano + k] = 0;
     return (int)ent;

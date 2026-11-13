@@ -236,8 +236,7 @@ static int icono_app(const char *t) {
     if (!t) return 11;
     if (t[0] == 't' && t[1] == 'e') return 1;   /* terminal */
     if (t[0] == 'e' && t[1] == 'x' && t[2] == 'p') return 2;   /* explorador */
-    if (t[0] == 'F' && t[1] == 'a') return 43;  /* FacilBrowser */
-    if (t[0] == 'f' && t[1] == 'b') return 43;  /* fbrowser (nombre corto) */
+    if (t[0] == 'n' && t[1] == 'e') return 43;  /* netsurf */
     if (t[0] == 'e' && t[1] == 'd') return 3;   /* editor */
     if (t[0] == 's') return 4;                  /* sysinfo */
     if (t[0] == 'c') return 5;                  /* configura */
@@ -366,7 +365,7 @@ static void reloj_txt(char *d) {
 static const char *menu_app(int i) {
     if (i == 0) return "terminal";
     if (i == 1) return "explorador";
-    if (i == 2) return "fbrowser";
+    if (i == 2) return "netsurf";
     if (i == 3) return "sysinfo";
     if (i == 4) return "editor";
     if (i == 5) return "configura";
@@ -423,7 +422,7 @@ static void dibuja_menu(void) {
     u_texto(26, y0 + 4, "FacilOS32", T_MENU_TEXTO);
     for (i = 0; i < NMENU; i++) {
         int yy = y0 + CROMO_H + i * 26;
-        /* menu_app: 0 terminal, 1 explorador, 2 fbrowser, 3 sysinfo,
+        /* menu_app: 0 terminal, 1 explorador, 2 netsurf, 3 sysinfo,
            4 editor -> iconos 1, 2, 43, 4, 3; 5 configura -> 5;
            6 apagar -> 41, 7 reiniciar -> 42. */
         int ic = (i == 2) ? 43 : (i == 3) ? 4 : (i == 4) ? 3 :

@@ -451,14 +451,14 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
         assert bss_tam <= 0x10000, nom + " bss enorme"
     else:
         # v2.2-editor: el editor avanzado (multidoc, undo, buscar, iconos)
-        # supera los 64K clasicos; el nucleo admite plano+bss<=3M
-        # (v2.4.4, ver pag.h/exec.c). F7-C: fbrowser roza los 140K
+        # supera los 64K clasicos; el nucleo admite plano+bss<=4M
+        # (v2.5, ver pag.h/exec.c). F7-C: fbrowser roza los 140K
         # (ulib HTTP+DNS+HTML+UGFX); tope 192K plano.
         # v2.4.3: fbrowser/http llevan cuerpo estatico de 256K (chunked
         # + paginas grandes); el tope se pasa por programa.
         assert len(plano) + 20 <= tope, nom + " no cabe en tope"
         assert bss_tam <= 0x40000, nom + " bss enorme"
-        assert len(plano) + bss_tam <= 0x300000, nom + " +bss > 3M"
+        assert len(plano) + bss_tam <= 0x400000, nom + " +bss > 4M"
     cab = b"F32X" + _st.pack("<IIII", ver, 0, len(plano) + 20, bss_tam)
     (BLD / nom).write_bytes(cab + plano)
     print(f"OK programa {nom} v{ver} ({len(plano) + 20} bytes, bss {bss_tam})")
@@ -520,7 +520,7 @@ _apps3 = [
     ("calculadora", ["calculadora.c"], True),
     ("reloj", ["reloj.c"], True),
     ("adivina", ["adivina.c"], True),
-    ("fbrowser", ["fbrowser.c"], True, True),
+    ("netsurf", ["netsurf.c"], True, True, True),
     ("t_fb", ["t_fb.c"], True),
     # F32 C++ (v2.4.2): demo + bateria (compilan con g++, enlazan
     # startxx + f32cxx + ulib; mismo F32X v3 y limites que C).
@@ -534,14 +534,15 @@ _apps3 = [
     ("t_ns", ["t_ns.c"], True),
     # Hito 2 NetSurf: KAT del fetch HTTP/HTTPS sobre stubs locales.
     ("t_fetch", ["t_fetch.c"], True, False, True),
-    # Hito 3 NetSurf: visor minimo (ugfx + nsfetch + hubbub/dom/css).
-    ("navega", ["navega.c"], True, True, True),
+    # Hito 3 NetSurf: navegador NetSurf (ugfx + nsfetch + hubbub/dom/css).
+    # (fbrowser retirado en v2.5: netsurf es el unico navegador.)
 ]
 for _nom, _fs, _u, *_g in _apps3:
-    # v2.4.3: fbrowser/http con cuerpo estatico de 256K (chunked +
-    # paginas grandes); fbrowser y t_fb llevan Hubbub (medido:
-    # fbrowser ~672K, t_fb ~520K; tope holgado bajo el limite 3M
-    # del nucleo, que se comprueba siempre).
+    # v2.5: netsurf/http con cuerpo estatico de 256K (chunked +
+    # paginas grandes); netsurf y t_fb llevan Hubbub (medido:
+    # netsurf ~1280K, t_fb ~520K; tope holgado bajo el limite 4M
+    # del nucleo, que se comprueba siempre). netsurf lleva ademas
+    # BearSSL+nsfetch (https); tope 1.5M.
     _tope = 196607
     _ns = False
     _ns1 = False
@@ -550,17 +551,15 @@ for _nom, _fs, _u, *_g in _apps3:
         _tope = 393216
     if _nom == "https":
         _tope = 524288
-    if _nom == "fbrowser":
-        _tope = 724992
-        _ns = True
+    if _nom == "netsurf":
+        _tope = 1572864
+        _ns1 = True
+        _br = True
     if _nom == "t_fb":
         _tope = 770048
         _ns = True
     if _nom == "t_ns":
         _tope = 770048
-        _ns1 = True
-    if _nom == "navega":
-        _tope = 1310720
         _ns1 = True
     if _nom == "t_fetch":
         _tope = 524288

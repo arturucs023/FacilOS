@@ -430,8 +430,8 @@ int u_tecla(void) {
 }
 
 const char *u_args(void) {
-    /* v2.4.4: los args viven a mitad de la pila (0x520000). */
-    return (const char *)0x520000;
+    /* v2.5: los args viven a mitad de la pila (0x620000). */
+    return (const char *)0x620000;
 }
 
 void u_lee_linea(char *d, int max) {

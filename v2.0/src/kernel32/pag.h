@@ -8,11 +8,11 @@
  *   0x000000-0x0FFFFF  BIOS, fuente 0x6000, bootinfo 0x7000, E820 0x5000,
  *                      pila de arranque 0x90000, copias temporales
  *   0x100000-0x1FFFFF  nucleo (codigo, datos, BSS)          supervisor
- *   0x200000-0x4FFFFF  usuario: codigo+BSS (plano+bss<=0x300000) usuario
- *   0x500000           pagina de guardia bajo la pila (no presente)
- *   0x510000-0x52FFFF  pila de usuario 32 pags (args al final) usuario
- *   0x530000-0x5FFFFF  usuario: heap (sbrk, 832K)                usuario
- *   0x600000-0x7BFFFF  pilas de anillo 0 + pool FS 0x60000    supervisor
+ *   0x200000-0x5FFFFF  usuario: codigo+BSS (plano+bss<=0x400000) usuario
+ *   0x600000           pagina de guardia bajo la pila (no presente)
+ *   0x601000-0x620FFF  pila de usuario 32 pags (args al final) usuario
+ *   0x630000-0x7FFFFF  usuario: heap (sbrk, ~1.8M)                usuario
+ *   0x1A00000-0x1BFFFFF pilas anon arranque + pool FS (256K)  supervisor
  *   0x800000-0xCFFFFF  heap del kernel 2MB + dorso 2MB        supervisor
  *   (tablas PD/PT en .bss del nucleo, no en 0xC00000)
  *   0x40000000         ventana del kernel para tocar memoria de usuario
@@ -21,7 +21,7 @@
  *                      (pantalla completa a 1920x1080x32)   supervisor
   *
  * Cada proceso tiene su propio directorio y sus propias paginas de
- * usuario; el nucleo (0-0x1FFFFF, 0x600000-0x7BFFFF, 0x800000-0xDFFFFF,
+ * usuario; el nucleo (0-0x1FFFFF, 0x1A00000-0x1BFFFFF, 0x800000-0xDFFFFF,
  * 0xE00000-0xF00000, 0x1000000-0x1800000 y el LFB) se comparte como
  * supervisor, asi que un proceso de usuario no puede escribirlo
  * (bits de privilegio 0 y CR0.WP mas adelante).

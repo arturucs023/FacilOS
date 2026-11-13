@@ -22,4 +22,12 @@ typedef struct {
 
 int nsfetch_get(const char *url, nsfetch_res_t *r);
 
+/* Trae http/https en el buffer del llamador (una peticion, sin
+   redirecciones: como u_http_trae_x). Mismos codigos que
+   u_http_trae_x. suite/detalle solo en https (pueden ser 0). */
+int nsfetch_trae_x(const char *url, const char *metodo, const char *extra,
+                   const unsigned char *post, int npost, u_http_res_t *r,
+                   unsigned char *cuerpo, int cap, unsigned espera,
+                   unsigned *psuite, int *pdetalle);
+
 #endif
