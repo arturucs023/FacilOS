@@ -352,6 +352,13 @@ if NSHAVE and BRHAVE:
          "-I", str(APPS)] + BRINCS +
          ["-DWITHOUT_ICONV_FILTER", "-DNDEBUG", "-w",
           "-c", str(LIB / "nsfetch.c"), "-o", NSFETCH])
+# imgdec (v2.5): PNG + JPEG baseline propios, freestanding.
+# Se enlaza en netsurf y t_fb (ver haz_programa).
+IMGDEC = str(BLD / "imgdec.o")
+run([GCC] + PROGFLAGS + ["-I", str(LIB / "nslibc"), "-I", str(LIB),
+     "-I", str(APPS)] +
+     ["-DWITHOUT_ICONV_FILTER", "-DNDEBUG", "-w",
+      "-c", str(LIB / "imgdec.c"), "-o", IMGDEC])
 
 _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
 
@@ -398,6 +405,8 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
             objs += NSOBJS
         if con_ns1:
             objs += NSOBJS + NS1OBJS
+        if nom in ("netsurf", "t_fb"):
+            objs.append(IMGDEC)
         if con_br:
             objs += BROBJS
             # NSHIM ya viene dentro de NSOBJS (con_ns/con_ns1);

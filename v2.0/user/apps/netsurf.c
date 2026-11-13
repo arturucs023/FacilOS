@@ -15,18 +15,19 @@ void __main(void) {
 #include <nsgif.h>
 #include "ugfx.h"
 #include "utext.h"
+#include "imgdec.h"
 
 /* netsurf (Hito 3 NetSurf): visor minimo web/local.
  * fetch (nsfetch) o fichero -> hubbub -> libdom -> select CSS
  * (color/fondo) -> layout de texto -> ventana ugfx con scroll.
- * Sin JS, sin imagenes, sin formularios, sin atributos style
- * en linea (documentado). -p = resumen a consola sin ventana. */
+ * Imagenes BMP/GIF (libnsbmp/nsgif) + PNG/JPEG propios (imgdec).
+ * Sin JS, sin formularios (documentado). -p = resumen a consola. */
 
 #define NV_MAXTEXTO (64 * 1024)
 #define NV_MAXFILAS 2048
 #define NV_MAXPILA 64
 #define NV_MAXTITULO 128
-#define NV_MAXCSS (8 * 1024)
+#define NV_MAXCSS (24 * 1024)
 #define NV_MAXURL 512
 #define NV_W 640
 #define NV_H 460
@@ -53,13 +54,15 @@ static const char NV_BIENV_HTML[] =
     "<p>NetSurf para FacilOS: navegador rapido con motor NetSurf "
     "(hubbub/dom/css). Escribe una direccion o una busqueda en la "
     "barra superior y pulsa Enter.</p>"
-    "<p><a href=\"https://marginalia-search.com/search?query=FacilOS\">"
+    "<p><a href=\"https://old-search.marginalia.nu/search?query=FacilOS\">"
     "Buscar con Marginalia</a></p>"
+    "<p><a href=\"https://marginalia-search.com/search?query=FacilOS\">"
+    "Marginalia (vista nueva, exige JS)</a></p>"
     "<ul>"
     "<li><a href=\"http://info.cern.ch/\">CERN (primera web)</a></li>"
     "<li><a href=\"http://example.com/\">Example</a></li>"
     "<li><a href=\"https://www.wikipedia.org/\">Wikipedia</a></li>"
-    "<li><a href=\"https://html.duckduckgo.com/html/\">DuckDuckGo HTML</a></li>"
+    "<li><a href=\"https://old-search.marginalia.nu/\">Marginalia clasica</a></li>"
     "</ul>"
     "</body></html>";
 
@@ -267,8 +270,11 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
     }
     if (nv_es_vacio(id)) {
         /* BR/HR dejan marca en el DOM; IMG tambien (Hito 5:
-           el layout lee src/alt); el resto se ignora */
-        if (id != T_BR && id != T_HR && id != T_IMG)
+           el layout lee src/alt); LINK tambien (v2.5: el
+           layout lee rel/href para hojas externas); el resto
+           se ignora */
+        if (id != T_BR && id != T_HR && id != T_IMG &&
+            id != T_LINK)
             return HUBBUB_OK;
     }
     {
@@ -322,7 +328,7 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
                          at->name.ptr[2] == 'E') &&
                         (at->name.ptr[3] == 'f' ||
                          at->name.ptr[3] == 'F')) {
-                        if (id != T_A) continue;
+                        if (id != T_A && id != T_LINK) continue;
                         want = "href";
                     } else if (at->name.len == 3 &&
                                (at->name.ptr[0] == 's' ||
@@ -1226,7 +1232,7 @@ static int NV_pend_esp = 0;
 static int NV_sub = 0, NV_bgexp = 0, NV_al = 0, NV_b = 0;
 /* ultimo estilo calculado: decoracion, bg explicito, alineacion */
 static int NV_last_dec = 0, NV_last_bgexp = 0, NV_last_al = -1;
-static int NV_last_bold = 0;
+static int NV_last_bold = 0, NV_last_fgset = 0;
 
 /* enlaces (Hito 4): filas [f0,f1] -> URL navegable.
    Hito 6: columnas [c0,c1] del subrayado (celdas de texto). */
@@ -1559,7 +1565,41 @@ static int nv_img_dec(const unsigned char *d, int n,
         nsgif_destroy(g);
         return 0;
     }
-    /* PNG/JPEG/otros: sin decodificador (documentado) */
+    /* v2.5: PNG (firma 89 50 4E 47) y JPEG (FF D8) propios (imgdec);
+       BMP/GIF siguen por libnsbmp/nsgif. Otros: sin decodificador. */
+    if (n >= 8 && d[0] == 137 && d[1] == 'P' && d[2] == 'N' &&
+        d[3] == 'G') {
+        unsigned char *sal = 0;
+        int w0 = 0, h0 = 0;
+        if (imgdec_png(d, n, NV_IMG_MAXPX, &w0, &h0, &sal))
+            return -1;
+        if (w0 < 1 || h0 < 1 ||
+            (unsigned)w0 * (unsigned)h0 > (unsigned)NV_IMG_MAXPX ||
+            !sal) {
+            if (sal) u_free(sal);
+            return -1;
+        }
+        *w = w0;
+        *h = h0;
+        *rgb = sal;
+        return 0;
+    }
+    if (n >= 4 && d[0] == 0xFF && d[1] == 0xD8) {
+        unsigned char *sal = 0;
+        int w0 = 0, h0 = 0;
+        if (imgdec_jpg(d, n, NV_IMG_MAXPX, &w0, &h0, &sal))
+            return -1;
+        if (w0 < 1 || h0 < 1 ||
+            (unsigned)w0 * (unsigned)h0 > (unsigned)NV_IMG_MAXPX ||
+            !sal) {
+            if (sal) u_free(sal);
+            return -1;
+        }
+        *w = w0;
+        *h = h0;
+        *rgb = sal;
+        return 0;
+    }
     return -1;
 }
 
@@ -1615,6 +1655,7 @@ static void nv_estilo_nodo(dom_node *n) {
     NV_last_bgexp = 0;
     NV_last_al = -1;
     NV_last_bold = 0;
+    NV_last_fgset = 0;
     if (!NV_css_ok || !n) return;
     if (css_select_style(NV_ctx, n, &NV_uctx, &NV_media, 0,
                          &NV_sel, 0, &res) != CSS_OK || !res)
@@ -1627,6 +1668,7 @@ static void nv_estilo_nodo(dom_node *n) {
         nv_colores(st, &fg, &bg);
         if (fg >= 0) {
             NV_fg = fg;
+            NV_last_fgset = 1;
             NV_nestilos++;
         }
         if (bg >= 0) {
@@ -1700,6 +1742,7 @@ static void nv_estilo_nodo(dom_node *n) {
                                 &fg, &bg);
                             if (fg >= 0) {
                                 NV_fg = fg;
+                                NV_last_fgset = 1;
                                 NV_ninline++;
                             }
                             if (bg >= 0) {
@@ -1807,13 +1850,12 @@ static void nv_recorre(dom_node *n, int prof) {
                         {
                             int fg1 = NV_fg, bg1 = NV_bg;
                             int al1 = NV_al;
-                            /* v2.5-pro: titulares en azul marca +
-                               negrita (fuente fija 8x16: el color y la
-                               doble pasada hacen de "grande"). */
+                            /* v2.5-ux: titulares en color (marca o CSS),
+                               sin doble pasada: la 8x16 ya es gruesa. */
                             es_h = (id == T_H1 || id == T_H2);
                             if (es_h) {
-                                NV_fg = NS_TITULO;
-                                NV_b++;
+                                if (!NV_last_fgset)
+                                    NV_fg = NS_TITULO;
                             }
                             nv_recorre(h, prof + 1);
                             NV_fg = fg1;
@@ -1825,8 +1867,6 @@ static void nv_recorre(dom_node *n, int prof) {
                         if (es_sub)
                             NV_sub--;
                         if (es_bold)
-                            NV_b--;
-                        if (es_h)
                             NV_b--;
                         if (es_bloque) {
                             if (ebg) NV_bgexp--;
@@ -1902,8 +1942,75 @@ static void nv_hubbub_err(uint32_t lin, uint32_t col,
     (void)pw;
 }
 
-/* puente hubbub->dom global (evita 8K en pila) */
+/* puente hubbub->dom global (evita 24K en pila) */
 static nv_t NV_pu;
+
+/* v2.5: hojas externas <link rel="stylesheet"> (max 2, 6K cada una).
+   Se traen tras el parse (el DOM ya esta en heap; nsfetch puede
+   reusar su bufer estatico sin pisar la pagina). */
+#define NV_MAXLINK 2
+#define NV_LINKCAP 6144
+static int NV_nlink;
+
+static void nv_css_link_uno(dom_node *h) {
+    char rel[32], href[256];
+    nsfetch_res_t r;
+    int i, n, k;
+    if (NV_nlink >= NV_MAXLINK) return;
+    if (nv_atributo(h, "rel", rel, (int)sizeof(rel))) return;
+    {
+        const char *q = "stylesheet";
+        k = 0;
+        while (q[k] && rel[k] &&
+               (rel[k] == q[k] || rel[k] + 32 == q[k]))
+            k++;
+        if (q[k] || rel[k]) return;
+    }
+    if (nv_atributo(h, "href", href, (int)sizeof(href))) return;
+    if (nv_resuelve(href, NV_tmpurl) || !nv_es_url(NV_tmpurl))
+        return;
+    if (nsfetch_get(NV_tmpurl, &r) != NSFETCH_OK) return;
+    if (r.codigo < 200 || r.codigo > 299 || r.tam <= 0) return;
+    n = r.tam > NV_LINKCAP ? NV_LINKCAP : r.tam;
+    if (NV_pu.nestilo + n + 2 >= NV_MAXCSS) return;
+    NV_pu.estilo[NV_pu.nestilo++] = '\n';
+    for (i = 0; i < n; i++)
+        NV_pu.estilo[NV_pu.nestilo++] = (char)r.cuerpo[i];
+    NV_pu.estilo[NV_pu.nestilo++] = '\n';
+    NV_pu.estilo[NV_pu.nestilo] = 0;
+    NV_nlink++;
+}
+
+static void nv_css_links(dom_node *n, int prof) {
+    dom_node *h = 0;
+    if (!n || prof > 32 || NV_nlink >= NV_MAXLINK) return;
+    if (dom_node_get_first_child(n, &h) != DOM_NO_ERR || !h)
+        return;
+    for (;;) {
+        dom_node_type t = (dom_node_type)0;
+        if (dom_node_get_node_type(h, &t) == DOM_NO_ERR &&
+            t == DOM_ELEMENT_NODE) {
+            char nb[16];
+            if (!nv_nom_el(h, nb) && nv_id_nom(nb) == T_LINK)
+                nv_css_link_uno(h);
+            nv_css_links(h, prof + 1);
+            if (NV_nlink >= NV_MAXLINK) {
+                dom_node_unref(h);
+                return;
+            }
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(h, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(h);
+                break;
+            }
+            dom_node_unref(h);
+            h = s;
+        }
+    }
+}
 
 /* procesa un documento completo; devuelve 0 ok */
 static int nv_procesa(const unsigned char *pg, int n) {
@@ -1979,8 +2086,11 @@ static int nv_procesa(const unsigned char *pg, int n) {
         }
         NV_titulo[i] = 0;
     }
-    /* CSS del <style> (si falla, sigue sin estilos) */
+    /* CSS del <style> + <link rel=stylesheet> (si falla,
+       sigue sin estilos) */
     nv_sel_init();
+    NV_nlink = 0;
+    nv_css_links((dom_node *)doc, 0);
     nv_css_ini(NV_pu.nestilo ? NV_pu.estilo : 0,
                NV_pu.nestilo);
     /* vuelca el arbol a filas de texto */
@@ -2074,6 +2184,16 @@ static int nv_cargar(const char *f) {
         if (r.codigo < 200 || r.codigo > 299) return -20;
         pg = (const unsigned char *)r.cuerpo;
         n = r.tam;
+        /* base para resolver relativas (tambien en -p, que no
+           pasa por nv_navegar) */
+        {
+            int i = 0;
+            while (f[i] && f[i] != '#' && i < NV_MAXURL) {
+                NV_base[i] = f[i];
+                i++;
+            }
+            NV_base[i] = 0;
+        }
         rc = nv_procesa(pg, n);
         nv_css_fin();
         return rc;
@@ -2144,9 +2264,10 @@ static int NV_tiene;
 
 /* Hito 6: la barra es buscador si no parece URL.
    Sin esquema y sin puntos ni barras: consulta al motor.
-   Marginalia (GET simple, sin cookies/JS) devuelve resultados
-   reales; DuckDuckGo exige sesion (solo enlace manual). */
-#define NV_BUSCA_BASE "https://marginalia-search.com/search?query="
+   v2.5: old-search responde GET simple con resultados reales
+   y sin reto JS (Marginalia principal exige JS; DDG Lite pone
+   captcha segun IP). */
+#define NV_BUSCA_BASE "https://old-search.marginalia.nu/search?query="
 
 static int nv_es_busqueda(const char *s) {
     int i = 0;
@@ -2212,6 +2333,12 @@ static int nv_modo_p(const char *resto) {
         nv_ok(!u_strcmp(NV_titulo, "CSS"), "css-titulo");
         nv_ok(NV_nestilos >= 2, "css-estilos");
         nv_ok(nv_contiene("Verde por clase"), "css-texto");
+        /* v2.5: hoja externa <link rel=stylesheet> */
+        nv_ok(nv_pagina("http://10.0.2.2:18080/con-css") == 0,
+              "csslink-carga");
+        nv_ok(!u_strcmp(NV_titulo, "ConCSS"), "csslink-titulo");
+        nv_ok(NV_nestilos >= 2, "csslink-estilos");
+        nv_ok(nv_contiene("Verde externo"), "csslink-texto");
         /* Hito 4: enlaces (misma pagina que el stub /enlaces) */
         nv_navegar("http://10.0.2.2:18080/enlaces", 1);
         nv_ok(NV_tiene, "enl-carga");
@@ -2285,12 +2412,17 @@ static int nv_modo_p(const char *resto) {
             int f, k, lleno = 0, neg = 0;
             for (f = 0; f < NV_nfilas; f++) {
                 int m = NV_filas[f].len;
-                for (k = 0; k + 8 <= m; k++) {
-                    if (!u_memcmp((const char *)NV_txt +
-                                  NV_filas[f].ini + k,
-                                  "Cabecera", 8)) {
+                for (k = 0; k + 7 <= m; k++) {
+                    if (k + 8 <= m &&
+                        !u_memcmp((const char *)NV_txt +
+                                   NV_filas[f].ini + k,
+                                   "Cabecera", 8)) {
                         if (NV_filas[f].full)
                             lleno = 1;
+                    }
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k,
+                                  "Negrita", 7)) {
                         if (NV_filas[f].bd)
                             neg = 1;
                     }
@@ -2303,7 +2435,7 @@ static int nv_modo_p(const char *resto) {
         {
             char u[NV_MAXURL + 1];
             nv_busca_url("hola mundo", u);
-            nv_ok(!u_strcmp(u, "https://marginalia-search.com"
+            nv_ok(!u_strcmp(u, "https://old-search.marginalia.nu"
                                "/search?query=hola+mundo"),
                   "busca-url");
             nv_ok(nv_es_busqueda("hola mundo") &&
@@ -2856,10 +2988,10 @@ static void nv_ev_tecla(int tecla) {
     if (NV_qfoco && !NV_foco_barra) {
         if (tecla == 13) {
             if (NV_qbuf[0]) {
-                static char tmpq[NV_MAXURL + 1];
+                /* v2.5: la casilla acepta URL directa o busqueda
+                   (nv_ir decide: esquema/dominio -> va; texto -> motor). */
                 NV_qfoco = 0;
-                nv_busca_url(NV_qbuf, tmpq);
-                nv_navegar(tmpq, 1);
+                nv_ir(NV_qbuf);
             }
         } else if (tecla == 27) {
             NV_qfoco = 0;

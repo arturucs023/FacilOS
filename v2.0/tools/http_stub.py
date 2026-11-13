@@ -49,6 +49,11 @@ Rutas:
   /foto.bmp            : BMP 24-bit 48x32 (mosaico 8 colores).
   /foto.gif            : GIF 48x32 (mismo mosaico).
   /img-bmp             : pagina con <img> bmp + gif.
+  /foto.png            : PNG 48x32 (mosaico 8 colores).
+  /foto.jpg            : JPEG 48x32 4:2:2 (mosaico).
+  /img-todo            : pagina con <img> bmp+gif+png+jpg.
+  /estilo.css          : hoja externa (h1 azul + .x verde).
+  /con-css             : pagina con <link rel=stylesheet>.
 """
 import socket
 import sys
@@ -75,6 +80,67 @@ GIF_FOTO = bytes.fromhex(
     "b68461e3cfaf0e5d4c7778f8dddf2eec8dc77d2f779febd78f58c3d57"
     "5f7ff799f6d07a02f2275c81c4f5269f7eec7de799818385e6dd800b0"
     "6c55b85d54198a06e1a4ee72080220504003b")
+
+
+# v2.5: PNG 48x32 (mismo mosaico) y JPEG 48x32 4:2:2 (PIL q75).
+PNG_FOTO = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000030000000200802000000dbb66c"
+    "4b000000c549444154789ccdd7b10dc2301404d0fb57a676edea171e21635051"
+    "330623300135353543b8a66282d41e819aef0214c5e45e799215ebebe4d89652"
+    "c2a7e7348564be8700b8d4b8ea3c87e475ba86e478ebbe554a4808318418428c"
+    "b5d642e4ee3bb68a10438821c458aef5ebd9e07f6c95dc8408318418abe5b1e2"
+    "8fe3c35a253721420c21c65acd9bdc637ca356c94d88104388b17c5806dd8e7d"
+    "55abe426448821c458eecea1716f2effa155721322c410626cc979c797bc77ad"
+    "929b1021867b6f207a0361304ae73a0c582e0000000049454e44ae426082"
+    )
+JPG_FOTO = bytes.fromhex(
+    "ffd8ffe000104a46494600010100000100010000ffdb00430008060607060508"
+    "0707070909080a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720"
+    "222c231c1c2837292c30313434341f27393d38323c2e333432ffdb0043010909"
+    "090c0b0c180d0d1832211c213232323232323232323232323232323232323232"
+    "323232323232323232323232323232323232323232323232323232323232ffc0"
+    "0011080020003003012200021101031101ffc4001f0000010501010101010100"
+    "000000000000000102030405060708090a0bffc400b510000201030302040305"
+    "0504040000017d01020300041105122131410613516107227114328191a10823"
+    "42b1c11552d1f02433627282090a161718191a25262728292a3435363738393a"
+    "434445464748494a535455565758595a636465666768696a737475767778797a"
+    "838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7"
+    "b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1"
+    "f2f3f4f5f6f7f8f9faffc4001f01000301010101010101010100000000000001"
+    "02030405060708090a0bffc400b5110002010204040304070504040001027700"
+    "0102031104052131061241510761711322328108144291a1b1c109233352f015"
+    "6272d10a162434e125f11718191a262728292a35363738393a43444546474849"
+    "4a535455565758595a636465666768696a737475767778797a82838485868788"
+    "898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4"
+    "c5c6c7c8c9cad2d3d4d5d6d7d8d9dae2e3e4e5e6e7e8e9eaf2f3f4f5f6f7f8f9"
+    "faffda000c03010002110311003f00cef107c26ff841f43b8f11ff006dfdb7ec"
+    "7b7fd1fecbe5efdec13ef6f38c6ecf4ed585e1ef10fda3ed3fe8bb76edff0096"
+    "99f5f6aefb42f117d9b59b79becbbb6eee3ccc7f091e95a5e27f0c7fc2d5fb2f"
+    "fa67f65ff66eff00f965e7f99e66df75c63cbf7ce7da9e372dbaf7beff009fa9"
+    "54f1d3a5ff0009d98d3b29ebc97f89747cd15a6b1dafd3cce21b4ffed13f6bf3"
+    "7cbf33f876e718e3ae7daba18bc4bff093c8347fb27d9bed1ff2d7ccdfb76fcd"
+    "d3033f771d7bd79ef8817fe107d72e3c39ff001fbf63dbfe91feaf7ef50ff779"
+    "c63763af6ae8daeffb447d936797e67f16738c73d3f0ae29d66f929e35737269"
+    "4e5b7b3dbdee55f1dad17696f6b7560b075f077c565f2e7a6bde9c6c97b38ad5"
+    "2bcaee5a5d5d2be9e66eded97fc235e5fef3ed3f68cff0ecdbb71f5cfdeaea34"
+    "2f187d9b46b787ec3bb6eee7cec7f113fddae1f4cd4ffe113f37f73f6afb4e3f"
+    "8b66ddb9f639fbdfa56c45a3ff00c24f18d63cff00b37da3fe596cdfb76fcbd7"
+    "233f773d3bd774b17ec68aa98c7cd45e8aaedcd2edc8b58db5577a3e5bf544c6"
+    "385cd65ede8cfd9d67f14ace574b4b59d976d56ba79b218bc4bff093c8347fb2"
+    "7d9bed1ff2d7ccdfb76fcdd3033f771d7bd36f6cbfe11af2ff0079f69fb467f8"
+    "766ddb8fae7ef56135dff688fb26cf2fccfe2ce718e7a7e15774cd4ffe113f37"
+    "f73f6afb4e3f8b66ddb9f639fbdfa57360a704f972f8f23ff9f37bf3bb6b2f69"
+    "2f86cba7f77fbc3a98aab47fe13f39a7a4f5b5d6dd35879c7bfe0771a178c3ec"
+    "da35bc3f61ddb7773e763f889feed79e7883e137fc20fa1dc788ff00b6fedbf6"
+    "3dbfe8ff0065f2f7ef609f7b79c63767a76ae8e2d1ff00e1278c6b1e7fd9bed1"
+    "ff002cb66fdbb7e5eb919fbb9e9de9ba1788becdacdbcdf65ddb7771e663f848"
+    "f4aed83a38ce784349c349c75d1eb757d13b34d5d682786c460ad89c2be7a6bd"
+    "ee8bd9c56ab7bb9e9f3f77cce07c3de21fb47da7fd176eddbff2d33ebed5b2da"
+    "7ff689fb5f9be5f99fc3b738c71d73ed5dbf89fc31ff000b57ecbfe99fd97fd9"
+    "bbff00e5979fe6799b7dd718f2fdf39f6af27f102ffc20fae5c7873fe3f7ec7b"
+    "7fd23fd5efdea1feef38c6ec75ed5c31a789c0d6757092e593d1e89e9f3bae88"
+    "b947059c47dbca7ecea4b5752ce5cd6d3979344ba6bfddf33fffd9"
+    )
 
 
 def resp(code, motivo, headers, body):
@@ -268,6 +334,7 @@ def atiende(cn):
                     "<p>Rojo por etiqueta.</p>"
                     "<p class=\"v\">Verde por clase.</p>"
                     "<p style=\"color:#ffff00\">Amarillo inline.</p>"
+                    "<p><b>Negrita</b></p>"
                     "</body></html>").encode("latin1")
             cn.sendall(resp(200, "OK",
                              [("Content-Type", "text/html"),
@@ -452,6 +519,47 @@ def atiende(cn):
             body = GIF_FOTO
             cn.sendall(resp(200, "OK",
                          [("Content-Type", "image/gif"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/foto.png":
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "image/png"),
+                          ("Content-Length", str(len(PNG_FOTO)))],
+                         PNG_FOTO))
+        elif path == "/foto.jpg":
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "image/jpeg"),
+                          ("Content-Length", str(len(JPG_FOTO)))],
+                         JPG_FOTO))
+        elif path == "/img-todo":
+            body = ("<html><head><title>Fotos4</title></head><body>"
+                    "<h2>Fotos BMP+GIF+PNG+JPG</h2>"
+                    "<img src=\"/foto.bmp\" alt=\"mosaico\">"
+                    "<p>Entre medias.</p>"
+                    "<img src=\"/foto.gif\" alt=\"trama\">"
+                    "<img src=\"/foto.png\" alt=\"mosa\">"
+                    "<img src=\"/foto.jpg\" alt=\"foto\">"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/html"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/estilo.css":
+            body = ("h1{color:#0000ee}\n.x{color:#00aa00}\n"
+                    "p{color:#333333}").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/css"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/con-css":
+            body = ("<html><head><title>ConCSS</title>"
+                    "<link rel=\"stylesheet\" href=\"/estilo.css\">"
+                    "</head><body>"
+                    "<h1>Titulo externo</h1>"
+                    "<p class=\"x\">Verde externo</p>"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/html"),
                           ("Content-Length", str(len(body)))],
                          body))
         elif path == "/img-bmp":
