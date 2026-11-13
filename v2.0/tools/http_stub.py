@@ -35,6 +35,7 @@ Rutas:
   /malformada           : tags sin cerrar, desconocidos, script.
   /img-pagina           : imagenes con/sin alt.
   /busca[?q=...]        : resultados de busqueda de ejemplo.
+  /texto                : 12 lineas de texto plano (fixture).
   /grande-html          : 70 KB con Content-Length (cabe en 256K).
   /grande-chunked       : ~200 KB HTML en trozos chunked de 8K.
   v2.4.4 (cookies + POST):
@@ -422,6 +423,23 @@ def atiende(cn):
                              [("Content-Type", "text/html"),
                               ("Content-Length", str(len(body)))],
                              body))
+        elif path == "/texto":
+            body = ("FacilOS es un sistema propio\n"
+                    "la terminal habla castellano\n"
+                    "FacilOS no usa codigo unix\n"
+                    "cada comando tiene ayuda\n"
+                    "los archivos viven en memoria\n"
+                    "la red llega por dhcp\n"
+                    "el navegador trae imagenes\n"
+                    "el css viste las paginas\n"
+                    "FacilOS arranca en qemu\n"
+                    "las pruebas son verdes\n"
+                    "el buscador responde\n"
+                    "fin del texto de prueba\n").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/plain; charset=latin1"),
+                          ("Content-Length", str(len(body)))],
+                         body))
         elif path == "/grande-chunked":
             # v2.4.3: 200 KB HTML en trozos de 8K + trailers.
             trozo = "<p>trozo chunked para red util v2.4.3</p>"

@@ -242,6 +242,15 @@ static const par_t P_COPIA[] = {
     { "sobrescribir", "sino", "no", "si|no" },
     { "verificar", "sino", "si", "si|no" },
 };
+static const par_t P_NUMEROS[] = {
+    { "numeros", "sino", "no", "si|no" },
+};
+static const par_t P_MODO[] = {
+    { "modo", "texto", "todo", "lineas|palabras|bytes|todo" },
+};
+static const par_t P_SOBRE[] = {
+    { "sobrescribir", "sino", "no", "si|no" },
+};
 
 static const cmd_t CMDS[] = {
     { "ayuda", "documentacion",
@@ -396,6 +405,41 @@ static const cmd_t CMDS[] = {
       "Espera los milisegundos indicados.",
       "Pausa la terminal (de 0 a 10000 ms). Util con | para demoras.",
       "esperar <ms>", "esperar 500", 1, 1, 0, 0 },
+    { "ver_inicio", "texto",
+      "Muestra las primeras lineas.",
+      "Escribe las primeras N lineas de un archivo de texto (10 si no se dice).",
+      "ver_inicio \"archivo\" [n]", "ver_inicio \"notas.txt\" 5", 1, 2, 0, 0 },
+    { "ver_final", "texto",
+      "Muestra las ultimas lineas.",
+      "Escribe las ultimas N lineas de un archivo de texto (10 si no se dice).",
+      "ver_final \"archivo\" [n]", "ver_final \"notas.txt\" 5", 1, 2, 0, 0 },
+    { "buscar_texto", "texto",
+      "Busca texto dentro de un archivo.",
+      "Muestra las lineas que contienen el texto (con numeros=si indica la linea).",
+      "buscar_texto \"texto\" \"archivo\" [numeros=si|no]",
+      "buscar_texto \"FacilOS\" \"notas.txt\"", 2, 2, P_NUMEROS, 1 },
+    { "contar", "texto",
+      "Cuenta lineas, palabras o bytes.",
+      "Cuenta el contenido de un archivo de texto (todo si no se dice modo).",
+      "contar \"archivo\" [modo=lineas|palabras|bytes|todo]",
+      "contar \"notas.txt\" modo=lineas", 1, 1, P_MODO, 1 },
+    { "descargar_archivo", "red",
+      "Descarga un archivo por HTTP.",
+      "Trae una URL http (hasta 64K) y la guarda en un archivo. Sin https.",
+      "descargar_archivo <url> <destino> [sobrescribir=si|no]",
+      "descargar_archivo http://10.0.2.2:18080/texto pagina.txt", 2, 2, P_SOBRE, 1 },
+    { "calendario", "sistema",
+      "Muestra un calendario mensual.",
+      "Dibuja el mes actual (o el indicado) con la semana de lunes a domingo.",
+      "calendario [mes] [anio]", "calendario 11 2026", 0, 2, 0, 0 },
+    { "apagar", "sistema",
+      "Apaga el equipo.",
+      "Apaga inmediatamente (si hay ACPI; si no, avisa).",
+      "apagar", "apagar", 0, 0, 0, 0 },
+    { "reiniciar", "sistema",
+      "Reinicia el equipo.",
+      "Reinicia inmediatamente por el 8042.",
+      "reiniciar", "reiniciar", 0, 0, 0, 0 },
 };
 #define NCMDS (int)(sizeof(CMDS) / sizeof(CMDS[0]))
 
@@ -1808,6 +1852,480 @@ static void op_repetir(const cmd_t *c) {
         }
     }
     for (i = 0; i < n; i++) ejecuta_uno(v_term, sub);
+}
+
+/* ===== v2.5-terminal: texto/red/sistema propios ===== */
+
+/* abre un archivo existente de lectura; deja la ruta absoluta lista */
+static int txt_abre_lectura(const char *nom, char *ruta) {
+    int dir, t2 = 0, idx;
+    char base[32];
+    if (resuelve(nom, &dir, base) || !base[0]) {
+        perr(14, "Ruta no valida.");
+        return -1;
+    }
+    idx = busca_en(dir, base, &t2);
+    if (idx < 0 || t2 != 2) {
+        perr(20, "No existe ese archivo.");
+        return -1;
+    }
+    a_absoluta(nom, ruta);
+    return 0;
+}
+
+/* lee una linea (hasta \n); devuelve chars guardados o -1 en EOF.
+   Termina en NUL; si la linea supera cap-1, la trunca y sigue
+   hasta el \n. */
+static int txt_linea(UFILE *f, char *sal, int cap) {
+    int n = 0;
+    char ch;
+    if (cap < 2) return -1;
+    for (;;) {
+        if (u_fread(&ch, 1, f) != 1) {
+            sal[n < cap ? n : cap - 1] = 0;
+            return n > 0 ? n : -1;
+        }
+        if (ch == '\n') {
+            sal[n] = 0;
+            return n;
+        }
+        if (ch == '\r') continue;
+        if (n + 1 < cap) sal[n++] = ch;
+    }
+}
+
+static void op_ver_inicio(const cmd_t *c) {
+    char ruta[128], lin[128];
+    UFILE *f;
+    int n, i, total = 0;
+    (void)c;
+    if (npos < 1) {
+        perr(10, "Falta indicar el archivo.");
+        return;
+    }
+    n = 10;
+    if (npos >= 2) {
+        n = u_atoi(pos_arg[1]);
+        if (n < 1 || n > 200) {
+            perr(48, "Lineas de 1 a 200.");
+            return;
+        }
+    }
+    if (txt_abre_lectura(pos_arg[0], ruta)) return;
+    f = u_fopen(ruta, "r");
+    if (!f) {
+        perr(24, "No se pudo abrir.");
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        if (txt_linea(f, lin, (int)sizeof(lin)) < 0) break;
+        pon(lin);
+        total++;
+    }
+    u_fclose(f);
+    if (!total) pon("(Archivo vacio.)");
+}
+
+static void op_ver_final(const cmd_t *c) {
+    char ruta[128];
+    UFILE *f;
+    int n, ini = 0, cnt = 0, i, j, k;
+    char *anillo;
+    char lin[128];
+    (void)c;
+    if (npos < 1) {
+        perr(10, "Falta indicar el archivo.");
+        return;
+    }
+    n = 10;
+    if (npos >= 2) {
+        n = u_atoi(pos_arg[1]);
+        if (n < 1 || n > 200) {
+            perr(48, "Lineas de 1 a 200.");
+            return;
+        }
+    }
+    if (txt_abre_lectura(pos_arg[0], ruta)) return;
+    f = u_fopen(ruta, "r");
+    if (!f) {
+        perr(24, "No se pudo abrir.");
+        return;
+    }
+    anillo = (char *)u_malloc(n * 128);
+    if (!anillo) {
+        perr(50, "Sin memoria.");
+        u_fclose(f);
+        return;
+    }
+    for (i = 0; i < n * 128; i++) anillo[i] = 0;
+    while (txt_linea(f, lin, (int)sizeof(lin)) >= 0) {
+        for (j = 0; j < 128; j++) {
+            k = 0;
+            while (lin[k]) k++;
+            anillo[(cnt % n) * 128 + j] = j <= k ? lin[j] : 0;
+        }
+        cnt++;
+    }
+    u_fclose(f);
+    if (!cnt) {
+        u_free(anillo);
+        pon("(Archivo vacio.)");
+        return;
+    }
+    if (cnt > n) ini = cnt - n;
+    for (i = ini; i < cnt; i++) pon(anillo + (i % n) * 128);
+    u_free(anillo);
+}
+
+static void op_buscar_texto(const cmd_t *c) {
+    char ruta[128], lin[160];
+    UFILE *f;
+    char aguja[65];
+    int i, la, nlin = 0, hall = 0, nums = 0;
+    const char *ag;
+    int dado = 0;
+    (void)c;
+    if (npos < 2) {
+        perr(10, "Falta texto y archivo.");
+        return;
+    }
+    for (i = 0; pos_arg[0][i] && i < 64; i++) aguja[i] = pos_arg[0][i];
+    aguja[i] = 0;
+    la = i;
+    if (!la) {
+        perr(48, "Texto de 1 a 64 letras.");
+        return;
+    }
+    ag = param_de(c, "numeros", &dado);
+    if (ag && es_si(ag)) nums = 1;
+    if (txt_abre_lectura(pos_arg[1], ruta)) return;
+    f = u_fopen(ruta, "r");
+    if (!f) {
+        perr(24, "No se pudo abrir.");
+        return;
+    }
+    while (txt_linea(f, lin, 128) >= 0) {
+        int j, q, ok = 0, m = 0;
+        nlin++;
+        while (lin[m]) m++;
+        for (j = 0; j + la <= m; j++) {
+            q = 0;
+            while (q < la && lin[j + q] == aguja[q]) q++;
+            if (q == la) {
+                ok = 1;
+                break;
+            }
+        }
+        if (ok) {
+            hall++;
+            if (nums) {
+                char b[160], nb[12];
+                int t = 0;
+                u_itoa(nlin, nb);
+                q = 0;
+                while (nb[q] && t < 140) b[t++] = nb[q++];
+                b[t++] = ':';
+                b[t++] = ' ';
+                for (j = 0; lin[j] && t < 150; j++) b[t++] = lin[j];
+                b[t] = 0;
+                pon(b);
+            } else {
+                pon(lin);
+            }
+        }
+    }
+    u_fclose(f);
+    if (!hall) pon("(Sin coincidencias.)");
+}
+
+static void op_contar(const cmd_t *c) {
+    char ruta[128];
+    UFILE *f;
+    long nl = 0, np = 0, nby = 0;
+    int en_pal = 0;
+    const char *md;
+    int dado = 0, que = 0;
+    char ch, b[64], nbs[16];
+    int t = 0, q = 0;
+    (void)c;
+    if (npos < 1) {
+        perr(10, "Falta indicar el archivo.");
+        return;
+    }
+    md = param_de(c, "modo", &dado);
+    if (!md) md = "todo";
+    if (!u_strcmp(md, "lineas")) que = 1;
+    else if (!u_strcmp(md, "palabras")) que = 2;
+    else if (!u_strcmp(md, "bytes")) que = 3;
+    else que = 0;
+    if (txt_abre_lectura(pos_arg[0], ruta)) return;
+    f = u_fopen(ruta, "r");
+    if (!f) {
+        perr(24, "No se pudo abrir.");
+        return;
+    }
+    while (u_fread(&ch, 1, f) == 1) {
+        nby++;
+        if (ch == '\n') {
+            nl++;
+            en_pal = 0;
+        } else if (ch == ' ' || ch == '\t' || ch == '\r') {
+            en_pal = 0;
+        } else if (!en_pal) {
+            en_pal = 1;
+            np++;
+        }
+    }
+    u_fclose(f);
+    if (que == 1 || que == 0) {
+        t = 0;
+        {
+            const char *s = "lineas: ";
+            while (*s && t < 50) b[t++] = *s++;
+        }
+        u_itoa((int)nl, nbs);
+        while (nbs[q] && t < 62) b[t++] = nbs[q++];
+        b[t] = 0;
+        pon(b);
+    }
+    if (que == 2 || que == 0) {
+        t = 0;
+        q = 0;
+        {
+            const char *s = "palabras: ";
+            while (*s && t < 50) b[t++] = *s++;
+        }
+        u_itoa((int)np, nbs);
+        while (nbs[q] && t < 62) b[t++] = nbs[q++];
+        b[t] = 0;
+        pon(b);
+    }
+    if (que == 3 || que == 0) {
+        t = 0;
+        q = 0;
+        {
+            const char *s = "bytes: ";
+            while (*s && t < 50) b[t++] = *s++;
+        }
+        u_itoa((int)nby, nbs);
+        while (nbs[q] && t < 62) b[t++] = nbs[q++];
+        b[t] = 0;
+        pon(b);
+    }
+}
+static int es_http_url(const char *s) {
+    const char *p = "http://";
+    int i = 0;
+    if (!s) return 0;
+    while (p[i] && s[i] == p[i]) i++;
+    return p[i] == 0;
+}
+
+static int es_https_url(const char *s) {
+    const char *p = "https://";
+    int i = 0;
+    if (!s) return 0;
+    while (p[i] && s[i] == p[i]) i++;
+    return p[i] == 0;
+}
+
+static void op_descargar(const cmd_t *c) {
+    char ruta[128];
+    u_http_res_t r;
+    unsigned char *cpo;
+    int k, dir, t2 = 0;
+    char base[32];
+    const char *sb;
+    int dado = 0;
+    UFILE *f;
+    unsigned int total = 0;
+    char b[96], nb[16];
+    int t = 0, q = 0;
+    (void)c;
+    if (npos < 2) {
+        perr(10, "Falta URL y destino.");
+        return;
+    }
+    if (es_https_url(pos_arg[0])) {
+        perr(52, "Solo http (sin https). Usa el navegador para https.");
+        return;
+    }
+    if (!es_http_url(pos_arg[0])) {
+        perr(53, "La URL debe empezar por http://");
+        return;
+    }
+    if (resuelve(pos_arg[1], &dir, base) || !base[0]) {
+        perr(14, "Ruta de destino no valida.");
+        return;
+    }
+    if (busca_en(dir, base, &t2) >= 0) {
+        sb = param_de(c, "sobrescribir", &dado);
+        if (t2 != 2) {
+            perr(22, "El destino es una carpeta.");
+            return;
+        }
+        if (!sb || !es_si(sb)) {
+            perr(15, "Ya existe (usa sobrescribir=si).");
+            return;
+        }
+    }
+    cpo = (unsigned char *)u_malloc(65536);
+    if (!cpo) {
+        perr(50, "Sin memoria.");
+        return;
+    }
+    k = u_http_trae(pos_arg[0], &r, cpo, 65536, 20000);
+    if (k) {
+        u_free(cpo);
+        perr(54, "No se pudo descargar (red, URL o pasa de 64K).");
+        return;
+    }
+    if (r.codigo < 200 || r.codigo > 299) {
+        u_free(cpo);
+        perr(55, "El servidor no dio OK.");
+        return;
+    }
+    a_absoluta(pos_arg[1], ruta);
+    f = u_fopen(ruta, "w");
+    if (!f) {
+        u_free(cpo);
+        perr(17, "No se pudo crear el destino.");
+        return;
+    }
+    while (total < r.cuerpo_n) {
+        int trozo = (int)(r.cuerpo_n - total);
+        if (trozo > 8192) trozo = 8192;
+        if (u_fwrite(cpo + total, trozo, f) != trozo) {
+            u_fclose(f);
+            u_free(cpo);
+            perr(56, "Fallo al escribir.");
+            return;
+        }
+        total += (unsigned int)trozo;
+    }
+    u_fclose(f);
+    u_free(cpo);
+    {
+        const char *s = "Descargados ";
+        while (*s && t < 70) b[t++] = *s++;
+    }
+    u_itoa((int)total, nb);
+    while (nb[q] && t < 85) b[t++] = nb[q++];
+    {
+        const char *s = " bytes.";
+        while (*s && t < 94) b[t++] = *s++;
+    }
+    b[t] = 0;
+    pon(b);
+}
+
+/* Zeller: 0 = sabado. Se pasa a lunes = 0. */
+static int cal_ini(int mes, int ano) {
+    int m = mes, a = ano, q = 1, K, J, h;
+    if (m < 3) {
+        m += 12;
+        a -= 1;
+    }
+    K = a % 100;
+    J = a / 100;
+    h = (q + 13 * (m + 1) / 5 + K + K / 4 + J / 4 + 5 * J) % 7;
+    return (h + 5) % 7;
+}
+
+static int cal_bisiesto(int a) {
+    return (a % 4 == 0 && a % 100 != 0) || a % 400 == 0;
+}
+
+static void op_calendario(const cmd_t *c) {
+    unsigned int v[6];
+    int mes, ano, dim, ini, d, col;
+    char b[64], nb[16];
+    int t = 0, q = 0;
+    static const char *nombres[] = {
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre",
+        "diciembre"
+    };
+    static const int dias[] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
+    (void)c;
+    if (u_reloj(v)) {
+        perr(31, "No se pudo leer el reloj.");
+        return;
+    }
+    mes = (int)v[1];
+    ano = (int)v[0];
+    if (mes < 1 || mes > 12) mes = 1;
+    if (ano < 1900 || ano > 2100) ano = 2000;
+    if (npos >= 1) {
+        mes = u_atoi(pos_arg[0]);
+        if (mes < 1 || mes > 12) {
+            perr(48, "Mes de 1 a 12.");
+            return;
+        }
+    }
+    if (npos >= 2) {
+        ano = u_atoi(pos_arg[1]);
+        if (ano < 1900 || ano > 2100) {
+            perr(48, "Anio de 1900 a 2100.");
+            return;
+        }
+    }
+    dim = dias[mes - 1];
+    if (mes == 2 && cal_bisiesto(ano)) dim = 29;
+    ini = cal_ini(mes, ano);
+    {
+        const char *s = nombres[mes - 1];
+        while (*s && t < 40) b[t++] = *s++;
+    }
+    b[t++] = ' ';
+    b[t++] = 'd';
+    b[t++] = 'e';
+    b[t++] = ' ';
+    u_itoa(ano, nb);
+    while (nb[q] && t < 60) b[t++] = nb[q++];
+    b[t] = 0;
+    pon(b);
+    pon("lu ma mi ju vi sa do");
+    t = 0;
+    for (col = 0; col < ini; col++) {
+        b[t++] = ' ';
+        b[t++] = ' ';
+        b[t++] = ' ';
+    }
+    for (d = 1; d <= dim; d++) {
+        if (col == 7) {
+            b[t] = 0;
+            pon(b);
+            t = 0;
+            col = 0;
+        }
+        if (d < 10) b[t++] = ' ';
+        u_itoa(d, nb);
+        q = 0;
+        while (nb[q] && t < 62) b[t++] = nb[q++];
+        b[t++] = ' ';
+        col++;
+    }
+    if (t) {
+        b[t] = 0;
+        pon(b);
+    }
+}
+
+static void op_apagar(const cmd_t *c) {
+    (void)c;
+    pon("Apagando...");
+    u_apagar();
+    perr(57, "Sin ACPI: apaga a mano.");
+}
+
+static void op_reiniciar(const cmd_t *c) {
+    (void)c;
+    pon("Reiniciando...");
+    u_reiniciar();
+    perr(58, "El 8042 no responde.");
 }
 
 /* ---- red propia (v2.3-red F1) ---- */
@@ -3393,6 +3911,22 @@ static void ejecuta_uno(ug_win_t *v, const char *ln) {
         op_repetir(&CMDS[id]);
     } else if (!u_strcmp(cmd, "esperar")) {
         op_esperar(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "ver_inicio")) {
+        op_ver_inicio(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "ver_final")) {
+        op_ver_final(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "buscar_texto")) {
+        op_buscar_texto(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "contar")) {
+        op_contar(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "descargar_archivo")) {
+        op_descargar(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "calendario")) {
+        op_calendario(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "apagar")) {
+        op_apagar(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "reiniciar")) {
+        op_reiniciar(&CMDS[id]);
     }
     (void)i;
 }
