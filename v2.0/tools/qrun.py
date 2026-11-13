@@ -19,7 +19,8 @@ CMDS = sys.argv[5:]
 ser = pathlib.Path(SER)
 if ser.exists():
     ser.unlink()
-args = [r"C:\Program Files\qemu\qemu-system-i386.exe", "-cdrom", ISO]
+QEMU = os.environ.get("FACILOS_QEMU", r"C:\Program Files\qemu\qemu-system-i386.exe")
+args = [QEMU, "-cdrom", ISO]
 if HDD != "-":
     # format=raw explicito: si QEMU sondea el formato, bloquea las
     # escrituras al sector 0 (justo la cabecera FACILOS2) y deja la imagen

@@ -190,6 +190,23 @@ long long time(long long *t) {
     return secs;
 }
 
+/* ---- gettimeofday para libnsutils (fallback gettimeofday) ----
+ * tv_sec via time(); tv_usec via u_ticks (100 Hz -> 10 ms). */
+struct F32NS_tv {
+    long tv_sec;
+    long tv_usec;
+};
+int gettimeofday(struct F32NS_tv *tv, void *tz) {
+    long long s;
+    (void)tz;
+    if (!tv) return -1;
+    s = time(0);
+    if (s < 0) return -1;
+    tv->tv_sec = (long)s;
+    tv->tv_usec = (long)((u_ticks() % 100) * 10000);
+    return 0;
+}
+
 void *bsearch(const void *key, const void *base, unsigned n,
               unsigned tam,
               int (*cmp)(const void *, const void *)) {

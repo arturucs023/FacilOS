@@ -5,7 +5,7 @@ La ISO lleva el arranque, el nucleo y TODOS los programas (catalogo
 F32C, solo lectura). Con --disco ademas genera la imagen de datos
 (opcional, para poder guardar).
 """
-import pathlib, struct, subprocess, sys, datetime
+import pathlib, struct, subprocess, sys, datetime, os, shutil
 WANT_DISK = "--disco" in sys.argv
 BASE = pathlib.Path(__file__).parent.parent
 K32 = BASE / "src" / "kernel32"
@@ -18,8 +18,24 @@ ISO_DIR = BASE / "build" / "iso"
 IMG_DIR = BASE / "build" / "images"
 for _d in (BLD, ISO_DIR, IMG_DIR):
     _d.mkdir(parents=True, exist_ok=True)
-GCC = r"C:\Users\artur\gcc32\mingw32\bin\gcc.exe"
-GXX = r"C:\Users\artur\gcc32\mingw32\bin\g++.exe"
+def _resolve_tool(env, candidates, path_name):
+    v = os.environ.get(env)
+    if v and pathlib.Path(v).exists():
+        return v
+    for c in candidates:
+        if c and pathlib.Path(c).exists():
+            return str(c)
+    w = shutil.which(path_name)
+    if w:
+        return w
+    print(f"FALTA {path_name}: define %${env}% con la ruta completa o instala el toolchain.")
+    print(f"  Ej: set {env}=C:\\msys64\\mingw32\\bin\\{path_name}")
+    sys.exit(1)
+GCC = _resolve_tool("FACILOS_GCC", [r"C:\msys64\mingw32\bin\gcc.exe",
+    r"C:\Users\artur\gcc32\mingw32\bin\gcc.exe"], "gcc.exe")
+GXX = _resolve_tool("FACILOS_GXX", [os.path.join(os.path.dirname(GCC), "g++.exe"),
+    r"C:\msys64\mingw32\bin\g++.exe",
+    r"C:\Users\artur\gcc32\mingw32\bin\g++.exe"], "g++.exe")
 NASM = str(BASE / "tools" / "nasm" / "nasm-3.01" / "nasm.exe")
 C32FLAGS = ["-ffreestanding", "-nostdlib", "-m32", "-march=i386",
             "-O1", "-Wall", "-fno-pic", "-fno-pie", "-fno-stack-protector",
@@ -34,7 +50,10 @@ CXXFLAGS = PROGFLAGS + ["-fno-exceptions", "-fno-rtti",
                         "-fuse-cxa-atexit"]
 
 def run(cmd):
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    env = dict(os.environ)
+    bindir = os.path.dirname(GCC)
+    env["PATH"] = bindir + os.pathsep + env.get("PATH", "")
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
         print("FALLO:", " ".join(cmd)); print(r.stdout); print(r.stderr)
         sys.exit(1)
