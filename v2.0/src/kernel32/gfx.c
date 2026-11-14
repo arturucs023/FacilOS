@@ -366,11 +366,14 @@ uint8_t cp_a_cp437(unsigned cp) {
 #define VIDEO_ACTIVO 0x01u
 #define VIDEO_LINEAL 0x40u
 
-/* Modos con soporte: los tres clasicos mas 1920x1080. */
+/* Modos con soporte: los tres clasicos, dos intermedios para ventanas
+   pequenas (portatiles) y 1920x1080. Anchos multiplo de 8 (el BGA
+   recorta a 8: 1366 entraria como 1360 y mentiria el paso). */
 static const uint16_t modos_video[][2] = {
-    { 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1920, 1080 }
+    { 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1920, 1080 },
+    { 1360, 768 }, { 1600, 900 }
 };
-#define N_MODOS_VIDEO 4
+#define N_MODOS_VIDEO 6
 
 static void video_bga_indice(uint16_t r) { outw(PUERTO_VIDEO_IND, r); }
 
@@ -408,18 +411,26 @@ static void video_bga_modo(uint16_t w, uint16_t h) {
     video_bga_pon(4, VIDEO_ACTIVO | VIDEO_LINEAL);
 }
 
-/* Arranque con modo persistente 3 (1920x1080): el sector solo sabe
+/* Arranque con modo persistente 3+ (BGA directo): el sector solo sabe
    VESA, asi que el nucleo completa el cambio por puertos (el marco
-   lineal no se mueve). Si no hay adaptador, restablece el CMOS a
-   800x600 y sigue con el VESA que dejo el sector. */
+   lineal no se mueve). Los modos 0-2 ya los dejo VESA. Si el adaptador
+   no acepta el pedido (verificado), se restablece CMOS a 800x600 y
+   se sigue con el VESA que dejo el sector: nunca a medias. */
 static void pantalla_arranque(void) {
+    /* indice CMOS -> resolucion (igual orden que configura) */
+    static const uint16_t cmos_w[6] = { 800, 640, 1024, 1920, 1360, 1600 };
+    static const uint16_t cmos_h[6] = { 600, 480, 768, 1080, 768, 900 };
     uint8_t cv;
+    uint16_t qw, qh;
     uint32_t fl;
     if (!lfb) return;
-    if (GW == 1920 && GH == 1080) return;
     outb(0x70, 0x40);
     cv = inb(0x71);
-    if (cv != 3) return;
+    if (cv > 5) return; /* lo sanea k32main tras el arranque */
+    if (cv < 3) return; /* 800x600/640x480/1024x768: ya los puso VESA */
+    qw = cmos_w[cv];
+    qh = cmos_h[cv];
+    if (GW == qw && GH == qh) return;
     if (!video_bga_hay()) {
         outb(0x70, 0x40);
         outb(0x71, 0);
@@ -427,24 +438,25 @@ static void pantalla_arranque(void) {
     }
     fl = cpu_eflags();
     cli();
-    video_bga_modo(1920, 1080);
-    if (!video_bga_verifica(1920, 1080)) {
-        /* El adaptador no acepto el 1080p: se vuelve al valor
+    video_bga_modo(qw, qh);
+    if (!video_bga_verifica(qw, qh)) {
+        /* El adaptador no acepto el pedido: se vuelve al valor
            de fabrica y se sigue con el VESA del arranque. */
         outb(0x70, 0x40);
         outb(0x71, 0);
         cpu_if_restaura(fl);
         return;
     }
-    GW = 1920;
-    GH = 1080;
-    GP = (uint16_t)(1920 * 4);
+    GW = qw;
+    GH = qh;
+    GP = (uint16_t)(qw * 4);
     cpu_if_restaura(fl);
 }
 
 /* Cambia la resolucion en vivo. 0 ok, -1 modo sin soporte o sin
-   adaptador, -2 sin memoria para componer (solo 1920x1080). No toca
-   nada si falla: o cambia del todo o se queda como estaba. */
+   adaptador (incluye rechazo verificado), -2 sin memoria para
+   componer (modos grandes). No toca nada si falla: o cambia
+   del todo o se queda como estaba. */
 int pantalla_modo(int w, int h) {
     unsigned i;
     uint32_t necesita, base, cap, fl;

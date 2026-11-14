@@ -149,6 +149,40 @@ static void t_modo(void) {
     for (i = 0; i < 4; i++) v[i] = 0;
     ok(u_video_info(v) == 0 && v[0] == 800 && v[1] == 600,
        "modo-base-2");
+    /* v2.6: el intermedio 1360x768 (multiplo de 8: el BGA recorta
+       1366 a 1360). Misma ida y vuelta que el 1080p. */
+    u_print("modo 1360x768...\n");
+    {
+        int rc = u_video_modo(1360, 768);
+        char nb[12];
+        int q = 0;
+        u_print("modo 1360x768 rc=");
+        u_itoa(rc, nb);
+        while (nb[q]) {
+            char c[2];
+            c[0] = nb[q++];
+            c[1] = 0;
+            u_print(c);
+        }
+        u_print("\n");
+        if (rc != 0) {
+            u_print("sin 1360x768 en este video (se omite)\n");
+            return;
+        }
+    }
+    for (i = 0; i < 4; i++) v[i] = 0;
+    ok(u_video_info(v) == 0 && v[0] == 1360 && v[1] == 768,
+       "modo-1360-ok");
+    u_destino(1);
+    u_limpiar(C_NEGRO);
+    u_pixel(1359, 767, C_BLANCO);
+    u_presentar(1352, 760, 8, 8);
+    ok(u_punto(1359, 767) == 0xFFFFFF, "modo-1360-px");
+    u_destino(0);
+    ok(u_video_modo(800, 600) == 0, "modo-vuelta-2");
+    for (i = 0; i < 4; i++) v[i] = 0;
+    ok(u_video_info(v) == 0 && v[0] == 800 && v[1] == 600,
+       "modo-base-3");
 }
 
 int main(void) {

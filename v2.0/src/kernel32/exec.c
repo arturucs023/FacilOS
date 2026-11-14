@@ -1254,7 +1254,7 @@ __attribute__((optimize("O0"))) static void sc_44(regs_t *r, int di)
 __attribute__((optimize("O0"))) static void sc_45(regs_t *r, int di)
  {
         /* video_cmos(op, val): byte de video en CMOS 0x40 (NVRAM).
-           op=0 leer -> devuelve el byte; op=1 escribir val (0-2) -> 0.
+           op=0 leer -> devuelve el byte; op=1 escribir val (0-5) -> 0.
            Sin esto no hay donde guardar el modo de video para el
            arranque (la ISO es de solo lectura y en frio no hay disco).
            Justificacion v2.1-p1: imprescindible para resolucion
@@ -1266,7 +1266,7 @@ __attribute__((optimize("O0"))) static void sc_45(regs_t *r, int di)
             r->eax = (uint32_t)inb(0x71);
             return;
         }
-        if (op == 1 && r->ecx <= 3) {
+        if (op == 1 && r->ecx <= 5) {
             outb(0x70, (uint8_t)(0x80 | 0x40));   /* F8: NMI inhibida */
             outb(0x71, (uint8_t)r->ecx);
             r->eax = 0;

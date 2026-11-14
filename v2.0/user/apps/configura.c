@@ -12,21 +12,26 @@ void __main(void) {
 static int fondo_act = 0;
 static int bot_antes = 0;
 static char msg[48];
+/* Cursor de teclado (-1 = sin mover aun; sigue al modo vigente). */
+static int ksel = -1;
 /* Geometria dibujada (la usa el clic; antes iba fija 80/240 y el dibujo
    real es 78/238: fallaba el borde). La fija dibuja(). */
 static int y_res0 = 78, y_btnfondo = 238;
 
-#define N_MODOS 4
+#define N_MODOS 6
 /* Orden del CMOS 0x40 (ver arranque): 0=800x600, 1=640x480,
-   2=1024x768, 3=1920x1080. */
-static const int modos_w[N_MODOS] = { 800, 640, 1024, 1920 };
-static const int modos_h[N_MODOS] = { 600, 480, 768, 1080 };
+   2=1024x768, 3=1920x1080, 4=1360x768, 5=1600x900. Anchos multiplo
+   de 8 (el BGA recorta: 1366 entraria como 1360). */
+static const int modos_w[N_MODOS] = { 800, 640, 1024, 1920, 1360, 1600 };
+static const int modos_h[N_MODOS] = { 600, 480, 768, 1080, 768, 900 };
 
 static const char *nombre_modo(int i) {
     if (i < 0 || i >= N_MODOS) return "?";
     if (i == 1) return "640x480";
     if (i == 2) return "1024x768";
     if (i == 3) return "1920x1080";
+    if (i == 4) return "1360x768";
+    if (i == 5) return "1600x900";
     return "800x600";
 }
 
@@ -98,6 +103,10 @@ static void dibuja(ug_win_t *v, int srv, int act, int pref) {
             char b[32];
             int j = 0, k = 0;
             const char *s = nombre_modo(i);
+            if (i == ksel) {
+                b[j++] = '>';
+                b[j++] = ' ';
+            }
             while (s[k]) b[j++] = s[k++];
             if (i == act) {
                 const char *s2 = "  [actual]";
@@ -110,7 +119,8 @@ static void dibuja(ug_win_t *v, int srv, int act, int pref) {
             }
             b[j] = 0;
             ug_texto(v, 12, y, b,
-                     i == pref ? C_VERDE_CLARO : C_BLANCO);
+                     i == pref ? C_VERDE_CLARO :
+                     i == ksel ? C_AMARILLO : C_BLANCO);
             y += 18;
         }
     }
@@ -177,6 +187,26 @@ static int lee_actual(void) {
     return modo_actual((int)v[0], (int)v[1]);
 }
 
+/* Aplica el modo i (raton o teclado): cambio en vivo + CMOS + aviso.
+   Devuelve 1 si rediseno (siempre: el mensaje pudo cambiar). */
+static void aplica_modo(int i, int *act, int *pref, int srv) {
+    int rc;
+    if (i < 0 || i >= N_MODOS) return;
+    rc = u_video_modo(modos_w[i], modos_h[i]);
+    if (rc == 0) {
+        *act = i;
+        *pref = i;
+        ksel = i;
+        sys_video_cmos(1, i);
+        envia_video(srv);
+        u_strcpy(msg, "aplicado");
+    } else if (rc == -2) {
+        u_strcpy(msg, "sin memoria");
+    } else {
+        u_strcpy(msg, "no soportado");
+    }
+}
+
 int main(void) {
     const char *a = u_args();
     ug_win_t v;
@@ -192,7 +222,7 @@ int main(void) {
     act = lee_actual();
     {
         int r = sys_video_cmos(0, 0);
-        if (r >= 0 && r <= 3) pref = r;
+        if (r >= 0 && r <= 5) pref = r;
         else pref = act;
     }
     msg[0] = 0;
@@ -212,18 +242,8 @@ int main(void) {
                 int yy = y_res0 + i * 18;
                 if (ug_dentro(lx, ly, 12, yy, 220, 18) &&
                     ug_clic(bot_antes, ev.rbot)) {
-                    int rc = u_video_modo(modos_w[i], modos_h[i]);
-                    if (rc == 0) {
-                        act = i;
-                        pref = i;
-                        sys_video_cmos(1, i);
-                        envia_video(srv);
-                        u_strcpy(msg, "aplicado");
-                    } else if (rc == -2) {
-                        u_strcpy(msg, "sin memoria");
-                    } else {
-                        u_strcpy(msg, "no soportado");
-                    }
+                    ksel = i;
+                    aplica_modo(i, &act, &pref, srv);
                     dibuja(&v, srv, act, pref);
                     break;
                 }
@@ -240,6 +260,22 @@ int main(void) {
                 }
             }
             bot_antes = ev.rbot;
+        } else if (t == UG_EV_TECLA) {
+            /* Teclado: arriba/abajo mueve el cursor, Enter aplica
+               (sin raton). */
+            int k = ev.tecla;
+            if (k == TEC_ARRIBA_U || k == TEC_ABAJO_U) {
+                if (ksel < 0) ksel = act;
+                else if (k == TEC_ARRIBA_U)
+                    ksel = ksel <= 0 ? N_MODOS - 1 : ksel - 1;
+                else
+                    ksel = (ksel + 1) % N_MODOS;
+                msg[0] = 0;
+                dibuja(&v, srv, act, pref);
+            } else if (k == 13 && ksel >= 0) {
+                aplica_modo(ksel, &act, &pref, srv);
+                dibuja(&v, srv, act, pref);
+            }
         } else if (t == UG_EV_DRAW) {
             act = lee_actual();
             dibuja(&v, srv, act, pref);

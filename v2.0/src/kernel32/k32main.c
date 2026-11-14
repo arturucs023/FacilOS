@@ -112,7 +112,7 @@ void kmain(void)
         uint8_t cv;
         outb(0x70, (uint8_t)(0x80 | 0x40));   /* F8: NMI inhibida */
         cv = inb(0x71);
-        if (cv > 3) {
+        if (cv > 5) {
             outb(0x70, (uint8_t)(0x80 | 0x40));   /* F8: NMI inhibida */
             outb(0x71, 0);
             kprintf("video: modo %u no soportado, restablecido 800x600\r\n",

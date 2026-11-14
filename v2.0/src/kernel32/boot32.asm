@@ -51,9 +51,13 @@ inicio:
 .e820_fin:
     mov [0x7001], bp
     ; VESA con modo persistente (v2.1-p1): CMOS 0x40 guarda 0=800x600
-    ; (defecto), 1=640x480, 2=1024x768 (lo escribe configura). Sin NVRAM
-    ; no hay donde guardar la preferencia (ISO de solo lectura, en frio
-    ; aun no hay disco). Si el modo Bochs falla, se enumeran los
+    ; (defecto), 1=640x480, 2=1024x768 (lo escribe configura). v2.6:
+    ; 3=1920x1080, 4=1360x768, 5=1600x900: el "and al,3" los trae a
+    ; VESA seguro (4->0, 5->1) y el nucleo (pantalla_arranque) sube
+    ; por BGA al pedido: sin VESA nativo no hay texto. Anchos
+    ; multiplo de 8 (el BGA recorta: 1366 entraria como 1360).
+    ; Sin NVRAM no hay donde guardar la preferencia (ISO de solo
+    ; lectura, en frio aun no hay disco). Si el modo Bochs falla, se enumeran los
     ; modos VBE (VBox/HW); si no hay 32bpp con LFB, texto 80x25.
     mov byte [0x7002], 0
     mov al, 0x40
