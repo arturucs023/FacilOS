@@ -389,6 +389,13 @@ static int video_bga_hay(void) {
     return id >= VIDEO_ID_MIN && id <= VIDEO_ID_MAX;
 }
 
+/* Lee el modo realmente activo en el adaptador. 1 si coincide. */
+static int video_bga_verifica(uint16_t w, uint16_t h) {
+    if (!video_bga_hay()) return 0;
+    return video_bga_lee(1) == w && video_bga_lee(2) == h &&
+           video_bga_lee(3) == 32;
+}
+
 static void video_bga_modo(uint16_t w, uint16_t h) {
     video_bga_pon(4, 0);   /* apaga para reprogramar sin parpadeo */
     video_bga_pon(1, w);
@@ -421,6 +428,14 @@ static void pantalla_arranque(void) {
     fl = cpu_eflags();
     cli();
     video_bga_modo(1920, 1080);
+    if (!video_bga_verifica(1920, 1080)) {
+        /* El adaptador no acepto el 1080p: se vuelve al valor
+           de fabrica y se sigue con el VESA del arranque. */
+        outb(0x70, 0x40);
+        outb(0x71, 0);
+        cpu_if_restaura(fl);
+        return;
+    }
     GW = 1920;
     GH = 1080;
     GP = (uint16_t)(1920 * 4);
@@ -433,12 +448,16 @@ static void pantalla_arranque(void) {
 int pantalla_modo(int w, int h) {
     unsigned i;
     uint32_t necesita, base, cap, fl;
+    uint16_t ow, oh, op;
     if (!lfb) return -1;
     for (i = 0; i < N_MODOS_VIDEO; i++)
         if (modos_video[i][0] == w && modos_video[i][1] == h) break;
     if (i >= N_MODOS_VIDEO) return -1;
     if (w == GW && h == GH) return 0;
     if (!video_bga_hay()) return -1;
+    ow = GW;
+    oh = GH;
+    op = GP;
     necesita = (uint32_t)w * (uint32_t)h * 4u;
     base = dorso ? dorso : DORSO_BASE;
     cap = dorso ? dorso_cap : 0x200000u;
@@ -455,6 +474,17 @@ int pantalla_modo(int w, int h) {
     fl = cpu_eflags();
     cli();
     video_bga_modo((uint16_t)w, (uint16_t)h);
+    if (!video_bga_verifica((uint16_t)w, (uint16_t)h)) {
+        /* El adaptador no lo acepto (p. ej. VBox sin ese modo):
+           se restaura el anterior y se informa sin mentir. */
+        video_bga_modo(ow, oh);
+        GW = ow;
+        GH = oh;
+        GP = op;
+        cpu_if_restaura(fl);
+        gfx_clear();
+        return -1;
+    }
     GW = (uint16_t)w;
     GH = (uint16_t)h;
     GP = (uint16_t)(w * 4);

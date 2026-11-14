@@ -389,6 +389,10 @@ static const cmd_t CMDS[] = {
       "Muestra el servidor DNS configurado.",
       "Indica el servidor (DHCP o manual) y la ausencia de cache.",
       "mostrar_dns", "mostrar_dns", 0, 0, 0, 0 },
+    { "mostrar_video", "sistema",
+      "Muestra el modo de video real.",
+      "Indica la resolucion, paso y profundidad que usa el adaptador.",
+      "mostrar_video", "mostrar_video", 0, 0, 0, 0 },
     { "salir", "sistema",
       "Cierra la terminal.",
       "Cierra esta ventana de terminal.",
@@ -1892,6 +1896,41 @@ static void op_memoria(const cmd_t *c) {
     u_itoa((int)m[4], nb);
     q = 0;
     while (nb[q] && t < 70) b[t++] = nb[q++];
+    b[t] = 0;
+    pon(b);
+}
+
+static void op_mostrar_video(const cmd_t *c) {
+    unsigned int v[4];
+    char b[64], nb[16];
+    int t = 0, q = 0, i;
+    (void)c;
+    for (i = 0; i < 4; i++) v[i] = 0;
+    if (u_video_info(v)) {
+        perr(24, "No se pudo leer el modo.");
+        return;
+    }
+    {
+        const char *s = "pantalla: ";
+        while (*s && t < 50) b[t++] = *s++;
+    }
+    u_itoa((int)v[0], nb);
+    while (nb[q] && t < 54) b[t++] = nb[q++];
+    b[t++] = 'x';
+    q = 0;
+    u_itoa((int)v[1], nb);
+    while (nb[q] && t < 58) b[t++] = nb[q++];
+    b[t++] = 'x';
+    q = 0;
+    u_itoa((int)v[3], nb);
+    while (nb[q] && t < 62) b[t++] = nb[q++];
+    {
+        const char *s = ", paso ";
+        while (*s && t < 70) b[t++] = *s++;
+    }
+    q = 0;
+    u_itoa((int)v[2], nb);
+    while (nb[q] && t < 80) b[t++] = nb[q++];
     b[t] = 0;
     pon(b);
 }
@@ -3992,6 +4031,8 @@ static void ejecuta_uno(ug_win_t *v, const char *ln) {
         op_netsurf(v, &CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_dns")) {
         op_mostrar_dns(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "mostrar_video")) {
+        op_mostrar_video(&CMDS[id]);
     } else if (!u_strcmp(cmd, "salir")) {
         ug_cierra(v);
     } else if (!u_strcmp(cmd, "procesos")) {

@@ -111,12 +111,53 @@ static void t_anim(void) {
     u_destino(0);
 }
 
+static void t_modo(void) {
+    unsigned int v[4];
+    int i;
+    u_print("modo 1920x1080...\n");
+    for (i = 0; i < 4; i++) v[i] = 0;
+    ok(u_video_info(v) == 0 && v[0] == 800 && v[1] == 600,
+       "modo-base-800");
+    {
+        int rc = u_video_modo(1920, 1080);
+        char nb[12];
+        int q = 0;
+        u_print("modo 1920x1080 rc=");
+        u_itoa(rc, nb);
+        while (nb[q]) {
+            char c[2];
+            c[0] = nb[q++];
+            c[1] = 0;
+            u_print(c);
+        }
+        u_print("\n");
+        if (rc != 0) {
+            u_print("sin 1080p en este video (se omite)\n");
+            return;
+        }
+    }
+    for (i = 0; i < 4; i++) v[i] = 0;
+    ok(u_video_info(v) == 0 && v[0] == 1920 && v[1] == 1080,
+       "modo-1080-ok");
+    u_destino(1);
+    u_limpiar(C_NEGRO);
+    u_pixel(1919, 1079, C_BLANCO);
+    u_presentar(1912, 1072, 8, 8);
+    ok(u_punto(1919, 1079) == 0xFFFFFF, "modo-1080-px");
+    u_destino(0);
+    ok(u_video_modo(800, 600) == 0, "modo-vuelta");
+    for (i = 0; i < 4; i++) v[i] = 0;
+    ok(u_video_info(v) == 0 && v[0] == 800 && v[1] == 600,
+       "modo-base-2");
+}
+
 int main(void) {
     u_print("t2_gfx v1.6\n");
     t_dorso();
     t_sprites();
     t_blit();
     t_anim();
+    t_modo();
     u_printf("t2: %d pruebas %d fallos\n", pruebas, fallos);
     return fallos > 99 ? 99 : fallos;
 }
