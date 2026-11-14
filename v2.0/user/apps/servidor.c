@@ -117,6 +117,10 @@ static void marca_dano(int x, int y, int w, int h) {
    (el ACK llega y se vuelve al instante); las lentas dejan de
    parpadear a cambio de una pausa acotada. */
 static int espera_paciencia[NVENT];
+/* Marca (u_ticks) del ultimo planton: si el ACK tardio se pierde
+   (buzon lleno), la ventana no queda congelada para siempre; pasado
+   el presupuesto se le reenvia el DRAW (ver frame). */
+static unsigned ack_desde[NVENT];
 static int win_dirty[NVENT];
 static int win_cromo[NVENT];
 
@@ -929,6 +933,7 @@ static void espera_ack_h(int idx, int tope) {
             if (vents[idx].usado && vents[idx].pid == pid) {
                 vents[idx].ack_pend = 1;
                 espera_paciencia[idx] = 1;
+                ack_desde[idx] = (unsigned)u_ticks();
 #if SRV_DBG
                 u_print("PEND ");
                 u_print_num(idx);
@@ -1171,7 +1176,18 @@ static void frame(void) {
         char nb[12];
         int j, neg, val;
         if (!v->usado || !v->visible || v->minimizada) continue;
-        if (v->ack_pend) continue;   /* congelada: nada (cromo intacto) */
+        /* Congelada por planton: se salta su DRAW... salvo que lleve
+           mas de 2 s pendiente y siga sucia (el ACK tardio se pudo
+           perder con el buzon lleno): entonces se reintenta una vez.
+           Sin esto, un solo ACK perdido = ventana muerta hasta la
+           proxima tecla/raton. */
+        if (v->ack_pend) {
+            if (win_dirty[ids[q]] &&
+                (unsigned)u_ticks() - ack_desde[ids[q]] > 200u)
+                v->ack_pend = 0;
+            else
+                continue;
+        }
         if (!win_dirty[ids[q]] && !win_cromo[ids[q]]) continue;
         asegura_propiedad();
         if (win_cromo[ids[q]]) {

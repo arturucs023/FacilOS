@@ -2527,6 +2527,34 @@ static void nv_pon_estado(const char *s) {
     }
     NV_estado[i] = 0;
 }
+/* Navegacion en dos fases (v2.6): el fetch bloquea segundos y sin
+   avisar la ventana parece congelada. Se guarda la peticion, se pinta
+   "cargando..." y la descarga corre en el siguiente DRAW. */
+static char NV_pend[NV_MAXURL + 1];
+static int NV_pend_empuja = 0, NV_hay_pend = 0, NV_pend_fase = 0;
+/* 1 en el bucle grafico (main); 0 en -p: sin bucle de eventos el
+   pendiente nunca se ejecutaria, asi que nv_pide navega en el acto. */
+static int NV_gui = 0;
+
+static void nv_pide(const char *f, int empuja) {
+    int i = 0;
+    if (!f || !f[0]) return;
+    if (!NV_gui) {
+        /* -p: sin bucle, en el acto (mismo efecto que antes). */
+        nv_navegar(f, empuja);
+        return;
+    }
+    while (f[i] && i < NV_MAXURL) {
+        NV_pend[i] = f[i];
+        i++;
+    }
+    NV_pend[i] = 0;
+    NV_pend_empuja = empuja ? 1 : 0;
+    NV_hay_pend = 1;
+    NV_pend_fase = 0;   /* fase 0: pintar "cargando..."; fase 1: descargar */
+    nv_pon_estado("cargando...");
+    ug_tick(&NV_v, 1);
+}
 
 /* Hito 4: historial con scroll por entrada */
 static void nv_hist_empuja(const char *f) {
@@ -2568,16 +2596,16 @@ static void nv_ir(const char *texto) {
     while (*s == ' ') s++;
     if (!*s) return;
     if (!u_strcmp(s, NV_BIENV_URL)) {
-        nv_navegar(s, 1);
+        nv_pide(s, 1);
         return;
     }
     if (nv_es_url(s)) {
-        nv_navegar(s, 1);
+        nv_pide(s, 1);
         return;
     }
     if (nv_es_busqueda(s)) {
         nv_busca_url(s, NV_tmpurl);
-        nv_navegar(NV_tmpurl, 1);
+        nv_pide(NV_tmpurl, 1);
         return;
     }
     {
@@ -2592,7 +2620,7 @@ static void nv_ir(const char *texto) {
             con_esquema[i++] = s[j++];
         }
         con_esquema[i] = 0;
-        nv_navegar(con_esquema, 1);
+        nv_pide(con_esquema, 1);
     }
 }
 
@@ -2724,7 +2752,7 @@ static void nv_hist_ir(int d) {
     if (j < 0 || j >= NV_nhist) return;
     NV_hscroll[NV_ihist] = NV_desplaza;
     NV_ihist = j;
-    nv_navegar(NV_hist[j], 0);
+    nv_pide(NV_hist[j], 0);
     NV_desplaza = NV_hscroll[j];
     if (NV_desplaza < 0) NV_desplaza = 0;
 }
@@ -3054,7 +3082,7 @@ static void nv_ev_tecla(int tecla) {
         nv_hist_ir(-1);
     } else if (tecla == 'r' || tecla == 'R') {
         if (NV_url[0])
-            nv_navegar(NV_url, 0);
+            nv_pide(NV_url, 0);
     } else if (tecla == 9) {
         /* Tab: siguiente enlace (al final, vuelve a la barra) */
         if (NV_tiene && NV_nenl > 0 && NV_foco_enl + 1 < NV_nenl) {
@@ -3069,7 +3097,7 @@ static void nv_ev_tecla(int tecla) {
         /* Intro: sigue el enlace con foco */
         if (NV_tiene && NV_foco_enl >= 0 &&
             NV_foco_enl < NV_nenl)
-            nv_navegar(NV_enl[NV_foco_enl].url, 1);
+            nv_pide(NV_enl[NV_foco_enl].url, 1);
         else if (!NV_tiene)
             NV_foco_barra = 1;
     } else if (tecla == 27) {
@@ -3103,7 +3131,7 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
         }
         if (lx >= 88 && lx < 124) {
             if (NV_url[0])
-                nv_navegar(NV_url, 0);
+                nv_pide(NV_url, 0);
             ug_tick(&NV_v, 1);
             return;
         }
@@ -3121,7 +3149,7 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
             return;
         }
         if (lx >= 168 && lx < 204) {
-            nv_navegar(NV_BIENV_URL, 1);
+            nv_pide(NV_BIENV_URL, 1);
             ug_tick(&NV_v, 1);
             return;
         }
@@ -3161,7 +3189,7 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
                     static char tmpq[NV_MAXURL + 1];
                     NV_qfoco = 0;
                     nv_busca_url(NV_qbuf, tmpq);
-                    nv_navegar(tmpq, 1);
+                    nv_pide(tmpq, 1);
                 }
                 ug_tick(&NV_v, 1);
                 return;
@@ -3192,7 +3220,7 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
             if (f >= 0 && f < NV_nfilas) {
                 idx = nv_enlace_en(f);
                 if (idx >= 0)
-                    nv_navegar(NV_enl[idx].url, 1);
+                    nv_pide(NV_enl[idx].url, 1);
             }
         }
     }
@@ -3231,6 +3259,7 @@ int main(void) {
     NV_qbuf[0] = 0;
     NV_qfoco = 0;
     NV_b_antes = 0;
+    NV_gui = 1;   /* a partir de aqui hay bucle de eventos */
     if (ug_abre(&NV_v, srv, NV_W, NV_H, "netsurf"))
         return 98;
     ug_edit(&NV_v, 1);
@@ -3273,14 +3302,38 @@ int main(void) {
                         ev.rueda);
         } else if (t == UG_EV_DRAW) {
             /* Hito 6: solo se pinta en DRAW del servidor; el
-               dibujo explicito no se compone. TICK pide el DRAW
-               que muestra la pagina tras la descarga. */
+               dibujo explicito no se compone. Navegacion en dos
+               fases: fase 0 pinta "cargando..." y su ACK lo lleva
+               a pantalla; fase 1 (siguiente DRAW) descarga ya con
+               el aviso visible. */
             nv_dibuja();
-            ug_tick(&NV_v, 0);
             if (NV_ini) {
+                /* Arranque con URL: por la cola pendiente (dos
+                   fases) para no bloquear el primer pintado. */
                 NV_ini = 0;
-                nv_ir(NV_bar);
+                nv_pide(NV_bar, 1);
+            }
+            if (NV_hay_pend && NV_pend_fase == 0) {
+                NV_pend_fase = 1;
                 ug_tick(&NV_v, 1);
+            } else {
+                ug_tick(&NV_v, 0);
+                if (NV_hay_pend) {
+                    /* Segunda fase: la descarga bloquea; ya se
+                       presento "cargando...". Al terminar se
+                       repinta de inmediato. */
+                    static char tmp[NV_MAXURL + 1];
+                    int i = 0, e = NV_pend_empuja;
+                    NV_hay_pend = 0;
+                    while (NV_pend[i] && i < NV_MAXURL) {
+                        tmp[i] = NV_pend[i];
+                        i++;
+                    }
+                    tmp[i] = 0;
+                    nv_navegar(tmp, e);
+                    nv_dibuja();
+                    ug_tick(&NV_v, 1);
+                }
             }
         }
     }
