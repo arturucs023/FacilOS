@@ -377,13 +377,8 @@ static void recarga(void) {
     }
     nn = 0;
     while (nn < NENT && u_dir_hijo(dir, n, &d) >= 0) {
-        /* Los programas del CD no se listan (solo archivos y
-           carpetas del FS; se lanzan desde la terminal). */
-        if (d.tipo == 3) {
-            n++;
-            if (n > 200) break;
-            continue;
-        }
+        /* v2.6: el nucleo ya agrupa el CD (Sistema/Red/Pruebas/Juegos);
+           aqui se muestra todo tal cual viene. */
         tipos[nn] = d.tipo;
         corta_utf8(nombres[nn], d.nombre, NNOM);
         tams[nn] = d.tam;

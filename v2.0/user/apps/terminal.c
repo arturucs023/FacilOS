@@ -293,6 +293,10 @@ static const cmd_t CMDS[] = {
       "Muestra la carpeta actual.",
       "Escribe la ruta de la carpeta donde estas.",
       "mostrar_ruta", "mostrar_ruta", 0, 0, 0, 0 },
+    { "arbol", "carpetas",
+      "Muestra el arbol de carpetas.",
+      "Dibuja la jerarquia desde una carpeta (la actual si no se dice).",
+      "arbol [ruta]", "arbol Documentos", 0, 1, 0, 0 },
     { "mostrar_contenido", "archivos",
       "Muestra el contenido de un archivo.",
       "Escribe el contenido del archivo indicado (texto).",
@@ -645,52 +649,64 @@ static void cmd_ayuda(const char *arg) {
         return;
     }
     pon("FACILOS32 - AYUDA GENERAL");
-    pon("Archivos:");
-    for (i = 0; i < NCMDS; i++) {
-        if (!u_strcmp(CMDS[i].categoria, "archivos")) {
-            char b[96];
-            int t = 0, q = 0;
-            b[t++] = ' ';
-            b[t++] = ' ';
-            while (CMDS[i].nombre[q] && t < 90) b[t++] = CMDS[i].nombre[q++];
-            b[t] = 0;
-            pon(b);
+    /* v2.5-ux: secciones por categoria en orden de registro
+       (vale para categorias futuras sin tocar este codigo). */
+    {
+        char cats[12][16];
+        int ncat = 0, ci;
+        for (i = 0; i < NCMDS && ncat < 12; i++) {
+            int j, hay = 0, k = 0;
+            while (CMDS[i].categoria[k] && k < 15) {
+                cats[ncat][k] = CMDS[i].categoria[k];
+                k++;
+            }
+            cats[ncat][k] = 0;
+            for (j = 0; j < ncat; j++) {
+                int m = 0, ig = 1;
+                while (cats[j][m] || cats[ncat][m]) {
+                    if (cats[j][m] != cats[ncat][m]) {
+                        ig = 0;
+                        break;
+                    }
+                    m++;
+                }
+                if (ig) {
+                    hay = 1;
+                    break;
+                }
+            }
+            if (!hay) ncat++;
         }
-    }
-    pon("Carpetas:");
-    for (i = 0; i < NCMDS; i++) {
-        if (!u_strcmp(CMDS[i].categoria, "carpetas")) {
+        for (ci = 0; ci < ncat; ci++) {
             char b[96];
-            int t = 0, q = 0;
-            b[t++] = ' ';
-            b[t++] = ' ';
-            while (CMDS[i].nombre[q] && t < 90) b[t++] = CMDS[i].nombre[q++];
-            b[t] = 0;
+            int e2 = 0, q = 0;
+            while (cats[ci][q] && e2 < 90) {
+                char ch = cats[ci][q];
+                if (!q && ch >= 'a' && ch <= 'z') ch -= 32;
+                b[e2++] = ch;
+                q++;
+            }
+            b[e2++] = ':';
+            b[e2] = 0;
             pon(b);
-        }
-    }
-    pon("Sistema:");
-    for (i = 0; i < NCMDS; i++) {
-        if (!u_strcmp(CMDS[i].categoria, "sistema")) {
-            char b[96];
-            int t = 0, q = 0;
-            b[t++] = ' ';
-            b[t++] = ' ';
-            while (CMDS[i].nombre[q] && t < 90) b[t++] = CMDS[i].nombre[q++];
-            b[t] = 0;
-            pon(b);
-        }
-    }
-    pon("Documentaci\xc3\xb3n:");
-    for (i = 0; i < NCMDS; i++) {
-        if (!u_strcmp(CMDS[i].categoria, "documentacion")) {
-            char b[96];
-            int t = 0, q = 0;
-            b[t++] = ' ';
-            b[t++] = ' ';
-            while (CMDS[i].nombre[q] && t < 90) b[t++] = CMDS[i].nombre[q++];
-            b[t] = 0;
-            pon(b);
+            for (i = 0; i < NCMDS; i++) {
+                if (!u_strcmp(CMDS[i].categoria, cats[ci])) {
+                    int t2 = 0, t3 = 0;
+                    b[t2++] = ' ';
+                    b[t2++] = ' ';
+                    while (CMDS[i].nombre[t3] && t2 < 60)
+                        b[t2++] = CMDS[i].nombre[t3++];
+                    {
+                        const char *sep = " - ";
+                        int s2 = 0, q2 = 0;
+                        while (sep[s2] && t2 < 60) b[t2++] = sep[s2++];
+                        while (CMDS[i].breve[q2] && t2 < 94)
+                            b[t2++] = CMDS[i].breve[q2++];
+                    }
+                    b[t2] = 0;
+                    pon(b);
+                }
+            }
         }
     }
     pon("Para saber mas: manual nombre_del_comando");
@@ -1232,6 +1248,79 @@ static void op_ruta(const cmd_t *c) {
         int q = 0;
         if (k) b[t++] = '/';
         while (pila[k][q] && t < 120) b[t++] = pila[k][q++];
+    }
+    b[t] = 0;
+    pon(b);
+}
+
+static void op_arbol_rec(int dir, int nivel, int *nd, int *nf) {
+    udir_t d;
+    int n = 0;
+    char b[96];
+    int k;
+    if (nivel > 8) return;
+    while (lista_hijo(dir, n, &d) >= 0) {
+        int t = 0, j;
+        if (n >= 200) break;
+        for (k = 0; k < nivel && t < 60; k++) {
+            b[t++] = ' ';
+            b[t++] = ' ';
+        }
+        if (d.tipo == 1) {
+            for (j = 0; d.nombre[j] && t < 90; j++)
+                b[t++] = d.nombre[j];
+            b[t++] = '/';
+            b[t] = 0;
+            pon(b);
+            (*nd)++;
+            op_arbol_rec(d.idx, nivel + 1, nd, nf);
+        } else {
+            for (j = 0; d.nombre[j] && t < 92; j++)
+                b[t++] = d.nombre[j];
+            b[t] = 0;
+            pon(b);
+            (*nf)++;
+        }
+        n++;
+    }
+}
+
+static void op_arbol(const cmd_t *c) {
+    int dir = cwd_idx, nd = 0, nf = 0;
+    char b[64], nb[12];
+    int t = 0, q = 0;
+    (void)c;
+    if (npos >= 1) {
+        char base[32];
+        int dd, t2 = 0, idx;
+        if (resuelve(pos_arg[0], &dd, base)) {
+            perr(14, "Ruta no valida.");
+            return;
+        }
+        if (!base[0]) {
+            dir = dd;
+        } else {
+            idx = busca_en(dd, base, &t2);
+            if (idx < 0 || t2 != 1) {
+                perr(20, "No existe esa carpeta.");
+                return;
+            }
+            dir = idx;
+        }
+    }
+    op_arbol_rec(dir, 0, &nd, &nf);
+    u_itoa(nd, nb);
+    while (nb[q] && t < 40) b[t++] = nb[q++];
+    {
+        const char *s = " carpetas, ";
+        while (*s && t < 60) b[t++] = *s++;
+    }
+    q = 0;
+    u_itoa(nf, nb);
+    while (nb[q] && t < 70) b[t++] = nb[q++];
+    {
+        const char *s = " archivos.";
+        while (*s && t < 84) b[t++] = *s++;
     }
     b[t] = 0;
     pon(b);
@@ -2255,7 +2344,7 @@ static void op_calendario(const cmd_t *c) {
         return;
     }
     mes = (int)v[1];
-    ano = (int)v[0];
+    ano = (int)v[0] < 100 ? (int)v[0] + 2000 : (int)v[0];
     if (mes < 1 || mes > 12) mes = 1;
     if (ano < 1900 || ano > 2100) ano = 2000;
     if (npos >= 1) {
@@ -3857,6 +3946,8 @@ static void ejecuta_uno(ug_win_t *v, const char *ln) {
         op_entrar(&CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_ruta")) {
         op_ruta(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "arbol")) {
+        op_arbol(&CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_contenido")) {
         op_ver(&CMDS[id]);
     } else if (!u_strcmp(cmd, "copiar_archivo")) {

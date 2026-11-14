@@ -250,18 +250,43 @@ static void cmd_ver(const char *args) {
                 cons_putc('\n');
             }
         }
-        /* v1.8: programas del catalogo de la ISO (solo lectura). */
+        /* v2.6: programas del catalogo agrupados como en el FS. */
         {
             extern int cdcat_cuantos(void);
             extern const char *cdcat_nombre(int);
             extern int cdcat_tam(int);
+            extern int cd_ngrupos(void);
+            extern const char *cd_grupo_nom(int);
+            extern int cd_grupo_de(const char *);
             int nc = dir == 0 ? cdcat_cuantos() : 0;
-            for (int k = 0; k < nc; k++) {
-                cons_puts(" <cd> ");
-                cons_puts(cdcat_nombre(k));
-                cons_puts(" (");
-                pon_numero((uint32_t)cdcat_tam(k));
-                cons_puts(")\n");
+            if (nc > 0) {
+                int g;
+                cons_puts("PROGRAMAS (CD):\n");
+                for (g = 0; g < cd_ngrupos(); g++) {
+                    const char *gn = cd_grupo_nom(g);
+                    int k, hay = 0;
+                    if (!gn) continue;
+                    for (k = 0; k < nc; k++) {
+                        const char *nm = cdcat_nombre(k);
+                        if (nm && cd_grupo_de(nm) == g) {
+                            hay = 1;
+                            break;
+                        }
+                    }
+                    if (!hay) continue;
+                    cons_puts(" [");
+                    cons_puts(gn);
+                    cons_puts("]\n");
+                    for (k = 0; k < nc; k++) {
+                        const char *nm = cdcat_nombre(k);
+                        if (!nm || cd_grupo_de(nm) != g) continue;
+                        cons_puts(" <cd> ");
+                        cons_puts(nm);
+                        cons_puts(" (");
+                        pon_numero((uint32_t)cdcat_tam(k));
+                        cons_puts(")\n");
+                    }
+                }
             }
         }
     }

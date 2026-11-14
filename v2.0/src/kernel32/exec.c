@@ -1013,8 +1013,67 @@ __attribute__((optimize("O0"))) static void sc_37(regs_t *r, int di)
     }
 
 
+/* v2.6-grupos: el CD se presenta por carpetas (SO normal). La raiz
+   lista FS + 4 grupos virtuales (tipo 1, idx VDIR_BASE+g); cada
+   grupo enumera sus programas (tipo 3). ejecutar sigue plano por
+   nombre (cdcat_buscar), sin cambios. */
+#define VDIR_BASE 0x1000
+#define VDIR_N 4
+static const char *vdir_nom[VDIR_N] = {
+    "Sistema", "Red", "Pruebas", "Juegos"
+};
+static const char *vd_sis[] = {
+    "hola", "editor32", "visor32", "paint32", "benchmark32",
+    "procesos32", "mem32", "servidor", "wdemo", "ugfx32",
+    "terminal", "explorador", "sysinfo", "editor", "f32",
+    "configura", "gbye", "planificador32", "contador32",
+    "dormir32", "aislamiento32", "aisla32", "disco32", "menu",
+    "calculadora", "reloj"
+};
+static const char *vd_red[] = {
+    "netsurf", "t_red", "dhcp", "dns", "http", "https"
+};
+static const char *vd_pru[] = {
+    "quema32", "equidad32", "sucio32", "ipc_hijo", "ipc32",
+    "estres_mem", "estres_ipc", "estres_mix", "t1_lib", "tutf8",
+    "t_cpp", "cppdemo", "t_tls", "t_f32", "t_ns", "t_fetch",
+    "t_fb", "t2_gfx"
+};
+static const char *vd_jue[] = {
+    "adivina", "demo16"
+};
+#define VDIM(a) ((int)(sizeof(a) / sizeof((a)[0])))
+static const char **vd_list[VDIR_N] = { vd_sis, vd_red, vd_pru, vd_jue };
+static int vd_n[VDIR_N] = { VDIM(vd_sis), VDIM(vd_red), VDIM(vd_pru), VDIM(vd_jue) };
+
+int cd_ngrupos(void) {
+    return VDIR_N;
+}
+
+const char *cd_grupo_nom(int g) {
+    if (g < 0 || g >= VDIR_N) return 0;
+    return vdir_nom[g];
+}
+
+/* grupo 0..3 de un programa del CD, o -1. */
+int cd_grupo_de(const char *nm) {
+    int g, i, k;
+    if (!nm || !nm[0]) return -1;
+    for (g = 0; g < VDIR_N; g++) {
+        for (i = 0; i < vd_n[g]; i++) {
+            const char *q = vd_list[g][i];
+            k = 0;
+            while (q[k] && q[k] == nm[k]) k++;
+            if (!q[k] && !nm[k]) return g;
+        }
+    }
+    return -1;
+}
+
 __attribute__((optimize("O0"))) static void sc_41(regs_t *r, int di)
  {   /* dir_hijo(dir, n, buf48) -> tipo (1 carp, 2 arch, 3 CD) o -1.
+        En raiz anade grupos virtuales (VDIR_BASE+g); dentro
+        de un grupo, sus programas. Resto intacto.
        dir<0 = actual. buf: u32 tipo, char nombre[33], u32 tam, i32 idx
        (idx fs o -1 si es CD). Itera como la shell (k=1..63); en raiz
        sigue el catalogo ISO. */
@@ -1026,6 +1085,38 @@ __attribute__((optimize("O0"))) static void sc_41(regs_t *r, int di)
         int cont = 0;
         r->eax = (uint32_t)-1;
         if (di >= 0 && !ptr_ok(di, r->edx, 48, 1)) return;
+        if (dir >= VDIR_BASE && dir < VDIR_BASE + VDIR_N) {
+            /* dentro de un grupo virtual: sus programas del CD */
+            int g = dir - VDIR_BASE;
+            extern int cdcat_cuantos(void);
+            extern const char *cdcat_nombre(int i);
+            extern int cdcat_tam(int i);
+            int nc = cdcat_cuantos();
+            for (int k = 0; k < nc; k++) {
+                const char *nm = cdcat_nombre(k);
+                uint32_t tm;
+                if (!nm || cd_grupo_de(nm) != g) continue;
+                if (cont != n) { cont++; continue; }
+                tm = (uint32_t)cdcat_tam(k);
+                d[0] = 3; d[1] = d[2] = d[3] = 0;
+                for (int j = 0; j < 33; j++)
+                    d[4 + j] = (j < 16 && nm[j]) ? (uint8_t)nm[j] : 0;
+                d[37] = d[38] = d[39] = 0;
+                d[40] = (uint8_t)tm; d[41] = (uint8_t)(tm >> 8);
+                d[42] = (uint8_t)(tm >> 16); d[43] = (uint8_t)(tm >> 24);
+                d[44] = d[45] = d[46] = 0xFF; d[47] = 0xFF;
+                if (di >= 0) {
+                    if (pag_escribe_usr((unsigned)di, r->edx, d, 48))
+                        return;
+                } else {
+                    for (int j = 0; j < 48; j++)
+                        ((uint8_t *)r->edx)[j] = d[j];
+                }
+                r->eax = 3;
+                return;
+            }
+            return;
+        }
         if (dir < 0) dir = fs_actual();
         if (dir < 0 || dir >= FS_N) return;
         if (vfs_actual->tipo(dir) != 1 && dir != 0) return;
@@ -1056,21 +1147,18 @@ __attribute__((optimize("O0"))) static void sc_41(regs_t *r, int di)
             return;
         }
         if (dir == 0) {
-            int nc = cdcat_cuantos();
-            for (int k = 0; k < nc; k++) {
-                const char *nm;
-                uint32_t tm;
+            /* grupos virtuales en lugar de 53 programas sueltos */
+            for (int g = 0; g < VDIR_N; g++) {
+                const char *nm = vdir_nom[g];
+                uint32_t vi = (uint32_t)(VDIR_BASE + g);
                 if (cont != n) { cont++; continue; }
-                nm = cdcat_nombre(k);
-                tm = (uint32_t)cdcat_tam(k);
-                if (!nm) { cont++; continue; }
-                d[0] = 3; d[1] = d[2] = d[3] = 0;
+                d[0] = 1; d[1] = d[2] = d[3] = 0;
                 for (int j = 0; j < 33; j++)
-                    d[4 + j] = (j < 16 && nm[j]) ? (uint8_t)nm[j] : 0;
+                    d[4 + j] = nm[j] ? (uint8_t)nm[j] : 0;
                 d[37] = d[38] = d[39] = 0;
-                d[40] = (uint8_t)tm; d[41] = (uint8_t)(tm >> 8);
-                d[42] = (uint8_t)(tm >> 16); d[43] = (uint8_t)(tm >> 24);
-                d[44] = d[45] = d[46] = 0xFF; d[47] = 0xFF;
+                d[40] = d[41] = d[42] = d[43] = 0;
+                d[44] = (uint8_t)vi; d[45] = (uint8_t)(vi >> 8);
+                d[46] = (uint8_t)(vi >> 16); d[47] = (uint8_t)(vi >> 24);
                 if (di >= 0) {
                     if (pag_escribe_usr((unsigned)di, r->edx, d, 48))
                         return;
@@ -1078,7 +1166,7 @@ __attribute__((optimize("O0"))) static void sc_41(regs_t *r, int di)
                     for (int j = 0; j < 48; j++)
                         ((uint8_t *)r->edx)[j] = d[j];
                 }
-                r->eax = 3;
+                r->eax = 1;
                 return;
             }
         }
