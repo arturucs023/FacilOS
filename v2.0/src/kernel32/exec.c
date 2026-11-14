@@ -1349,14 +1349,16 @@ __attribute__((optimize("O0"))) static void sc_49(regs_t *r, int di)
 
 __attribute__((optimize("O0"))) static void sc_50(regs_t *r, int di)
  {
-        /* v2.2-f32: apagar (boton FacilOS). Flush de disco y poweroff
-           ACPI de QEMU (0x604/0xB004); sin ACPI queda halt. */
+        /* v2.2-f32: apagar (boton FacilOS). Flush de disco y poweroff:
+           ACPI de QEMU (0x604/0xB004); PIIX3 de VirtualBox (PM1a_CNT
+           0x4004 con SLP_EN+S5); sin ACPI queda halt. */
         extern int blk_flush(void);
         (void)di;
         cons_puts("apagando...\n");
         blk_flush();
         outw(0x604, 0x2000);
         outw(0xB004, 0x2000);
+        outw(0x4004, 0x3C00);
         r->eax = 0;
         for (;;) { cli(); hlt(); }
 }

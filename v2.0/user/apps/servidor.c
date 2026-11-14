@@ -426,7 +426,7 @@ static void dibuja_menu(void) {
            4 editor -> iconos 1, 2, 43, 4, 3; 5 configura -> 5;
            6 apagar -> 41, 7 reiniciar -> 42. */
         int ic = (i == 2) ? 43 : (i == 3) ? 4 : (i == 4) ? 3 :
-                 (i == 6) ? 41 : (i == 7) ? 42 : i + 1;
+                 (i == 5) ? 5 : (i == 6) ? 41 : (i == 7) ? 42 : i + 1;
         if (i == menu_sel)
             u_rectangulo(2, yy, 220, 26, T_MENU_SEL);
         dibuja_icono(ic, 8, yy + 5);
