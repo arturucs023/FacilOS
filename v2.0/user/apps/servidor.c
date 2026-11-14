@@ -1702,6 +1702,13 @@ int main(void) {
                 /* VIDEO: la resolucion cambio en vivo (ver configura). */
                 pantalla_recarga();
                 frame();
+                /* Tras el cambio de modo, el anfitrion (VBox) puede
+                   quedarse con baldosas rancias si su detector de
+                   escrituras no vio el volcado unico; se reescribe
+                   el frente entero para forzarlo (una vez por
+                   cambio, sin coste sostenido). */
+                asegura_propiedad();
+                u_presentar(0, 0, PANT_W, PANT_H);
             } else if (r >= 3 && b[0] == 'A' && b[1] == 'C' &&
                        b[2] == 'K') {
                 /* ACK tardio: la app pinto tarde (ya sin auto-present:

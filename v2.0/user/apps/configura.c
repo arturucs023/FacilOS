@@ -3,19 +3,22 @@
 void __main(void) {
 }
 
-/* configura (video en vivo): panel con datos reales + ajustes que
- * aplican de verdad: fondo (IPC FONDO al servidor, persiste en
- * fondo.cfg) y resolucion (cambio inmediato sin reiniciar + CMOS 0x40
- * para persistir; el arranque la valida y cae a 800x600 si no
- * existe). Arg = pid del servidor. */
+/* configura (video en vivo): panel por secciones con datos reales
+ * y ajustes que aplican de verdad: pantalla (resolucion con cambio
+ * inmediato sin reiniciar + CMOS 0x40 para persistir; el arranque la
+ * valida y cae a 800x600 si no existe), sistema (reloj, memoria) y
+ * apariencia (fondo: IPC FONDO al servidor, persiste en fondo.cfg).
+ * Teclado (arriba/abajo + Enter, atajos 1-6) y raton. Arg = pid del
+ * servidor. */
 
 static int fondo_act = 0;
 static int bot_antes = 0;
 static char msg[48];
 /* Cursor de teclado (-1 = sin mover aun; sigue al modo vigente). */
 static int ksel = -1;
-/* Geometria dibujada (la usa el clic; antes iba fija 80/240 y el dibujo
-   real es 78/238: fallaba el borde). La fija dibuja(). */
+/* Geometria dibujada (la usan el clic y el teclado; la fija dibuja()
+   en cada repintado: antes iba fija 80/240 y el dibujo real es
+   78/238: fallaba el borde). */
 static int y_res0 = 78, y_btnfondo = 238;
 
 #define N_MODOS 6
@@ -67,14 +70,21 @@ static void envia_fondo(int srv) {
     u_ipc_enviar(srv, m, 8);
 }
 
+/* Una seccion: cabecera amarilla + subrayado, con aire. */
+static void seccion(ug_win_t *v, int *y, const char *t) {
+    ug_texto(v, 8, *y, t, C_AMARILLO);
+    ug_linea(v, 8, *y + 17, v->w - 8, *y + 17, C_GRIS_OSCURO);
+    *y += 24;
+}
+
 static void dibuja(ug_win_t *v, int srv, int act, int pref) {
     int y;
     unsigned int m[8], tj[6];
     ug_comienza(v);
     ug_limpia(v, T_VENT_FONDO);
     y = 6;
-    ug_texto(v, 8, y, "pantalla", C_AMARILLO);
-    y += 18;
+    /* ---- seccion pantalla ---- */
+    seccion(v, &y, "pantalla");
     {
         char b[40];
         int i = 0, k = 0;
@@ -93,8 +103,8 @@ static void dibuja(ug_win_t *v, int srv, int act, int pref) {
         y += 16;
     }
     ug_texto(v, 8, y, "XRGB 32bpp (cambio inmediato)", C_GRIS);
-    y += 20;
-    ug_texto(v, 8, y, "resolucion (cambio inmediato):", C_AMARILLO);
+    y += 18;
+    ug_texto(v, 8, y, "resolucion (teclas 1-6 o clic):", C_BLANCO);
     y += 18;
     y_res0 = y;
     {
@@ -103,6 +113,9 @@ static void dibuja(ug_win_t *v, int srv, int act, int pref) {
             char b[32];
             int j = 0, k = 0;
             const char *s = nombre_modo(i);
+            b[j++] = (char)('0' + i + 1);
+            b[j++] = '.';
+            b[j++] = ' ';
             if (i == ksel) {
                 b[j++] = '>';
                 b[j++] = ' ';
@@ -121,14 +134,16 @@ static void dibuja(ug_win_t *v, int srv, int act, int pref) {
             ug_texto(v, 12, y, b,
                      i == pref ? C_VERDE_CLARO :
                      i == ksel ? C_AMARILLO : C_BLANCO);
-            y += 18;
+            y += 17;
         }
     }
-    ug_texto(v, 8, y, "reloj CMOS", C_AMARILLO);
-    y += 18;
+    /* ---- seccion sistema ---- */
+    seccion(v, &y, "sistema");
     if (!u_reloj(tj)) {
-        char b[32];
+        char b[48];
         int i = 0, k;
+        const char *s = "reloj: ";
+        while (s[i]) { b[i] = s[i]; i++; }
         for (k = 0; k < 6; k++) {
             unsigned x = tj[k];
             if (k) b[i++] = k < 3 ? '/' : k == 3 ? ' ' : ':';
@@ -144,23 +159,23 @@ static void dibuja(ug_win_t *v, int srv, int act, int pref) {
         y += 16;
     }
     ug_texto(v, 8, y, "(cambio de hora: no soportado)", C_GRIS);
-    y += 20;
-    ug_texto(v, 8, y, "memoria", C_AMARILLO);
     y += 18;
     if (!u_info_memoria2(m)) {
-        char b[40];
+        char b[48];
         int i = 0, k = 0;
         char nb[12];
-        const char *s = "libres=";
+        const char *s = "memoria: libres=";
         while (s[k]) b[i++] = s[k++];
         u_itoa((int)m[0], nb);
         k = 0;
-        while (nb[k] && i < 34) b[i++] = nb[k++];
+        while (nb[k] && i < 42) b[i++] = nb[k++];
         b[i] = 0;
         ug_texto(v, 8, y, b, C_BLANCO);
         y += 16;
     }
-    ug_texto(v, 8, y, "fondo:", C_AMARILLO);
+    /* ---- seccion apariencia ---- */
+    seccion(v, &y, "apariencia");
+    ug_texto(v, 8, y, "fondo:", C_BLANCO);
     y += 18;
     y_btnfondo = y;
     ug_boton(v, 8, y, 220, 22, t_fondo_nombre(fondo_act),
@@ -237,10 +252,10 @@ int main(void) {
         if (t == UG_EV_RATON) {
             int lx = ev.rx - v.x, ly = ev.ry - (v.y + UG_CHROME);
             int i;
-            /* filas de resolucion (las fija dibuja en y_res0+i*18) */
+            /* filas de resolucion (las fija dibuja en y_res0+i*17) */
             for (i = 0; i < N_MODOS; i++) {
-                int yy = y_res0 + i * 18;
-                if (ug_dentro(lx, ly, 12, yy, 220, 18) &&
+                int yy = y_res0 + i * 17;
+                if (ug_dentro(lx, ly, 12, yy, 220, 17) &&
                     ug_clic(bot_antes, ev.rbot)) {
                     ksel = i;
                     aplica_modo(i, &act, &pref, srv);
@@ -273,6 +288,11 @@ int main(void) {
                 msg[0] = 0;
                 dibuja(&v, srv, act, pref);
             } else if (k == 13 && ksel >= 0) {
+                aplica_modo(ksel, &act, &pref, srv);
+                dibuja(&v, srv, act, pref);
+            } else if (k >= '1' && k <= '0' + N_MODOS) {
+                /* Atajo directo a cada modo (1-6). */
+                ksel = k - '1';
                 aplica_modo(ksel, &act, &pref, srv);
                 dibuja(&v, srv, act, pref);
             }
