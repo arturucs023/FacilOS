@@ -1274,7 +1274,8 @@ static int NV_sub = 0, NV_bgexp = 0, NV_al = 0, NV_b = 0;
 /* ultimo estilo calculado: decoracion, bg explicito, alineacion */
 static int NV_last_dec = 0, NV_last_bgexp = 0, NV_last_al = -1;
 static int NV_last_bold = 0, NV_last_fgset = 0;
-/* v2.9-flex: display del ultimo nodo (1 = flex en fila). */
+/* v2.9-flex/grid: display del ultimo nodo (1 = flex en fila,
+   2 = cuadricula). */
 static int NV_last_disp = 0;
 
 /* enlaces (Hito 4): filas [f0,f1] -> URL navegable.
@@ -1893,13 +1894,16 @@ static void nv_estilo_nodo(dom_node *n) {
             (fw >= CSS_FONT_WEIGHT_600 &&
              fw <= CSS_FONT_WEIGHT_900))
             NV_last_bold = 1;
-        /* v2.9-flex: display del nodo (flex = fila por reparto
-           medido; inline-flex igual; grid cae a bloque). */
+        /* v2.9-flex/grid: display del nodo (flex = fila por
+           reparto medido; grid = cuadricula alineada). */
         {
             uint8_t dp = css_computed_display(st, false);
             if (dp == CSS_DISPLAY_FLEX ||
                 dp == CSS_DISPLAY_INLINE_FLEX)
                 NV_last_disp = 1;
+            else if (dp == CSS_DISPLAY_GRID ||
+                dp == CSS_DISPLAY_INLINE_GRID)
+                NV_last_disp = 2;
         }
     }
     css_select_results_destroy(res);
@@ -2369,8 +2373,26 @@ static void nv_boton(dom_node *h) {
    controles, imagenes o bloques anidados van en bloque propio.
    Sin grow/shrink: cada item mide su contenido y el que no cabe
    abre otra fila (wrap siempre activo, aun sin flex-wrap). */
+/* v2.9-grid (primeros pasos): cuadricula con columnas alineadas.
+   N columnas por el item mas ancho; cada columna mide su maximo
+   (como tabla). Sin plantillas: auto-colocacion por filas. */
 #define NV_FLEX_HUECO 16
 #define NV_FLEX_MAXITEM 24
+
+/* 1 si el hijo cuenta como item (elemento visible). */
+static int nv_es_item(dom_node *c) {
+    dom_node_type t = (dom_node_type)0;
+    char nb[16];
+    int id;
+    if (dom_node_get_node_type(c, &t) != DOM_NO_ERR ||
+        t != DOM_ELEMENT_NODE)
+        return 0;
+    if (nv_nom_el(c, nb)) return 0;
+    id = nv_id_nom(nb);
+    return id != T_SCRIPT && id != T_STYLE &&
+        id != T_TITLE && id != T_HEAD &&
+        id != T_META && id != T_LINK;
+}
 
 static void nv_recorre(dom_node *n, int prof);
 
@@ -2554,9 +2576,9 @@ static void nv_flex_item(dom_node *it, int prof) {
     NV_bg = bg0;
 }
 
-/* 1 si h es contenedor flex tratable: con hijos elemento simples
-   y sin texto directo (el texto directo cae a flujo normal). */
-static int nv_es_flex_tratable(dom_node *h) {
+/* 1 si h es contenedor repartible (flex/grid): con hijos elemento
+   simples y sin texto directo (el texto directo cae a flujo). */
+static int nv_es_reparto_tratable(dom_node *h) {
     dom_node *c = 0;
     int n = 0;
     if (dom_node_get_first_child(h, &c) != DOM_NO_ERR || !c)
@@ -2745,6 +2767,116 @@ static void nv_flex(dom_node *h, int prof) {
     NV_wrap = lim0;
 }
 
+/* rellena la fila actual con espacios hasta el ancho col (division
+   entera hacia abajo: nunca rebasa; el sobrante queda de hueco). */
+static void nv_rellena_hasta(int col) {
+    int cur, need, ns;
+    int sp = ttf_avance(32, NV_PX);
+    if (sp < 1) sp = 1;
+    cur = nv_ancho_px();
+    need = col - cur;
+    ns = 0;
+    if (need > 0) ns = need / sp;
+    if (ns > 200) ns = 200;
+    while (ns-- > 0) nv_pon_byte(' ');
+}
+
+/* cuadricula con columnas alineadas: N por el item mas ancho,
+   cada columna mide su maximo (como tabla). Sin plantillas. */
+static void nv_grid(dom_node *h, int prof) {
+    int an[NV_FLEX_MAXITEM], n = 0, k = 0;
+    int maxw = 0, ncol = 1, i, lim0 = NV_wrap;
+    int cw[NV_FLEX_MAXITEM], off[NV_FLEX_MAXITEM + 1];
+    dom_node *c = 0;
+    /* pasada 1: anchos de hijos visibles */
+    if (dom_node_get_first_child(h, &c) != DOM_NO_ERR || !c)
+        return;
+    for (;;) {
+        if (nv_es_item(c) && n < NV_FLEX_MAXITEM)
+            an[n++] = nv_ancho_sub(c);
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(c, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(c);
+                break;
+            }
+            dom_node_unref(c);
+            c = s;
+        }
+    }
+    if (!n) {
+        NV_wrap = lim0;
+        return;
+    }
+    for (i = 0; i < n; i++)
+        if (an[i] > maxw) maxw = an[i];
+    if (maxw > NV_MAXW) {
+        /* gigante: cada item en bloque propio */
+        if (dom_node_get_first_child(h, &c) != DOM_NO_ERR || !c) {
+            NV_wrap = lim0;
+            return;
+        }
+        for (;;) {
+            if (nv_es_item(c)) {
+                nv_bloque();
+                NV_wrap = NV_MAXW;
+                nv_flex_item(c, prof);
+                nv_salto();
+            }
+            {
+                dom_node *s = 0;
+                if (dom_node_get_next_sibling(c, &s) !=
+                    DOM_NO_ERR || !s) {
+                    dom_node_unref(c);
+                    break;
+                }
+                dom_node_unref(c);
+                c = s;
+            }
+        }
+        NV_wrap = lim0;
+        return;
+    }
+    ncol = (NV_MAXW + NV_FLEX_HUECO) / (maxw + NV_FLEX_HUECO);
+    if (ncol < 1) ncol = 1;
+    if (ncol > n) ncol = n;
+    for (i = 0; i < ncol; i++) cw[i] = 0;
+    for (i = 0; i < n; i++)
+        if (an[i] > cw[i % ncol]) cw[i % ncol] = an[i];
+    off[0] = 0;
+    for (i = 0; i < ncol; i++)
+        off[i + 1] = off[i] + cw[i] + NV_FLEX_HUECO;
+    /* pasada 2: filas de ncol con columnas alineadas */
+    if (dom_node_get_first_child(h, &c) != DOM_NO_ERR || !c) {
+        NV_wrap = lim0;
+        return;
+    }
+    for (;;) {
+        if (nv_es_item(c) && k < n) {
+            int cj = k % ncol, w = an[k++];
+            if (cj == 0) nv_bloque();
+            NV_wrap = NV_MAXW;
+            nv_rellena_hasta(off[cj]);
+            NV_wrap = off[cj] + w;
+            if (NV_wrap < off[cj] + 1) NV_wrap = off[cj] + 1;
+            nv_flex_item(c, prof);
+            if (cj == ncol - 1 || k == n) nv_salto();
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(c, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(c);
+                break;
+            }
+            dom_node_unref(c);
+            c = s;
+        }
+    }
+    NV_wrap = lim0;
+}
+
 static void nv_recorre(dom_node *n, int prof) {
     dom_node *h = 0;
     if (!n || prof > 32) return;
@@ -2783,11 +2915,13 @@ static void nv_recorre(dom_node *n, int prof) {
                         int es_enl = 0, ienl = -1, ntxt0 = 0;
                         int es_sub = 0, es_bold = 0, es_h = 0;
                         int es_form = 0, es_salta = 0;
-                        int es_flex = 0, es_flex_hecho = 0;
+                        int es_flex = 0, es_grid = 0;
+                        int es_reparto_hecho = 0;
                         nv_estilo_nodo(h);
                         ebg = NV_last_bgexp;
                         eal = NV_last_al;
                         if (NV_last_disp == 1) es_flex = 1;
+                        else if (NV_last_disp == 2) es_grid = 1;
                         if (NV_last_bold) {
                             es_bold = 1;
                             NV_b++;
@@ -2890,14 +3024,23 @@ static void nv_recorre(dom_node *n, int prof) {
                             }
                         }
                         if (es_flex && es_bloque &&
-                            nv_es_flex_tratable(h)) {
+                            nv_es_reparto_tratable(h)) {
                             /* v2.9-flex: items en fila medida */
                             if ((id == T_H1 || id == T_H2) &&
                                 !NV_last_fgset)
                                 NV_fg = NS_TITULO;
                             nv_flex(h, prof);
                             es_salta = 1;
-                            es_flex_hecho = 1;
+                            es_reparto_hecho = 1;
+                        } else if (es_grid && es_bloque &&
+                            nv_es_reparto_tratable(h)) {
+                            /* v2.9-grid: cuadricula alineada */
+                            if ((id == T_H1 || id == T_H2) &&
+                                !NV_last_fgset)
+                                NV_fg = NS_TITULO;
+                            nv_grid(h, prof);
+                            es_salta = 1;
+                            es_reparto_hecho = 1;
                         } else if (id == T_LI) {
                             nv_bloque();
                             nv_pon_texto(
@@ -2939,7 +3082,7 @@ static void nv_recorre(dom_node *n, int prof) {
                            interiores ya quedaron asignados) */
                         if (es_form && NV_npila_form > 0)
                             NV_npila_form--;
-                        if (es_bloque && !es_flex_hecho)
+                        if (es_bloque && !es_reparto_hecho)
                             nv_salto();
                         if (es_sub)
                             NV_sub--;
@@ -3635,6 +3778,24 @@ static int nv_modo_p(const char *resto) {
             }
             nv_ok(fa >= 0 && fa == fb, "flex-fila-red");
         }
+        /* v2.9-grid: cuadricula por red (pagina /grid) */
+        nv_ok(nv_pagina("http://10.0.2.2:18080/grid") == 0,
+              "grid-carga");
+        {
+            int f, k, fa = -1, fb = -1;
+            for (f = 0; f < NV_nfilas; f++) {
+                int m = NV_filas[f].len;
+                for (k = 0; k + 5 <= m; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "Cuatro", 5))
+                        fa = f;
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "Bloque", 6))
+                        fb = f;
+                }
+            }
+            nv_ok(fa >= 0 && fb >= 0 && fa != fb, "grid-fila-red");
+        }
         /* Hito 5: imagenes BMP + GIF (pagina /img-bmp) */
         nv_navegar("http://10.0.2.2:18080/img-bmp", 1);
         nv_ok(NV_tiene, "img-carga");
@@ -3793,6 +3954,76 @@ static int nv_modo_p(const char *resto) {
                        (int)sizeof(m1) - 1);
             nv_css_fin();
             nv_ok(NV_nfilas >= 3, "flex-salto");
+        }
+        /* v2.9-grid: items estrechos comparten fila alineada */
+        {
+            static const char m1[] =
+                "<html><head><style>.g{display:grid}</style>"
+                "</head><body><div class=\"g\"><div>Uno</div>"
+                "<div>Dos</div></div></body></html>";
+            int f, k, fa = -1, fb = -1;
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            for (f = 0; f < NV_nfilas; f++) {
+                for (k = 0; k + 3 <= NV_filas[f].len; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "Uno", 3))
+                        fa = f;
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "Dos", 3))
+                        fb = f;
+                }
+            }
+            nv_ok(fa >= 0 && fa == fb, "grid-fila");
+        }
+        /* v2.9-grid: la columna la marca el mas ancho (el flex
+           empaquetaria; la cuadricula apila). 38 As: flex los
+           junta, grid los separa. */
+        {
+            static const char m1[] =
+                "<html><head><style>.g{display:grid}</style>"
+                "</head><body><div class=\"g\"><div>"
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                "</div><div>B</div></div></body></html>";
+            static const char m2[] =
+                "<html><head><style>.g{display:flex}</style>"
+                "</head><body><div class=\"g\"><div>"
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                "</div><div>B</div></div></body></html>";
+            int f, k, fa = -1, fb = -1, fc = -1, fd = -1;
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            for (f = 0; f < NV_nfilas; f++) {
+                for (k = 0; k + 1 <= NV_filas[f].len; k++) {
+                    if (NV_txt[NV_filas[f].ini + k] == 'B')
+                        fb = f;
+                }
+                for (k = 0; k + 5 <= NV_filas[f].len; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k,
+                                  "AAAAA", 5))
+                        fa = f;
+                }
+            }
+            nv_procesa((const unsigned char *)m2,
+                       (int)sizeof(m2) - 1);
+            nv_css_fin();
+            for (f = 0; f < NV_nfilas; f++) {
+                for (k = 0; k + 1 <= NV_filas[f].len; k++) {
+                    if (NV_txt[NV_filas[f].ini + k] == 'B')
+                        fd = f;
+                }
+                for (k = 0; k + 5 <= NV_filas[f].len; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k,
+                                  "AAAAA", 5))
+                        fc = f;
+                }
+            }
+            nv_ok(fa >= 0 && fb >= 0 && fa != fb, "grid-columna");
+            nv_ok(fc >= 0 && fc == fd, "flex-ancho");
         }
         u_print("netsurf: ");
         nv_num(NV_pruebas);

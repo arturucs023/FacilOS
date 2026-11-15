@@ -49,6 +49,7 @@ Rutas:
                          reset + envio) para la fase 2.
   /eco-get             : devuelve la consulta ("visto: ?...").
   /flex                : fila display:flex (Uno + Dos) + bloque.
+  /grid                : cuadricula display:grid + bloque.
   redirecciones (sin version: el codigo 301/302 nunca se probo):
   /redir               : 302 a /redir2 (cadena de 2 saltos).
   /redir2              : 302 a /pagina + Set-Cookie ruta=redir.
@@ -537,6 +538,17 @@ def atiende(cn):
                     "<style>.f{display:flex}</style></head><body>"
                     "<div class=\"f\"><div>Uno</div>"
                     "<div>Dos</div></div>"
+                    "<div>Bloque</div></body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/html"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/grid":
+            body = ("<html><head><title>Rejilla</title>"
+                    "<style>.g{display:grid}</style></head><body>"
+                    "<div class=\"g\"><div>Uno</div>"
+                    "<div>Dos</div><div>Tres</div>"
+                    "<div>Cuatro</div></div>"
                     "<div>Bloque</div></body></html>").encode("latin1")
             cn.sendall(resp(200, "OK",
                          [("Content-Type", "text/html"),
