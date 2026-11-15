@@ -309,6 +309,11 @@ static const cmd_t CMDS[] = {
       "Escribe el contenido del archivo indicado (texto).",
       "mostrar_contenido \"nombre\"", "mostrar_contenido \"notas.txt\"",
       1, 1, 0, 0 },
+    { "editar_archivo", "archivos",
+      "Edita un archivo en el editor.",
+      "Abre el archivo en el editor grafico (ventana propia). Si no existe, lo crea.",
+      "editar_archivo \"nombre\"", "editar_archivo \"notas.txt\"",
+      1, 1, 0, 0 },
     { "copiar_archivo", "archivos",
       "Copia un archivo.",
       "Copia el origen al destino. Si el destino es una carpeta, conserva el nombre.",
@@ -473,6 +478,7 @@ static int pop_construye(void);
 static void pop_abre_uno(void);
 static void pop_aplica(void);
 static void op_ruta(const cmd_t *c);
+static void op_editar(ug_win_t *v, const cmd_t *c);
 static void adopta_dir(int dir);
 static void ruta_actual(char *b, int max);
 static void pon_ip(const char *tit, unsigned int v);
@@ -1301,6 +1307,35 @@ static void op_entrar(const cmd_t *c) {
         }
         cwd_idx = idx;
     }
+}
+
+/* editar_archivo: abre el editor grafico con la ruta absoluta.
+   Sin modal (ventana propia, como desde el explorador); bloquea
+   hasta cerrar el editor. Si no existe, el editor lo crea. */
+static void op_editar(ug_win_t *v, const cmd_t *c) {
+    char ruta[128], args[160], nb[12];
+    int t = 0, q = 0, rc;
+    (void)c;
+    if (npos < 1) {
+        perr(10, "Falta indicar el archivo.");
+        return;
+    }
+    if (npos > 1) {
+        perr(10, "Uso: editar_archivo \"nombre\".");
+        return;
+    }
+    a_absoluta(pos_arg[0], ruta);
+    u_itoa(v->srv, nb);
+    while (nb[q] && t < 150) args[t++] = nb[q++];
+    args[t++] = ' ';
+    q = 0;
+    while (ruta[q] && t < 158) args[t++] = ruta[q++];
+    args[t] = 0;
+    rc = u_ejecutar("editor", args);
+    if (rc == -100 || rc == -101)
+        perr(33, "Sin editor en disco.");
+    else
+        pon("Editor cerrado.");
 }
 
 static void op_ruta(const cmd_t *c) {
@@ -4152,6 +4187,8 @@ static void ejecuta_uno(ug_win_t *v, const char *ln) {
         op_arbol(&CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_contenido")) {
         op_ver(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "editar_archivo")) {
+        op_editar(v, &CMDS[id]);
     } else if (!u_strcmp(cmd, "copiar_archivo")) {
         op_copiar(&CMDS[id]);
     } else if (!u_strcmp(cmd, "mover_archivo")) {
