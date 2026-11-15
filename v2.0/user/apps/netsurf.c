@@ -1266,12 +1266,20 @@ typedef struct {
     int form;                   /* indice en NV_forms o -1 */
     char nombre[64];
     int tipo;                   /* 0 texto, 1 clave, 2 oculto,
-                                   3 enviar, 4 caja */
+                                   3 enviar, 4 caja, 5 area,
+                                   6 lista, 7 radio, 8 reponer,
+                                   9 nada (boton inerte) */
     char valor[NV_CAMPO_TAM + 1];
-    int pos;                    /* cursor en valor */
+    int pos;                    /* cursor en valor (o seleccion) */
     int marca;                  /* caja marcada */
     int fila, col;              /* caja en el texto */
     int ancho;                  /* ancho caja en celdas */
+    int alto;                   /* filas que ocupa (area) */
+    char ini[NV_CAMPO_TAM + 1]; /* valor inicial (reset) */
+    int mini;                   /* marca inicial */
+    int pini;                   /* pos/seleccion inicial */
+    char ops[6][32];            /* opciones de la lista */
+    int nopc;                   /* opciones */
 } nv_campo_t;
 static nv_form_t NV_forms[NV_MAXFORM];
 static int NV_nforms = 0;
@@ -1440,7 +1448,8 @@ static int nv_resuelve(const char *ref, char *sal) {
 
 /* Hito 4: indice del enlace que cubre la fila f, o -1.
    Del ultimo al primero: el mas interno gana. */
-static int nv_campo_xy(int ci, int *xo, int *yo);
+static int nv_campo_xy(int ci, int f, int *xo, int *yo);
+static int nv_campo_en(int f, int col);
 static int nv_enlace_en(int f) {
     int i;
     for (i = NV_nenl - 1; i >= 0; i--) {
@@ -1455,9 +1464,11 @@ static int nv_enlace_en(int f) {
 static int nv_campo_en(int f, int col) {
     int i;
     for (i = NV_ncampos - 1; i >= 0; i--) {
-        if (NV_campos[i].tipo != 2 && NV_campos[i].fila == f) {
+        if (NV_campos[i].tipo != 2 &&
+            f >= NV_campos[i].fila &&
+            f < NV_campos[i].fila + NV_campos[i].alto) {
             int bx, by;
-            if (!nv_campo_xy(i, &bx, &by)) {
+            if (!nv_campo_xy(i, f, &bx, &by)) {
                 int x0 = (bx - 4) / UG_FW;
                 if (col >= x0 &&
                     col < x0 + NV_campos[i].ancho)
@@ -1815,14 +1826,122 @@ static void nv_estilo_nodo(dom_node *n) {
     }
 }
 
+/* v2.7-fase2: junta el texto de los hijos (textarea, option).
+   pre=1 respeta saltos (textarea); pre=0 colapsa blancos. */
+static void nv_texto_hijo_n(dom_node *n, char *sal, int max, int pre,
+                            int prof) {
+    dom_node *h = 0;
+    int t = 0, pend = 0, prim = 1;
+    if (!n || !sal || max < 1 || prof > 4) return;
+    sal[0] = 0;
+    if (dom_node_get_first_child(n, &h) != DOM_NO_ERR || !h)
+        return;
+    for (;;) {
+        dom_node_type tt = (dom_node_type)0;
+        if (dom_node_get_node_type(h, &tt) == DOM_NO_ERR) {
+            if (tt == DOM_TEXT_NODE) {
+                dom_string *ds = 0;
+                if (dom_characterdata_get_data(
+                        (dom_characterdata *)h,
+                        &ds) == DOM_NO_ERR && ds) {
+                    const uint8_t *p = dom_string_data(ds);
+                    uint32_t m = dom_string_length(ds);
+                    uint32_t i;
+                    for (i = 0; i < m && t + 1 < max; i++) {
+                        unsigned char c = p[i];
+                        if (c == '\r') continue;
+                        if (pre) {
+                            if (c == '\t') c = ' ';
+                            sal[t++] = (char)c;
+                            continue;
+                        }
+                        if (c == '\n' || c == '\t' || c == ' ')
+                            pend = 1;
+                        else {
+                            if (pend && !prim) {
+                                if (t + 1 >= max) break;
+                                sal[t++] = ' ';
+                            }
+                            pend = 0;
+                            prim = 0;
+                            sal[t++] = (char)c;
+                        }
+                    }
+                    dom_string_unref(ds);
+                }
+            } else if (tt == DOM_ELEMENT_NODE && pre) {
+                /* textarea con hijos con marca: se aplana */
+                char sub[NV_CAMPO_TAM + 1];
+                nv_texto_hijo_n(h, sub, (int)sizeof(sub), 1,
+                                prof + 1);
+                {
+                    int q = 0;
+                    while (sub[q] && t + 1 < max)
+                        sal[t++] = sub[q++];
+                }
+            }
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(h, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(h);
+                break;
+            }
+            dom_node_unref(h);
+            h = s;
+        }
+    }
+    sal[t] = 0;
+}
+
+static void nv_texto_hijo(dom_node *n, char *sal, int max, int pre) {
+    nv_texto_hijo_n(n, sal, max, pre, 0);
+}
+
 /* formularios (v2.7): registra un <input> y pinta su caja en
    linea ([____], [Enviar], [X]). Tipos: texto, password, hidden,
    submit, checkbox (+button/image como texto/enviar). Sin nombre no
    viaja (salvo el boton que lo activa, si lo tiene). */
+/* Registra el campo base (form, nombre, valor, marca) y devuelve
+   su indice o -1 si no cabe. Guarda el valor inicial (reset). */
+static int nv_campo_nuevo(int tp, const char *nombre,
+                          const char *valor, int marca) {
+    int ci, q;
+    if (NV_ncampos >= NV_MAXCAMP) return -1;
+    ci = NV_ncampos++;
+    NV_campos[ci].form = NV_npila_form > 0 ?
+        NV_pila_form[NV_npila_form - 1] : -1;
+    NV_campos[ci].tipo = tp;
+    q = 0;
+    while (nombre[q] && q < 63) {
+        NV_campos[ci].nombre[q] = nombre[q];
+        q++;
+    }
+    NV_campos[ci].nombre[q] = 0;
+    q = 0;
+    while (valor[q] && q < NV_CAMPO_TAM) {
+        NV_campos[ci].valor[q] = valor[q];
+        NV_campos[ci].ini[q] = valor[q];
+        q++;
+    }
+    NV_campos[ci].valor[q] = 0;
+    NV_campos[ci].ini[q] = 0;
+    NV_campos[ci].pos = q;
+    NV_campos[ci].pini = q;
+    NV_campos[ci].marca = marca ? 1 : 0;
+    NV_campos[ci].mini = marca ? 1 : 0;
+    NV_campos[ci].fila = -1;
+    NV_campos[ci].col = 0;
+    NV_campos[ci].ancho = 0;
+    NV_campos[ci].alto = 1;
+    NV_campos[ci].nopc = 0;
+    return ci;
+}
+
 static void nv_campo(dom_node *h) {
     char tipo[16], nombre[64], valor[NV_CAMPO_TAM + 1], aux[16];
-    int tp = 0, i, q, ci, col, est;
-    if (NV_ncampos >= NV_MAXCAMP) return;
+    int tp = 0, i, ci, col, est;
     if (nv_atributo(h, "type", tipo, (int)sizeof(tipo)))
         tipo[0] = 0;
     for (i = 0; tipo[i]; i++)
@@ -1832,42 +1951,39 @@ static void nv_campo(dom_node *h) {
     else if (!u_strcmp(tipo, "hidden")) tp = 2;
     else if (!u_strcmp(tipo, "submit")) tp = 3;
     else if (!u_strcmp(tipo, "checkbox")) tp = 4;
-    else if (!u_strcmp(tipo, "button")) tp = 3;
+    else if (!u_strcmp(tipo, "radio")) tp = 7;
+    else if (!u_strcmp(tipo, "reset")) tp = 8;
+    else if (!u_strcmp(tipo, "button")) tp = 9;
     else if (!u_strcmp(tipo, "image")) tp = 3;
     if (nv_atributo(h, "name", nombre, (int)sizeof(nombre)))
         nombre[0] = 0;
     if (nv_atributo(h, "value", valor, (int)sizeof(valor)))
         valor[0] = 0;
-    ci = NV_ncampos++;
-    NV_campos[ci].form = NV_npila_form > 0 ?
-        NV_pila_form[NV_npila_form - 1] : -1;
-    q = 0;
-    while (nombre[q] && q < 63) {
-        NV_campos[ci].nombre[q] = nombre[q];
-        q++;
+    ci = nv_campo_nuevo(tp, nombre, valor,
+                        !nv_atributo(h, "checked", aux,
+                                    (int)sizeof(aux)));
+    if (ci < 0) return;
+    if (tp == 7 && NV_campos[ci].marca) {
+        /* radio marcado: desmarca al resto del grupo */
+        int k;
+        for (k = 0; k < NV_ncampos - 1; k++) {
+            if (NV_campos[k].tipo == 7 &&
+                NV_campos[k].form == NV_campos[ci].form &&
+                !u_strcmp(NV_campos[k].nombre,
+                          NV_campos[ci].nombre))
+                NV_campos[k].marca = 0;
+        }
     }
-    NV_campos[ci].nombre[q] = 0;
-    NV_campos[ci].tipo = tp;
-    q = 0;
-    while (valor[q] && q < NV_CAMPO_TAM) {
-        NV_campos[ci].valor[q] = valor[q];
-        q++;
-    }
-    NV_campos[ci].valor[q] = 0;
-    NV_campos[ci].pos = q;
-    NV_campos[ci].marca =
-        !nv_atributo(h, "checked", aux, (int)sizeof(aux));
-    if (tp == 2) {
-        NV_campos[ci].fila = -1;
-        NV_campos[ci].col = 0;
-        NV_campos[ci].ancho = 0;
-        return;   /* oculto: viaja pero no se pinta */
-    }
-    /* estima el ancho para no partir la caja entre filas */
+    if (tp == 2) return;   /* oculto: viaja pero no se pinta */
     if (tp == 4)
         est = 3;
-    else if (tp == 3)
+    else if (tp == 7)
+        est = 3;
+    else if (tp == 3 || tp == 8 || tp == 9) {
+        int q = 0;
+        while (NV_campos[ci].valor[q]) q++;
         est = 4 + (NV_campos[ci].valor[0] ? q : 6);
+    }
     else
         est = NV_CAMPO_ANCHO + 2;
     if (NV_cols - nv_ancho_linea() < est + 1)
@@ -1881,9 +1997,16 @@ static void nv_campo(dom_node *h) {
         NV_campos[ci].ancho = 3;
         return;
     }
-    if (tp == 3) {
+    if (tp == 7) {
+        nv_pon_texto((const unsigned char *)
+                     (NV_campos[ci].marca ? "(o)" : "( )"), 3, 1);
+        NV_campos[ci].ancho = 3;
+        return;
+    }
+    if (tp == 3 || tp == 8 || tp == 9) {
         const char *et = NV_campos[ci].valor[0] ?
-            NV_campos[ci].valor : "Enviar";
+            NV_campos[ci].valor :
+            (tp == 8 ? "Restablecer" : "Enviar");
         char b[64];
         int j = 0, k = 0;
         b[j++] = '[';
@@ -1909,6 +2032,192 @@ static void nv_campo(dom_node *h) {
             b[j++] = ' ';
             k++;
         }
+        b[j++] = ']';
+        nv_pon_texto((const unsigned char *)b, j, 1);
+        NV_campos[ci].ancho = j;
+    }
+}
+
+/* v2.7-fase2: <textarea>: bloque propio de alto filas, edicion
+   multilinea. Valor inicial = texto interior (sin el primer salto
+   de linea, como el HTML). */
+static void nv_area(dom_node *h) {
+    char nombre[64], valor[NV_CAMPO_TAM + 1];
+    char filas[16], cols[16];
+    int ci, f, r, vw, alto, n = 0;
+    if (nv_atributo(h, "name", nombre, (int)sizeof(nombre)))
+        nombre[0] = 0;
+    nv_texto_hijo(h, valor, (int)sizeof(valor), 1);
+    if (valor[0] == '\n') {
+        while (valor[n]) {
+            valor[n] = valor[n + 1];
+            n++;
+        }
+    }
+    alto = 3;
+    if (!nv_atributo(h, "rows", filas, (int)sizeof(filas))) {
+        alto = u_atoi(filas);
+        if (alto < 1) alto = 1;
+        if (alto > 6) alto = 6;
+    }
+    vw = NV_CAMPO_ANCHO;
+    if (!nv_atributo(h, "cols", cols, (int)sizeof(cols))) {
+        vw = u_atoi(cols);
+        if (vw < 8) vw = 8;
+        if (vw > 40) vw = 40;
+    }
+    ci = nv_campo_nuevo(5, nombre, valor, 0);
+    if (ci < 0) return;
+    NV_campos[ci].alto = alto;
+    NV_campos[ci].ancho = vw + 2;
+    nv_salto();
+    f = NV_nfilas;
+    NV_campos[ci].fila = f;
+    NV_campos[ci].col = NV_ntxt - NV_filas[f].ini;
+    for (r = 0; r < alto; r++) {
+        int j = 0, k = 0;
+        char b[44];
+        b[j++] = '[';
+        while (k < vw) {
+            b[j++] = ' ';
+            k++;
+        }
+        b[j++] = ']';
+        nv_pon_texto((const unsigned char *)b, j, 1);
+        nv_salto();
+    }
+}
+
+/* v2.7-fase2: <select>: cerrado, se cicla con arriba/abajo.
+   Recoge las <option> hijas (valor o texto, selected). */
+static void nv_lista(dom_node *h) {
+    char nombre[64];
+    char ops[6][32];
+    int ci, no = 0, sel = 0, hay = 0, maxlen = 0;
+    dom_node *c = 0;
+    if (nv_atributo(h, "name", nombre, (int)sizeof(nombre)))
+        nombre[0] = 0;
+    if (dom_node_get_first_child(h, &c) == DOM_NO_ERR && c) {
+        for (;;) {
+            dom_node_type tt = (dom_node_type)0;
+            if (dom_node_get_node_type(c, &tt) == DOM_NO_ERR &&
+                tt == DOM_ELEMENT_NODE) {
+                char nb[16];
+                if (!nv_nom_el(c, nb) &&
+                    nv_id_nom(nb) == T_OPTION && no < 6) {
+                    char val[64], aux[16], txt[64];
+                    int has = 0;
+                    if (!nv_atributo(c, "value", val,
+                                     (int)sizeof(val)))
+                        has = 1;
+                    nv_texto_hijo(c, txt, (int)sizeof(txt), 0);
+                    {
+                        const char *s = has ? val : txt;
+                        int k = 0;
+                        while (s[k] && k < 31) {
+                            ops[no][k] = s[k];
+                            k++;
+                        }
+                        ops[no][k] = 0;
+                        if (k > maxlen) maxlen = k;
+                    }
+                    if (!nv_atributo(c, "selected", aux,
+                                     (int)sizeof(aux))) {
+                        sel = no;
+                        hay = 1;
+                    }
+                    no++;
+                }
+            }
+            {
+                dom_node *s = 0;
+                if (dom_node_get_next_sibling(c, &s) != DOM_NO_ERR ||
+                    !s) {
+                    dom_node_unref(c);
+                    break;
+                }
+                dom_node_unref(c);
+                c = s;
+            }
+        }
+    }
+    (void)hay;
+    if (no == 0) return;
+    ci = nv_campo_nuevo(6, nombre, ops[sel], 0);
+    if (ci < 0) return;
+    {
+        int k;
+        for (k = 0; k < no; k++) {
+            int q = 0;
+            while (ops[k][q] && q < 31) {
+                NV_campos[ci].ops[k][q] = ops[k][q];
+                q++;
+            }
+            NV_campos[ci].ops[k][q] = 0;
+        }
+    }
+    NV_campos[ci].nopc = no;
+    NV_campos[ci].pos = sel;
+    NV_campos[ci].pini = sel;
+    if (maxlen > 24) maxlen = 24;
+    {
+        int est = maxlen + 5, col;
+        if (NV_cols - nv_ancho_linea() < est + 1)
+            nv_salto();
+        col = NV_ntxt - NV_filas[NV_nfilas].ini;
+        NV_campos[ci].fila = NV_nfilas;
+        NV_campos[ci].col = col;
+        NV_campos[ci].ancho = est;
+        {
+            char b[36];
+            int j = 0;
+            b[j++] = '[';
+            b[j++] = ' ';
+            while (j < est - 2) b[j++] = ' ';
+            b[j++] = 'v';
+            b[j++] = ']';
+            nv_pon_texto((const unsigned char *)b, j, 1);
+        }
+    }
+}
+
+/* v2.7-fase2: <button>: como enviar con la etiqueta del contenido. */
+static void nv_boton(dom_node *h) {
+    char tipo[16], nombre[64], valor[64], txt[64];
+    int tp = 3;
+    if (nv_atributo(h, "type", tipo, (int)sizeof(tipo)))
+        tipo[0] = 0;
+    {
+        int i;
+        for (i = 0; tipo[i]; i++)
+            if (tipo[i] >= 'A' && tipo[i] <= 'Z')
+                tipo[i] += (char)('a' - 'A');
+    }
+    if (!u_strcmp(tipo, "reset")) tp = 8;
+    else if (!u_strcmp(tipo, "button")) tp = 9;
+    if (nv_atributo(h, "name", nombre, (int)sizeof(nombre)))
+        nombre[0] = 0;
+    nv_texto_hijo(h, txt, (int)sizeof(txt), 0);
+    if (nv_atributo(h, "value", valor, (int)sizeof(valor)))
+        valor[0] = 0;
+    {
+        char b[64];
+        const char *et = valor[0] ? valor :
+            (txt[0] ? txt : "Enviar");
+        int j = 0, k = 0, ci, est;
+        while (et[k] && k < 56) k++;
+        est = k + 4;
+        if (NV_cols - nv_ancho_linea() < est + 1)
+            nv_salto();
+        ci = nv_campo_nuevo(tp, nombre, valor, 0);
+        if (ci < 0) return;
+        NV_campos[ci].fila = NV_nfilas;
+        NV_campos[ci].col = NV_ntxt - NV_filas[NV_nfilas].ini;
+        b[j++] = '[';
+        b[j++] = ' ';
+        k = 0;
+        while (et[k] && j < 60) b[j++] = et[k++];
+        b[j++] = ' ';
         b[j++] = ']';
         nv_pon_texto((const unsigned char *)b, j, 1);
         NV_campos[ci].ancho = j;
@@ -1952,7 +2261,7 @@ static void nv_recorre(dom_node *n, int prof) {
                         int es_bloque = nv_es_bloque(id);
                         int es_enl = 0, ienl = -1, ntxt0 = 0;
                         int es_sub = 0, es_bold = 0, es_h = 0;
-                        int es_form = 0;
+                        int es_form = 0, es_salta = 0;
                         nv_estilo_nodo(h);
                         ebg = NV_last_bgexp;
                         eal = NV_last_al;
@@ -2062,6 +2371,19 @@ static void nv_recorre(dom_node *n, int prof) {
                             nv_pon_texto(
                                 (const unsigned char *)"  * ",
                                 4, 1);
+                        } else if (id == T_TEXTAREA) {
+                            /* v2.7-fase2: bloque propio, no se
+                               recorre (el texto ya es el valor) */
+                            nv_area(h);
+                            es_salta = 1;
+                        } else if (id == T_SELECT) {
+                            /* v2.7-fase2: cerrado, recoge opciones */
+                            nv_lista(h);
+                            es_salta = 1;
+                        } else if (id == T_BUTTON) {
+                            /* v2.7-fase2: como enviar con etiqueta */
+                            nv_boton(h);
+                            es_salta = 1;
                         } else if (es_bloque) {
                             nv_bloque();
                         }
@@ -2075,7 +2397,8 @@ static void nv_recorre(dom_node *n, int prof) {
                                 if (!NV_last_fgset)
                                     NV_fg = NS_TITULO;
                             }
-                            nv_recorre(h, prof + 1);
+                            if (!es_salta)
+                                nv_recorre(h, prof + 1);
                             NV_fg = fg1;
                             NV_bg = bg1;
                             NV_al = al1;
@@ -2602,6 +2925,8 @@ static void nv_ir(const char *texto);
 /* -p [url]: sin url = bateria contra stubs; con url = resumen */
 static void nv_envia_form(int fi, int ci_boton);
 static void nv_pide_post(const char *url, const char *qs, int empuja);
+static void nv_campo_radio(int ci);
+static void nv_campo_repone(int fi);
 
 static int nv_modo_p(const char *resto) {
     while (*resto == ' ') resto++;
@@ -2711,6 +3036,55 @@ static int nv_modo_p(const char *resto) {
         nv_envia_form(0, 2);
         nv_ok(NV_tiene && nv_contiene("q=hola+mundo") &&
               !nv_contiene("ok="), "formg-sin-caja");
+        /* v2.7-fase2: area + lista + radios + reset (/form2) */
+        nv_navegar("http://10.0.2.2:18080/form2", 1);
+        nv_ok(NV_tiene, "form2-carga");
+        nv_ok(NV_ncampos == 6, "form2-ncampos");
+        nv_ok(NV_campos[0].tipo == 5, "form2-area");
+        nv_ok(NV_campos[0].alto == 3 &&
+              !u_strcmp(NV_campos[0].valor, "hola"),
+              "form2-area-valor");
+        nv_ok(NV_campos[1].tipo == 6 &&
+              NV_campos[1].nopc == 3, "form2-lista");
+        nv_ok(NV_campos[1].pos == 1, "form2-lista-sel");
+        nv_ok(NV_campos[2].tipo == 7 &&
+              !NV_campos[2].marca, "form2-radio-a");
+        nv_ok(NV_campos[3].tipo == 7 && NV_campos[3].marca,
+              "form2-radio-b");
+        nv_ok(NV_campos[4].tipo == 8, "form2-reset");
+        nv_ok(NV_campos[5].tipo == 3, "form2-enviar");
+        {
+            int i = 0;
+            const char *t = "a\nb";
+            while (t[i] && i < NV_CAMPO_TAM) {
+                NV_campos[0].valor[i] = t[i];
+                i++;
+            }
+            NV_campos[0].valor[i] = 0;
+            NV_campos[0].pos = i;
+        }
+        NV_campos[1].pos = 2;
+        nv_campo_radio(2);
+        nv_envia_form(0, 5);
+        nv_ok(NV_tiene && nv_contiene("txt=a%0D%0Ab") &&
+              nv_contiene("col=azul") &&
+              nv_contiene("r=a"), "form2-eco");
+        nv_navegar("http://10.0.2.2:18080/form2", 1);
+        {
+            int i = 0;
+            const char *t = "cambiado";
+            while (t[i] && i < NV_CAMPO_TAM) {
+                NV_campos[0].valor[i] = t[i];
+                i++;
+            }
+            NV_campos[0].valor[i] = 0;
+        }
+        NV_campos[1].pos = 0;
+        nv_campo_repone(0);
+        nv_ok(!u_strcmp(NV_campos[0].valor, "hola") &&
+              NV_campos[1].pos == 1 &&
+              !NV_campos[2].marca && NV_campos[3].marca,
+              "form2-reset");
         /* Hito 5: imagenes BMP + GIF (pagina /img-bmp) */
         nv_navegar("http://10.0.2.2:18080/img-bmp", 1);
         nv_ok(NV_tiene, "img-carga");
@@ -2914,7 +3288,8 @@ static void nv_pide(const char *f, int empuja) {
     ug_tick(&NV_v, 1);
 }
 
-/* Codifica application/x-www-form-urlencoded (espacio -> +). */
+/* Codifica application/x-www-form-urlencoded (espacio -> +,
+   salto de linea -> %0D%0A como manda el formulario). */
 static void nv_urlcod(const char *s, char *d, int max) {
     int i = 0, j = 0;
     static const char hx[] = "0123456789ABCDEF";
@@ -2926,6 +3301,19 @@ static void nv_urlcod(const char *s, char *d, int max) {
             d[j++] = (char)c;
         } else if (c == ' ') {
             d[j++] = '+';
+        } else if (c == '\n') {
+            if (j + 6 >= max) break;
+            d[j++] = '%';
+            d[j++] = '0';
+            d[j++] = 'D';
+            d[j++] = '%';
+            d[j++] = '0';
+            d[j++] = 'A';
+        } else if (c == '\r') {
+            if (j + 3 >= max) break;
+            d[j++] = '%';
+            d[j++] = '0';
+            d[j++] = 'D';
         } else if (j + 3 < max) {
             d[j++] = '%';
             d[j++] = hx[(c >> 4) & 15];
@@ -2947,16 +3335,20 @@ static void nv_envia_form(int fi, int ci_boton) {
     for (i = 0; i < NV_ncampos; i++) {
         nv_campo_t *c = &NV_campos[i];
         if (c->form != fi || !c->nombre[0]) continue;
-        if (c->tipo == 4 && !c->marca) continue;
+        if (c->tipo == 8 || c->tipo == 9) continue;   /* nunca viajan */
+        if ((c->tipo == 4 || c->tipo == 7) && !c->marca) continue;
         if (c->tipo == 3 && i != ci_boton) continue;
         if (p > 0 && p < 2046) qs[p++] = '&';
         nv_urlcod(c->nombre, nb, (int)sizeof(nb));
         k = 0;
         while (nb[k] && p < 2046) qs[p++] = nb[k++];
         if (p < 2046) qs[p++] = '=';
-        nv_urlcod(c->tipo == 4 ?
-                  (c->valor[0] ? c->valor : "on") : c->valor,
-                  vb, (int)sizeof(vb));
+        if (c->tipo == 6 && c->pos >= 0 && c->pos < c->nopc)
+            nv_urlcod(c->ops[c->pos], vb, (int)sizeof(vb));
+        else
+            nv_urlcod((c->tipo == 4 || c->tipo == 7) ?
+                      (c->valor[0] ? c->valor : "on") : c->valor,
+                      vb, (int)sizeof(vb));
         k = 0;
         while (vb[k] && p < 2046) qs[p++] = vb[k++];
     }
@@ -3268,13 +3660,49 @@ static void nv_hist_ir(int d) {
     if (NV_desplaza < 0) NV_desplaza = 0;
 }
 
-/* Origen en pantalla de la caja del campo (0 ok, -1 no visible).
-   Misma geometria que el pintado de filas (alineacion incluida). */
-static int nv_campo_xy(int ci, int *xo, int *yo) {
-    int f, rel, y, x, q, cw, cols, margen;
+/* v2.7-fase2: linea y columna visuales de pos en un valor con \n */
+static void nv_linea_col(const char *v, int pos, int *ln, int *cl) {
+    int i = 0, l = 0, c = 0;
+    while (i < pos && v[i]) {
+        if (v[i] == '\n') {
+            l++;
+            c = 0;
+        } else {
+            c++;
+        }
+        i++;
+    }
+    *ln = l;
+    *cl = c;
+}
+
+/* Offset del inicio de la linea ln (0 = primera) */
+static int nv_linea_ini(const char *v, int ln) {
+    int i = 0, l = 0;
+    while (v[i] && l < ln) {
+        if (v[i] == '\n') l++;
+        i++;
+    }
+    return i;
+}
+
+/* Offset del fin de la linea que empieza en ini (el \n o el NUL) */
+static int nv_linea_fin(const char *v, int ini) {
+    int i = ini;
+    while (v[i] && v[i] != '\n') i++;
+    return i;
+}
+
+/* Origen en pantalla de la caja del campo en la fila f
+   (0 ok, -1 no visible). Misma geometria que el pintado de filas
+   (alineacion incluida). */
+static int nv_campo_xy(int ci, int f, int *xo, int *yo) {
+    int rel, y, x, q, cw, cols, margen;
     if (ci < 0 || ci >= NV_ncampos) return -1;
     if (NV_campos[ci].tipo == 2) return -1;
-    f = NV_campos[ci].fila;
+    if (f < NV_campos[ci].fila ||
+        f >= NV_campos[ci].fila + NV_campos[ci].alto)
+        return -1;
     if (f < 0 || f >= NV_nfilas) return -1;
     margen = nv_bienv() ? 92 : 0;
     rel = f - NV_desplaza;
@@ -3301,9 +3729,9 @@ static int nv_campo_xy(int ci, int *xo, int *yo) {
     return 0;
 }
 
-/* Pinta la caja del campo sobre su fila (ventana de valor con
-   desplazamiento + cursor si tiene el foco). */
-static void nv_campo_caja(int ci, int bx, int by) {
+/* Pinta la caja del campo (rel = fila dentro del campo).
+   Ventana de valor con desplazamiento + cursor si tiene el foco. */
+static void nv_campo_caja(int ci, int bx, int by, int rel) {
     int enf = NV_tiene && ci == NV_foco_campo;
     int tp = NV_campos[ci].tipo;
     int bw = NV_campos[ci].ancho * UG_FW;
@@ -3313,9 +3741,14 @@ static void nv_campo_caja(int ci, int bx, int by) {
     if (tp == 4) {
         ug_texto(&NV_v, bx, by,
                  NV_campos[ci].marca ? "[X]" : "[ ]", fg);
-    } else if (tp == 3) {
+    } else if (tp == 7) {
+        ug_texto(&NV_v, bx, by,
+                 NV_campos[ci].marca ? "(o)" : "( )", fg);
+    } else if (tp == 3 || tp == 8 || tp == 9) {
         const char *et = NV_campos[ci].valor[0] ?
-            NV_campos[ci].valor : "Enviar";
+            NV_campos[ci].valor :
+            (tp == 8 ? "Restablecer" :
+             (tp == 9 ? "Boton" : "Enviar"));
         char b[64];
         int j = 0, k = 0;
         b[j++] = '[';
@@ -3325,23 +3758,66 @@ static void nv_campo_caja(int ci, int bx, int by) {
         b[j++] = ']';
         b[j] = 0;
         ug_texto(&NV_v, bx, by, b, fg);
+    } else if (tp == 6) {
+        const char *et = "?";
+        char b[36];
+        int j = 0, k, n = 0;
+        if (NV_campos[ci].pos >= 0 &&
+            NV_campos[ci].pos < NV_campos[ci].nopc)
+            et = NV_campos[ci].ops[NV_campos[ci].pos];
+        while (et[n] && n < 24) n++;
+        if (n > NV_campos[ci].ancho - 5)
+            n = NV_campos[ci].ancho - 5;
+        b[j++] = '[';
+        b[j++] = ' ';
+        for (k = 0; k < n; k++) b[j++] = et[k];
+        while (j < NV_campos[ci].ancho - 2) b[j++] = ' ';
+        b[j++] = 'v';
+        b[j++] = ']';
+        b[j] = 0;
+        ug_texto(&NV_v, bx, by, b, fg);
+    } else if (tp == 5) {
+        /* area: rebanada visible de lineas del valor */
+        int vw = NV_campos[ci].ancho - 2;
+        int ln0 = 0, cur = 0, cl = 0, k, ini, fin, nc;
+        char b[44];
+        int j = 0;
+        nv_linea_col(NV_campos[ci].valor, NV_campos[ci].pos,
+                     &cur, &cl);
+        ln0 = cur - NV_campos[ci].alto + 1;
+        if (ln0 < 0) ln0 = 0;
+        ini = nv_linea_ini(NV_campos[ci].valor, ln0 + rel);
+        fin = nv_linea_fin(NV_campos[ci].valor, ini);
+        nc = fin - ini;
+        if (nc > vw) nc = vw;
+        b[j++] = '[';
+        for (k = 0; k < vw; k++)
+            b[j++] = k < nc ? NV_campos[ci].valor[ini + k] : ' ';
+        b[j++] = ']';
+        b[j] = 0;
+        ug_texto(&NV_v, bx, by, b, fg);
+        if (enf && cur == ln0 + rel) {
+            int cx = bx + (1 + cl) * UG_FW;
+            if (cx > bx + bw - 8) cx = bx + bw - 8;
+            ug_relleno(&NV_v, cx, by + 2, 7, 12, C_BLANCO);
+        }
     } else {
+        int vw = NV_campos[ci].ancho - 2;
         char b[NV_CAMPO_ANCHO + 3];
         int j = 0, k, ini = 0, n = 0;
         while (NV_campos[ci].valor[n]) n++;
-        if (n > NV_CAMPO_ANCHO) {
-            ini = NV_campos[ci].pos - NV_CAMPO_ANCHO + 1;
+        if (n > vw) {
+            ini = NV_campos[ci].pos - vw + 1;
             if (ini < 0) ini = 0;
-            if (ini > n - NV_CAMPO_ANCHO)
-                ini = n - NV_CAMPO_ANCHO;
+            if (ini > n - vw) ini = n - vw;
         }
         b[j++] = '[';
-        for (k = 0; k < NV_CAMPO_ANCHO; k++) {
+        for (k = 0; k < vw; k++) {
             char c = NV_campos[ci].valor[ini + k];
             if (!c) break;
             b[j++] = (tp == 1) ? (char)'*' : c;
         }
-        while (k < NV_CAMPO_ANCHO) {
+        while (k < vw) {
             b[j++] = ' ';
             k++;
         }
@@ -3570,10 +4046,13 @@ static void nv_dibuja(void) {
                 int cc;
                 for (cc = 0; cc < NV_ncampos; cc++) {
                     if (NV_campos[cc].tipo != 2 &&
-                        NV_campos[cc].fila == f) {
+                        f >= NV_campos[cc].fila &&
+                        f < NV_campos[cc].fila +
+                            NV_campos[cc].alto) {
                         int bx, by;
-                        if (!nv_campo_xy(cc, &bx, &by))
-                            nv_campo_caja(cc, bx, by);
+                        if (!nv_campo_xy(cc, f, &bx, &by))
+                            nv_campo_caja(cc, bx, by,
+                                          f - NV_campos[cc].fila);
                     }
                 }
             }
@@ -3629,13 +4108,14 @@ static void nv_asegura_campo(int idx) {
 }
 
 /* v2.7: teclas de edicion dentro de un campo de texto (0 = texto,
-   1 = clave). Devuelve 1 si la consumio. */
+   1 = clave) o area (5 = multilinea con Intro). Devuelve 1 si la
+   consumio. */
 static int nv_campo_tecla(int ci, int tecla) {
     nv_campo_t *c;
     int n;
     if (ci < 0 || ci >= NV_ncampos) return 0;
     c = &NV_campos[ci];
-    if (c->tipo != 0 && c->tipo != 1) return 0;
+    if (c->tipo != 0 && c->tipo != 1 && c->tipo != 5) return 0;
     n = 0;
     while (c->valor[n]) n++;
     if (tecla == 8) {
@@ -3655,17 +4135,64 @@ static int nv_campo_tecla(int ci, int tecla) {
         return 1;
     }
     if (tecla == 0x107) {
-        c->pos = 0;
+        if (c->tipo == 5) {
+            int ln, cl, ini;
+            nv_linea_col(c->valor, c->pos, &ln, &cl);
+            (void)cl;
+            ini = nv_linea_ini(c->valor, ln);
+            c->pos = ini;
+        } else {
+            c->pos = 0;
+        }
         return 1;
     }
     if (tecla == 0x108) {
-        c->pos = n;
+        if (c->tipo == 5) {
+            int ln, cl, ini, fin;
+            nv_linea_col(c->valor, c->pos, &ln, &cl);
+            ini = nv_linea_ini(c->valor, ln);
+            fin = nv_linea_fin(c->valor, ini);
+            (void)fin;
+            c->pos = ini + cl;
+            if (c->pos > fin) c->pos = fin;
+        } else {
+            c->pos = n;
+        }
         return 1;
     }
     if (tecla == 0x106) {
         if (c->pos < n) {
             int i;
             for (i = c->pos; i < n; i++) c->valor[i] = c->valor[i + 1];
+        }
+        return 1;
+    }
+    if (tecla == 0x101 || tecla == 0x102) {
+        /* arriba/abajo en el area: mueve de linea */
+        if (c->tipo == 5) {
+            int ln, cl, ini, fin, nl;
+            nv_linea_col(c->valor, c->pos, &ln, &cl);
+            if (tecla == 0x101) {
+                if (ln == 0) return 1;
+                nl = ln - 1;
+            } else {
+                nl = ln + 1;
+            }
+            ini = nv_linea_ini(c->valor, nl);
+            if (c->valor[ini] == 0 && nl > ln) return 1;
+            fin = nv_linea_fin(c->valor, ini);
+            c->pos = ini + cl;
+            if (c->pos > fin) c->pos = fin;
+            return 1;
+        }
+        return 0;
+    }
+    if (tecla == 13 && c->tipo == 5) {
+        if (n < NV_CAMPO_TAM) {
+            int i;
+            for (i = n; i > c->pos; i--) c->valor[i] = c->valor[i - 1];
+            c->valor[c->pos++] = '\n';
+            c->valor[n + 1] = 0;
         }
         return 1;
     }
@@ -3679,17 +4206,62 @@ static int nv_campo_tecla(int ci, int tecla) {
     return 0;
 }
 
-/* v2.7: activa el campo con foco (Intro o clic): enviar lo manda,
-   la caja conmuta, el texto manda su formulario. */
+/* v2.7-fase2: marca el radio y desmarca a sus hermanos
+   (mismo formulario y nombre). */
+static void nv_campo_radio(int ci) {
+    int i;
+    if (ci < 0 || ci >= NV_ncampos) return;
+    if (NV_campos[ci].tipo != 7) return;
+    NV_campos[ci].marca = 1;
+    for (i = 0; i < NV_ncampos; i++) {
+        if (i != ci && NV_campos[i].tipo == 7 &&
+            NV_campos[i].form == NV_campos[ci].form &&
+            !u_strcmp(NV_campos[i].nombre, NV_campos[ci].nombre))
+            NV_campos[i].marca = 0;
+    }
+}
+
+/* v2.7-fase2: restaura los valores iniciales del formulario. */
+static void nv_campo_repone(int fi) {
+    int i;
+    for (i = 0; i < NV_ncampos; i++) {
+        if (NV_campos[i].form != fi) continue;
+        {
+            int q = 0;
+            while (NV_campos[i].ini[q]) {
+                NV_campos[i].valor[q] = NV_campos[i].ini[q];
+                q++;
+            }
+            NV_campos[i].valor[q] = 0;
+        }
+        NV_campos[i].pos = NV_campos[i].pini;
+        NV_campos[i].marca = NV_campos[i].mini;
+    }
+}
+
+/* v2.7: activa el campo con foco (Intro): enviar lo manda,
+   reponer restaura, la caja manda (conmuta con espacio o clic),
+   el texto/lista/radio mandan su formulario, el area mete salto
+   (se come el Intro en edicion) y el inerte nada. */
 static void nv_campo_activa(int ci) {
     nv_campo_t *c;
     if (ci < 0 || ci >= NV_ncampos) return;
     c = &NV_campos[ci];
     if (c->tipo == 4) {
-        c->marca = !c->marca;
+        nv_envia_form(c->form, -1);
         return;
     }
-    if (c->tipo == 3 || c->tipo == 0 || c->tipo == 1)
+    if (c->tipo == 7) {
+        nv_campo_radio(ci);
+        return;
+    }
+    if (c->tipo == 8) {
+        nv_campo_repone(c->form);
+        return;
+    }
+    if (c->tipo == 9 || c->tipo == 2) return;
+    if (c->tipo == 3 || c->tipo == 0 || c->tipo == 1 ||
+        c->tipo == 5 || c->tipo == 6)
         nv_envia_form(c->form, ci);
 }
 
@@ -3740,15 +4312,24 @@ static void nv_ev_tecla(int tecla) {
             NV_bpos = i;
             NV_foco_barra = 0;
         } else if (tecla == 9) {
-            /* Tab en barra: primer enlace, si no el primer campo */
+            /* Tab en barra: primer enlace, si no el primer campo
+               visible (los ocultos/inertes no paran). */
+            int cc;
             NV_foco_barra = 0;
             NV_foco_campo = -1;
             NV_foco_enl = (NV_tiene && NV_nenl > 0) ? 0 : -1;
             if (NV_foco_enl >= 0) {
                 nv_asegura_enlace(NV_foco_enl);
-            } else if (NV_tiene && NV_ncampos > 0) {
-                NV_foco_campo = 0;
-                nv_asegura_campo(0);
+            } else if (NV_tiene) {
+                for (cc = 0; cc < NV_ncampos; cc++) {
+                    if (NV_campos[cc].tipo != 2 &&
+                        NV_campos[cc].tipo != 9)
+                        break;
+                }
+                if (cc < NV_ncampos) {
+                    NV_foco_campo = cc;
+                    nv_asegura_campo(cc);
+                }
             }
         } else {
             ug_campo_tecla(NV_bar, (int)sizeof(NV_bar),
@@ -3757,16 +4338,82 @@ static void nv_ev_tecla(int tecla) {
         ug_tick(&NV_v, 1);
         return;
     }
-    /* v2.7: el campo de texto con foco se come la edicion
-       (incluido el espacio y el retroceso). */
+    /* v2.7: el campo de texto/area con foco se come la edicion
+       (incluido el espacio, el retroceso y el Intro del area). */
     if (NV_tiene && NV_foco_campo >= 0 &&
         NV_foco_campo < NV_ncampos &&
         (NV_campos[NV_foco_campo].tipo == 0 ||
-         NV_campos[NV_foco_campo].tipo == 1) &&
+         NV_campos[NV_foco_campo].tipo == 1 ||
+         (NV_campos[NV_foco_campo].tipo == 5 &&
+          (tecla == 13 || tecla == 0x101 || tecla == 0x102))) &&
         (tecla == 8 || tecla == 0x103 || tecla == 0x104 ||
          tecla == 0x106 || tecla == 0x107 || tecla == 0x108 ||
+         tecla == 0x101 || tecla == 0x102 || tecla == 13 ||
          (tecla >= 32 && tecla < 127))) {
         nv_campo_tecla(NV_foco_campo, tecla);
+    } else if (NV_tiene && NV_foco_campo >= 0 &&
+               NV_foco_campo < NV_ncampos &&
+               NV_campos[NV_foco_campo].tipo == 6 &&
+               (tecla == 0x101 || tecla == 0x102 ||
+                tecla == 0x103 || tecla == 0x104)) {
+        /* v2.7-fase2: arriba/abajo/izq/der ciclan las opciones */
+        int n = NV_campos[NV_foco_campo].nopc;
+        if (n > 0) {
+            if (tecla == 0x101 || tecla == 0x103)
+                NV_campos[NV_foco_campo].pos =
+                    (NV_campos[NV_foco_campo].pos + n - 1) % n;
+            else
+                NV_campos[NV_foco_campo].pos =
+                    (NV_campos[NV_foco_campo].pos + 1) % n;
+        }
+    } else if (NV_tiene && NV_foco_campo >= 0 &&
+               NV_foco_campo < NV_ncampos &&
+               NV_campos[NV_foco_campo].tipo == 7 &&
+               (tecla == 0x101 || tecla == 0x102 ||
+                tecla == 0x103 || tecla == 0x104)) {
+        /* v2.7-fase2: flechas mueven el marcado dentro del grupo */
+        int i, cur = NV_foco_campo, nxt = -1;
+        if (tecla == 0x101 || tecla == 0x103) {
+            for (i = cur - 1; i >= 0; i--) {
+                if (NV_campos[i].tipo == 7 &&
+                    NV_campos[i].form == NV_campos[cur].form &&
+                    !u_strcmp(NV_campos[i].nombre,
+                              NV_campos[cur].nombre)) {
+                    nxt = i;
+                    break;
+                }
+            }
+            if (nxt < 0) {
+                for (i = NV_ncampos - 1; i > cur; i--) {
+                    if (NV_campos[i].tipo == 7 &&
+                        NV_campos[i].form ==
+                            NV_campos[cur].form &&
+                        !u_strcmp(NV_campos[i].nombre,
+                                NV_campos[cur].nombre)) {
+                        nxt = i;
+                        break;
+                    }
+                }
+            }
+        } else {
+            int n;
+            for (n = cur + 1, i = cur + 1; n < NV_ncampos; n++, i++) {
+                if (i >= NV_ncampos) i -= NV_ncampos;
+                if (i == cur) break;
+                if (NV_campos[i].tipo == 7 &&
+                    NV_campos[i].form == NV_campos[cur].form &&
+                    !u_strcmp(NV_campos[i].nombre,
+                              NV_campos[cur].nombre)) {
+                    nxt = i;
+                    break;
+                }
+            }
+        }
+        if (nxt >= 0) {
+            nv_campo_radio(nxt);
+            NV_foco_campo = nxt;
+            nv_asegura_campo(nxt);
+        }
     } else if (tecla == 0x101) {
         NV_foco_campo = -1;
         NV_desplaza--;
@@ -3795,15 +4442,29 @@ static void nv_ev_tecla(int tecla) {
         if (NV_url[0])
             nv_pide(NV_url, 0);
     } else if (tecla == 9) {
-        /* Tab: enlaces, luego campos, al final la barra */
+        /* Tab: enlaces, luego campos visibles, al final la barra */
         if (NV_tiene && NV_foco_campo < 0 && NV_nenl > 0 &&
             NV_foco_enl + 1 < NV_nenl) {
             NV_foco_enl++;
             nv_asegura_enlace(NV_foco_enl);
-        } else if (NV_tiene && NV_foco_campo + 1 < NV_ncampos) {
-            NV_foco_enl = -1;
-            NV_foco_campo++;
-            nv_asegura_campo(NV_foco_campo);
+        } else if (NV_tiene) {
+            int cc, ini = NV_foco_campo;
+            if (ini < -1) ini = -1;
+            for (cc = ini + 1; cc < NV_ncampos; cc++) {
+                if (NV_campos[cc].tipo != 2 &&
+                    NV_campos[cc].tipo != 9)
+                    break;
+            }
+            if (cc < NV_ncampos) {
+                NV_foco_enl = -1;
+                NV_foco_campo = cc;
+                nv_asegura_campo(NV_foco_campo);
+            } else {
+                NV_foco_enl = -1;
+                NV_foco_campo = -1;
+                NV_foco_barra = 1;
+                NV_qfoco = 0;
+            }
         } else {
             NV_foco_enl = -1;
             NV_foco_campo = -1;
@@ -3821,11 +4482,16 @@ static void nv_ev_tecla(int tecla) {
         else if (!NV_tiene)
             NV_foco_barra = 1;
     } else if (tecla == 32) {
-        /* Espacio: conmuta la caja con foco */
+        /* Espacio: conmuta la caja o marca el radio con foco */
         if (NV_tiene && NV_foco_campo >= 0 &&
-            NV_foco_campo < NV_ncampos &&
-            NV_campos[NV_foco_campo].tipo == 4)
-            nv_campo_activa(NV_foco_campo);
+            NV_foco_campo < NV_ncampos) {
+            int tp = NV_campos[NV_foco_campo].tipo;
+            if (tp == 4)
+                NV_campos[NV_foco_campo].marca =
+                    !NV_campos[NV_foco_campo].marca;
+            else if (tp == 7)
+                nv_campo_radio(NV_foco_campo);
+        }
     } else if (tecla == 27) {
         NV_foco_enl = -1;
         NV_foco_campo = -1;
@@ -3952,15 +4618,49 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
                     NV_foco_campo = cc;
                     NV_foco_barra = 0;
                     NV_qfoco = 0;
-                    if (tp == 0 || tp == 1) {
-                        int bx, by, off, n = 0;
-                        if (!nv_campo_xy(cc, &bx, &by)) {
-                            off = (lx - bx) / UG_FW - 1;
-                            if (off < 0) off = 0;
-                            while (NV_campos[cc].valor[n]) n++;
-                            if (off > n) off = n;
-                            NV_campos[cc].pos = off;
+                    if (tp == 0 || tp == 1 || tp == 5) {
+                        int bx, by, rel, n;
+                        rel = f - NV_campos[cc].fila;
+                        n = 0;
+                        while (NV_campos[cc].valor[n]) n++;
+                        if (!nv_campo_xy(cc, f, &bx, &by)) {
+                            if (tp == 5) {
+                                /* pos en la linea clicada */
+                                int ini, fin, col;
+                                int rr, ln0, cl;
+                                nv_linea_col(NV_campos[cc].valor,
+                                             NV_campos[cc].pos,
+                                             &rr, &cl);
+                                ln0 = rr - NV_campos[cc].alto + 1;
+                                if (ln0 < 0) ln0 = 0;
+                                ini = nv_linea_ini(
+                                    NV_campos[cc].valor,
+                                    ln0 + rel);
+                                fin = nv_linea_fin(
+                                    NV_campos[cc].valor, ini);
+                                col = (lx - bx) / UG_FW - 1;
+                                if (col < 0) col = 0;
+                                if (col > fin - ini)
+                                    col = fin - ini;
+                                NV_campos[cc].pos = ini + col;
+                            } else {
+                                int off;
+                                off = (lx - bx) / UG_FW - 1;
+                                if (off < 0) off = 0;
+                                if (off > n) off = n;
+                                NV_campos[cc].pos = off;
+                            }
                         }
+                    } else if (tp == 4) {
+                        NV_campos[cc].marca =
+                            !NV_campos[cc].marca;
+                    } else if (tp == 7) {
+                        nv_campo_radio(cc);
+                    } else if (tp == 6) {
+                        /* lista: el clic solo enfoca (las flechas
+                           cambian la opcion, Intro la manda) */
+                    } else if (tp == 9) {
+                        /* inerte: solo repinta */
                     } else {
                         nv_campo_activa(cc);
                     }

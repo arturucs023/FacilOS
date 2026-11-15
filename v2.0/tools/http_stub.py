@@ -45,6 +45,8 @@ Rutas:
   /eco-post            : devuelve el cuerpo POST ("visto: ...").
   /form-get            : formulario method=get action=/eco-get
                          (texto + checkbox + submit).
+  /form2               : todo junto (area + lista + radios +
+                         reset + envio) para la fase 2.
   /eco-get             : devuelve la consulta ("visto: ?...").
   redirecciones (sin version: el codigo 301/302 nunca se probo):
   /redir               : 302 a /redir2 (cadena de 2 saltos).
@@ -496,6 +498,26 @@ def atiende(cn):
                     "<input name=\"q\">"
                     "<input type=\"checkbox\" name=\"ok\" value=\"si\""
                     " checked>"
+                    "<input type=\"submit\" value=\"Ir\"></form>"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/html"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/form2":
+            body = ("<html><head><title>FormaDos</title></head><body>"
+                    "<h1>Todo</h1>"
+                    "<form method=\"get\" action=\"/eco-get\">"
+                    "<textarea name=\"txt\" rows=\"3\" cols=\"12\">"
+                    "hola</textarea>"
+                    "<select name=\"col\">"
+                    "<option value=\"r\">rojo</option>"
+                    "<option value=\"v\" selected>verde</option>"
+                    "<option>azul</option></select>"
+                    "<input type=\"radio\" name=\"r\" value=\"a\">"
+                    "<input type=\"radio\" name=\"r\" value=\"b\""
+                    " checked>"
+                    "<input type=\"reset\" value=\"X\">"
                     "<input type=\"submit\" value=\"Ir\"></form>"
                     "</body></html>").encode("latin1")
             cn.sendall(resp(200, "OK",
