@@ -89,7 +89,8 @@ enum {
     T_OTRO = 0, T_P, T_DIV, T_H1, T_H2, T_H3, T_H4, T_H5, T_H6,
     T_UL, T_OL, T_LI, T_PRE, T_BR, T_HR, T_BLOQUE, T_A,
     T_SCRIPT, T_STYLE, T_TITLE, T_HEAD, T_HTML, T_BODY, T_META,
-    T_LINK, T_IMG, T_INPUT, T_FORM, T_TABLE, T_TR, T_TD, T_TH
+    T_LINK, T_IMG, T_INPUT, T_FORM, T_TABLE, T_TR, T_TD, T_TH,
+    T_TEXTAREA, T_SELECT, T_OPTION, T_BUTTON
 };
 
 static int nv_tag_id(const char *s, int n) {
@@ -138,6 +139,10 @@ static int nv_tag_id(const char *s, int n) {
     if (!u_strcmp(b, "tr")) return T_TR;
     if (!u_strcmp(b, "td")) return T_TD;
     if (!u_strcmp(b, "th")) return T_TH;
+    if (!u_strcmp(b, "textarea")) return T_TEXTAREA;
+    if (!u_strcmp(b, "select")) return T_SELECT;
+    if (!u_strcmp(b, "option")) return T_OPTION;
+    if (!u_strcmp(b, "button")) return T_BUTTON;
     return T_OTRO;
 }
 
@@ -271,10 +276,11 @@ static hubbub_error nv_tok(const hubbub_token *tk, void *pw) {
     if (nv_es_vacio(id)) {
         /* BR/HR dejan marca en el DOM; IMG tambien (Hito 5:
            el layout lee src/alt); LINK tambien (v2.5: el
-           layout lee rel/href para hojas externas); el resto
-           se ignora */
+           layout lee rel/href para hojas externas); INPUT
+           tambien (v2.7: el layout lee type/name/value para
+           formularios); el resto se ignora */
         if (id != T_BR && id != T_HR && id != T_IMG &&
-            id != T_LINK)
+            id != T_LINK && id != T_INPUT)
             return HUBBUB_OK;
     }
     {
@@ -1244,6 +1250,37 @@ typedef struct {
 static nv_enl_t NV_enl[NV_MAXENL];
 static int NV_nenl = 0, NV_foco_enl = -1;
 
+/* formularios (v2.7): GET/POST sin JS. Los campos se pintan en linea
+   como cajas ([____], [Enviar], [X]) y comparten el anillo de foco
+   con los enlaces. textarea/select se reconocen pero aun no se
+   editan (fase 2). */
+#define NV_MAXFORM 8
+#define NV_MAXCAMP 48
+#define NV_CAMPO_TAM 120
+#define NV_CAMPO_ANCHO 24
+typedef struct {
+    char accion[NV_MAXURL + 1];
+    int metodo;                 /* 0 get, 1 post */
+} nv_form_t;
+typedef struct {
+    int form;                   /* indice en NV_forms o -1 */
+    char nombre[64];
+    int tipo;                   /* 0 texto, 1 clave, 2 oculto,
+                                   3 enviar, 4 caja */
+    char valor[NV_CAMPO_TAM + 1];
+    int pos;                    /* cursor en valor */
+    int marca;                  /* caja marcada */
+    int fila, col;              /* caja en el texto */
+    int ancho;                  /* ancho caja en celdas */
+} nv_campo_t;
+static nv_form_t NV_forms[NV_MAXFORM];
+static int NV_nforms = 0;
+static nv_campo_t NV_campos[NV_MAXCAMP];
+static int NV_ncampos = 0, NV_foco_campo = -1;
+/* pila de formularios abiertos durante el recorrido */
+static int NV_pila_form[4];
+static int NV_npila_form = 0;
+
 /* historial (Hito 4): pila de URLs con scroll por entrada */
 #define NV_MAXHIST 16
 static char NV_hist[NV_MAXHIST][NV_MAXURL + 1];
@@ -1403,11 +1440,30 @@ static int nv_resuelve(const char *ref, char *sal) {
 
 /* Hito 4: indice del enlace que cubre la fila f, o -1.
    Del ultimo al primero: el mas interno gana. */
+static int nv_campo_xy(int ci, int *xo, int *yo);
 static int nv_enlace_en(int f) {
     int i;
     for (i = NV_nenl - 1; i >= 0; i--) {
         if (f >= NV_enl[i].f0 && f <= NV_enl[i].f1)
             return i;
+    }
+    return -1;
+}
+
+/* v2.7: indice del campo cuya caja cubre la celda (fila, col),
+   o -1. Del ultimo al primero: el mas interno gana. */
+static int nv_campo_en(int f, int col) {
+    int i;
+    for (i = NV_ncampos - 1; i >= 0; i--) {
+        if (NV_campos[i].tipo != 2 && NV_campos[i].fila == f) {
+            int bx, by;
+            if (!nv_campo_xy(i, &bx, &by)) {
+                int x0 = (bx - 4) / UG_FW;
+                if (col >= x0 &&
+                    col < x0 + NV_campos[i].ancho)
+                    return i;
+            }
+        }
     }
     return -1;
 }
@@ -1759,6 +1815,106 @@ static void nv_estilo_nodo(dom_node *n) {
     }
 }
 
+/* formularios (v2.7): registra un <input> y pinta su caja en
+   linea ([____], [Enviar], [X]). Tipos: texto, password, hidden,
+   submit, checkbox (+button/image como texto/enviar). Sin nombre no
+   viaja (salvo el boton que lo activa, si lo tiene). */
+static void nv_campo(dom_node *h) {
+    char tipo[16], nombre[64], valor[NV_CAMPO_TAM + 1], aux[16];
+    int tp = 0, i, q, ci, col, est;
+    if (NV_ncampos >= NV_MAXCAMP) return;
+    if (nv_atributo(h, "type", tipo, (int)sizeof(tipo)))
+        tipo[0] = 0;
+    for (i = 0; tipo[i]; i++)
+        if (tipo[i] >= 'A' && tipo[i] <= 'Z')
+            tipo[i] += (char)('a' - 'A');
+    if (!u_strcmp(tipo, "password")) tp = 1;
+    else if (!u_strcmp(tipo, "hidden")) tp = 2;
+    else if (!u_strcmp(tipo, "submit")) tp = 3;
+    else if (!u_strcmp(tipo, "checkbox")) tp = 4;
+    else if (!u_strcmp(tipo, "button")) tp = 3;
+    else if (!u_strcmp(tipo, "image")) tp = 3;
+    if (nv_atributo(h, "name", nombre, (int)sizeof(nombre)))
+        nombre[0] = 0;
+    if (nv_atributo(h, "value", valor, (int)sizeof(valor)))
+        valor[0] = 0;
+    ci = NV_ncampos++;
+    NV_campos[ci].form = NV_npila_form > 0 ?
+        NV_pila_form[NV_npila_form - 1] : -1;
+    q = 0;
+    while (nombre[q] && q < 63) {
+        NV_campos[ci].nombre[q] = nombre[q];
+        q++;
+    }
+    NV_campos[ci].nombre[q] = 0;
+    NV_campos[ci].tipo = tp;
+    q = 0;
+    while (valor[q] && q < NV_CAMPO_TAM) {
+        NV_campos[ci].valor[q] = valor[q];
+        q++;
+    }
+    NV_campos[ci].valor[q] = 0;
+    NV_campos[ci].pos = q;
+    NV_campos[ci].marca =
+        !nv_atributo(h, "checked", aux, (int)sizeof(aux));
+    if (tp == 2) {
+        NV_campos[ci].fila = -1;
+        NV_campos[ci].col = 0;
+        NV_campos[ci].ancho = 0;
+        return;   /* oculto: viaja pero no se pinta */
+    }
+    /* estima el ancho para no partir la caja entre filas */
+    if (tp == 4)
+        est = 3;
+    else if (tp == 3)
+        est = 4 + (NV_campos[ci].valor[0] ? q : 6);
+    else
+        est = NV_CAMPO_ANCHO + 2;
+    if (NV_cols - nv_ancho_linea() < est + 1)
+        nv_salto();
+    col = NV_ntxt - NV_filas[NV_nfilas].ini;
+    NV_campos[ci].fila = NV_nfilas;
+    NV_campos[ci].col = col;
+    if (tp == 4) {
+        nv_pon_texto((const unsigned char *)
+                     (NV_campos[ci].marca ? "[X]" : "[ ]"), 3, 1);
+        NV_campos[ci].ancho = 3;
+        return;
+    }
+    if (tp == 3) {
+        const char *et = NV_campos[ci].valor[0] ?
+            NV_campos[ci].valor : "Enviar";
+        char b[64];
+        int j = 0, k = 0;
+        b[j++] = '[';
+        b[j++] = ' ';
+        while (et[k] && j < 60) b[j++] = et[k++];
+        b[j++] = ' ';
+        b[j++] = ']';
+        nv_pon_texto((const unsigned char *)b, j, 1);
+        NV_campos[ci].ancho = j;
+        return;
+    }
+    {
+        char b[NV_CAMPO_ANCHO + 3];
+        int j = 0, k = 0;
+        b[j++] = '[';
+        while (k < NV_CAMPO_ANCHO) {
+            char c = NV_campos[ci].valor[k];
+            if (!c) break;
+            b[j++] = (tp == 1) ? (char)'*' : c;
+            k++;
+        }
+        while (k < NV_CAMPO_ANCHO) {
+            b[j++] = ' ';
+            k++;
+        }
+        b[j++] = ']';
+        nv_pon_texto((const unsigned char *)b, j, 1);
+        NV_campos[ci].ancho = j;
+    }
+}
+
 static void nv_recorre(dom_node *n, int prof) {
     dom_node *h = 0;
     if (!n || prof > 32) return;
@@ -1787,6 +1943,8 @@ static void nv_recorre(dom_node *n, int prof) {
                             }
                         } else if (id == T_IMG) {
                             nv_imagen(h);
+                        } else if (id == T_INPUT) {
+                            nv_campo(h);
                         }
                     } else {
                         int fg0 = NV_fg, bg0 = NV_bg;
@@ -1794,6 +1952,7 @@ static void nv_recorre(dom_node *n, int prof) {
                         int es_bloque = nv_es_bloque(id);
                         int es_enl = 0, ienl = -1, ntxt0 = 0;
                         int es_sub = 0, es_bold = 0, es_h = 0;
+                        int es_form = 0;
                         nv_estilo_nodo(h);
                         ebg = NV_last_bgexp;
                         eal = NV_last_al;
@@ -1839,6 +1998,65 @@ static void nv_recorre(dom_node *n, int prof) {
                                 NV_sub++;
                             }
                         }
+                        /* v2.7: abre el formulario (action/method);
+                           los <input> interiores se le asignan */
+                        if (id == T_FORM) {
+                            char acc[NV_MAXURL + 1], met[16];
+                            int fi = -1, w2 = 0;
+                            if (NV_nforms < NV_MAXFORM) {
+                                fi = NV_nforms++;
+                                if (!nv_atributo(h, "action", acc,
+                                                 (int)sizeof(acc)) &&
+                                    acc[0]) {
+                                    if (nv_resuelve(acc, NV_tmpurl)) {
+                                        int v = 0;
+                                        while (NV_base[v] &&
+                                               v < NV_MAXURL) {
+                                            NV_tmpurl[v] =
+                                                NV_base[v];
+                                            v++;
+                                        }
+                                        NV_tmpurl[v] = 0;
+                                    }
+                                    while (NV_tmpurl[w2] &&
+                                           w2 < NV_MAXURL) {
+                                        NV_forms[fi].accion[w2] =
+                                            NV_tmpurl[w2];
+                                        w2++;
+                                    }
+                                    NV_forms[fi].accion[w2] = 0;
+                                } else {
+                                    while (NV_base[w2] &&
+                                           w2 < NV_MAXURL) {
+                                        NV_forms[fi].accion[w2] =
+                                            NV_base[w2];
+                                        w2++;
+                                    }
+                                    NV_forms[fi].accion[w2] = 0;
+                                }
+                                if (!nv_atributo(h, "method", met,
+                                                 (int)sizeof(met))) {
+                                    int z = 0;
+                                    while (met[z]) {
+                                        if (met[z] >= 'A' &&
+                                            met[z] <= 'Z')
+                                            met[z] +=
+                                                (char)('a' - 'A');
+                                        z++;
+                                    }
+                                    NV_forms[fi].metodo =
+                                        !u_strcmp(met, "post") ?
+                                        1 : 0;
+                                } else {
+                                    NV_forms[fi].metodo = 0;
+                                }
+                                if (NV_npila_form < 4) {
+                                    NV_pila_form[NV_npila_form++] =
+                                        fi;
+                                    es_form = 1;
+                                }
+                            }
+                        }
                         if (id == T_LI) {
                             nv_bloque();
                             nv_pon_texto(
@@ -1862,6 +2080,10 @@ static void nv_recorre(dom_node *n, int prof) {
                             NV_bg = bg1;
                             NV_al = al1;
                         }
+                        /* v2.7: cierra el formulario (los <input>
+                           interiores ya quedaron asignados) */
+                        if (es_form && NV_npila_form > 0)
+                            NV_npila_form--;
                         if (es_bloque)
                             nv_salto();
                         if (es_sub)
@@ -2028,6 +2250,11 @@ static int nv_procesa(const unsigned char *pg, int n) {
     NV_cols = 76;
     NV_pend_esp = 0;
     NV_nenl = 0;
+    NV_foco_enl = -1;
+    NV_nforms = 0;
+    NV_ncampos = 0;
+    NV_foco_campo = -1;
+    NV_npila_form = 0;
     NV_ninline = 0;
     nv_ref_libera();
     NV_sub = 0;
@@ -2108,7 +2335,63 @@ static int nv_procesa(const unsigned char *pg, int n) {
     return r == HUBBUB_OK ? 0 : -3;
 }
 
-/* ---- carga: URL (nsfetch) o fichero local ---- */
+/* v2.7: si el cuerpo no parece HTML (texto plano, JSON, errores
+   de API...), se envuelve en <pre> escapando &<>: sin esto el texto
+   sin etiquetas no llegaba al arbol y la pagina salia vacia. */
+#define NV_PLANO_MAX 65536
+static unsigned char NV_plano[NV_PLANO_MAX];
+
+static int nv_parece_html(const unsigned char *pg, int n) {
+    int i = 0;
+    if (n >= 3 && pg[0] == 0xEF && pg[1] == 0xBB && pg[2] == 0xBF)
+        i = 3;   /* BOM UTF-8 fuera */
+    while (i < n && (pg[i] == ' ' || pg[i] == '\t' ||
+                     pg[i] == '\r' || pg[i] == '\n'))
+        i++;
+    return i < n && pg[i] == '<';
+}
+
+static int nv_procesa_auto(const unsigned char *pg, int n) {
+    int i = 0, t = 0, k;
+    static const char pre[] =
+        "<html><head><title>texto</title></head><body><pre>";
+    static const char post[] = "</pre></body></html>";
+    if (n < 0 || !pg) return -1;
+    if (nv_parece_html(pg, n))
+        return nv_procesa(pg, n);
+    while (pre[t]) {
+        if (t + 1 >= (int)sizeof(NV_plano)) return -1;
+        NV_plano[t] = (unsigned char)pre[t];
+        t++;
+    }
+    for (k = 0; k < (int)sizeof(post); k++) ;
+    for (i = 0; i < n; i++) {
+        unsigned char c = pg[i];
+        const char *ent = 0;
+        if (c == '&') ent = "&amp;";
+        else if (c == '<') ent = "&lt;";
+        else if (c == '>') ent = "&gt;";
+        if (ent) {
+            int j = 0;
+            while (ent[j]) {
+                if (t + 1 >= (int)sizeof(NV_plano) - 24)
+                    break;
+                NV_plano[t++] = (unsigned char)ent[j++];
+            }
+            if (ent[j]) break;
+        } else {
+            if (t + 1 >= (int)sizeof(NV_plano) - 24) break;
+            NV_plano[t++] = c;
+        }
+    }
+    k = 0;
+    while (post[k]) {
+        if (t + 1 >= (int)sizeof(NV_plano)) break;
+        NV_plano[t++] = (unsigned char)post[k++];
+    }
+    NV_plano[t] = 0;
+    return nv_procesa(NV_plano, t);
+}
 static int nv_es_url(const char *s) {
     if (!s) return 0;
     if (s[0] == 'h' && s[1] == 't' && s[2] == 't' &&
@@ -2122,7 +2405,8 @@ static int nv_es_url(const char *s) {
     return 0;
 }
 
-/* -p: vuelca una linea de texto a consola (hasta 200 bytes) */
+/* ---- carga: URL (nsfetch) o fichero local ---- */
+static int nv_es_url(const char *s);
 static void nv_linea_consola(int f) {
     int i, n;
     char b[208];
@@ -2171,7 +2455,7 @@ static int nv_cargar(const char *f) {
         NV_ult_tam = i;
         pg = (const unsigned char *)NV_BIENV_HTML;
         n = i;
-        rc = nv_procesa(pg, n);
+        rc = nv_procesa_auto(pg, n);
         nv_css_fin();
         return rc;
     }
@@ -2194,7 +2478,7 @@ static int nv_cargar(const char *f) {
             }
             NV_base[i] = 0;
         }
-        rc = nv_procesa(pg, n);
+        rc = nv_procesa_auto(pg, n);
         nv_css_fin();
         return rc;
     }
@@ -2217,7 +2501,7 @@ static int nv_cargar(const char *f) {
         if (leido != tam) return -32;
         NV_ult_cod = 0;
         NV_ult_tam = tam;
-        rc = nv_procesa(NV_txt, tam);
+        rc = nv_procesa_auto(NV_txt, tam);
         nv_css_fin();
         return rc;
     }
@@ -2316,6 +2600,9 @@ static void nv_busca_url(const char *q, char *sal) {
 static void nv_ir(const char *texto);
 
 /* -p [url]: sin url = bateria contra stubs; con url = resumen */
+static void nv_envia_form(int fi, int ci_boton);
+static void nv_pide_post(const char *url, const char *qs, int empuja);
+
 static int nv_modo_p(const char *resto) {
     while (*resto == ' ') resto++;
     if (*resto == 0) {
@@ -2358,6 +2645,65 @@ static int nv_modo_p(const char *resto) {
         nv_ok(!u_strcmp(NV_titulo, "Enlaces"), "hist-atras");
         nv_hist_ir(1);
         nv_ok(!u_strcmp(NV_titulo, "CSS"), "hist-adelante");
+        /* v2.7: formularios POST (/form-post -> /eco-post) */
+        nv_navegar("http://10.0.2.2:18080/form-post", 1);
+        nv_ok(NV_tiene, "form-carga");
+        nv_ok(NV_ncampos == 1, "form-ncampos");
+        nv_ok(!u_strcmp(NV_campos[0].nombre, "q"), "form-nombre");
+        nv_ok(NV_campos[0].tipo == 0, "form-tipo");
+        nv_ok(NV_nforms == 1 && NV_forms[0].metodo == 1,
+              "form-post");
+        nv_ok(!u_strcmp(NV_forms[0].accion,
+                        "http://10.0.2.2:18080/eco-post"),
+              "form-accion");
+        {
+            int i = 0;
+            const char *t = "hola mundo";
+            while (t[i] && i < NV_CAMPO_TAM) {
+                NV_campos[0].valor[i] = t[i];
+                i++;
+            }
+            NV_campos[0].valor[i] = 0;
+            NV_campos[0].pos = i;
+        }
+        nv_envia_form(0, -1);
+        nv_ok(NV_tiene && nv_contiene("q=hola+mundo"),
+              "form-post-eco");
+        /* v2.7: formularios GET (/form-get -> /eco-get) */
+        nv_navegar("http://10.0.2.2:18080/form-get", 1);
+        nv_ok(NV_tiene, "formg-carga");
+        nv_ok(NV_ncampos == 3, "formg-ncampos");
+        nv_ok(NV_campos[1].tipo == 4 && NV_campos[1].marca,
+              "formg-caja");
+        nv_ok(NV_campos[2].tipo == 3, "formg-enviar");
+        {
+            int i = 0;
+            const char *t = "hola mundo";
+            while (t[i] && i < NV_CAMPO_TAM) {
+                NV_campos[0].valor[i] = t[i];
+                i++;
+            }
+            NV_campos[0].valor[i] = 0;
+            NV_campos[0].pos = i;
+        }
+        nv_envia_form(0, 2);
+        nv_ok(NV_tiene && nv_contiene("q=hola+mundo") &&
+              nv_contiene("ok=si"), "formg-eco");
+        nv_navegar("http://10.0.2.2:18080/form-get", 1);
+        {
+            int i = 0;
+            const char *t = "hola mundo";
+            while (t[i] && i < NV_CAMPO_TAM) {
+                NV_campos[0].valor[i] = t[i];
+                i++;
+            }
+            NV_campos[0].valor[i] = 0;
+            NV_campos[0].pos = i;
+        }
+        NV_campos[1].marca = 0;
+        nv_envia_form(0, 2);
+        nv_ok(NV_tiene && nv_contiene("q=hola+mundo") &&
+              !nv_contiene("ok="), "formg-sin-caja");
         /* Hito 5: imagenes BMP + GIF (pagina /img-bmp) */
         nv_navegar("http://10.0.2.2:18080/img-bmp", 1);
         nv_ok(NV_tiene, "img-carga");
@@ -2535,6 +2881,10 @@ static int NV_pend_empuja = 0, NV_hay_pend = 0, NV_pend_fase = 0;
 /* 1 en el bucle grafico (main); 0 en -p: sin bucle de eventos el
    pendiente nunca se ejecutaria, asi que nv_pide navega en el acto. */
 static int NV_gui = 0;
+/* POST diferido: cuerpo y marca (van con el pendiente). */
+static char NV_post_cuerpo[2048];
+static int NV_pend_post = 0, NV_post_n = 0;
+static int nv_envia_post(const char *url, const char *qs);
 
 static void nv_pide(const char *f, int empuja) {
     int i = 0;
@@ -2552,6 +2902,112 @@ static void nv_pide(const char *f, int empuja) {
     NV_pend_empuja = empuja ? 1 : 0;
     NV_hay_pend = 1;
     NV_pend_fase = 0;   /* fase 0: pintar "cargando..."; fase 1: descargar */
+    NV_pend_post = 0;
+    nv_pon_estado("cargando...");
+    ug_tick(&NV_v, 1);
+}
+
+/* Codifica application/x-www-form-urlencoded (espacio -> +). */
+static void nv_urlcod(const char *s, char *d, int max) {
+    int i = 0, j = 0;
+    static const char hx[] = "0123456789ABCDEF";
+    while (s[i] && j + 1 < max) {
+        unsigned char c = (unsigned char)s[i++];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            d[j++] = (char)c;
+        } else if (c == ' ') {
+            d[j++] = '+';
+        } else if (j + 3 < max) {
+            d[j++] = '%';
+            d[j++] = hx[(c >> 4) & 15];
+            d[j++] = hx[c & 15];
+        } else {
+            break;
+        }
+    }
+    d[j] = 0;
+}
+
+/* Junta los campos del formulario y lo envia (GET = navega a la URL
+   con consulta; POST = cuerpo). ci_boton = boton que lo activo
+   (manda su par solo si tiene nombre). */
+static void nv_envia_form(int fi, int ci_boton) {
+    char qs[2048], nb[128], vb[256];
+    int p = 0, i, k;
+    if (fi < 0 || fi >= NV_nforms) return;
+    for (i = 0; i < NV_ncampos; i++) {
+        nv_campo_t *c = &NV_campos[i];
+        if (c->form != fi || !c->nombre[0]) continue;
+        if (c->tipo == 4 && !c->marca) continue;
+        if (c->tipo == 3 && i != ci_boton) continue;
+        if (p > 0 && p < 2046) qs[p++] = '&';
+        nv_urlcod(c->nombre, nb, (int)sizeof(nb));
+        k = 0;
+        while (nb[k] && p < 2046) qs[p++] = nb[k++];
+        if (p < 2046) qs[p++] = '=';
+        nv_urlcod(c->tipo == 4 ?
+                  (c->valor[0] ? c->valor : "on") : c->valor,
+                  vb, (int)sizeof(vb));
+        k = 0;
+        while (vb[k] && p < 2046) qs[p++] = vb[k++];
+    }
+    qs[p] = 0;
+    if (NV_forms[fi].metodo == 0) {
+        char url[NV_MAXURL + 1];
+        int u = 0, hay_q = 0;
+        while (NV_forms[fi].accion[u] && u < NV_MAXURL) {
+            if (NV_forms[fi].accion[u] == '?') hay_q = 1;
+            url[u] = NV_forms[fi].accion[u];
+            u++;
+        }
+        if (u < NV_MAXURL) url[u++] = hay_q ? (char)'&' : (char)'?';
+        k = 0;
+        while (qs[k] && u < NV_MAXURL) {
+            url[u++] = qs[k++];
+        }
+        url[u] = 0;
+        nv_pide(url, 1);
+    } else {
+        nv_pide_post(NV_forms[fi].accion, qs, 1);
+    }
+}
+
+/* POST diferido: mismo mecanismo que nv_pide pero con cuerpo. */
+static void nv_pide_post(const char *url, const char *qs, int empuja) {
+    int i = 0, n = 0;
+    if (!url || !url[0]) return;
+    if (!NV_gui) {
+        /* -p: sin bucle, en el acto. */
+        {
+            char tmp[NV_MAXURL + 1];
+            int k = 0;
+            while (url[k] && k < NV_MAXURL) {
+                tmp[k] = url[k];
+                k++;
+            }
+            tmp[k] = 0;
+            nv_envia_post(tmp, qs ? qs : "");
+        }
+        (void)empuja;
+        return;
+    }
+    while (url[i] && i < NV_MAXURL) {
+        NV_pend[i] = url[i];
+        i++;
+    }
+    NV_pend[i] = 0;
+    while (qs && qs[n] && n < 2047) {
+        NV_post_cuerpo[n] = qs[n];
+        n++;
+    }
+    NV_post_cuerpo[n] = 0;
+    NV_post_n = n;
+    NV_pend_empuja = empuja ? 1 : 0;
+    NV_hay_pend = 1;
+    NV_pend_fase = 0;
+    NV_pend_post = 1;
     nv_pon_estado("cargando...");
     ug_tick(&NV_v, 1);
 }
@@ -2625,14 +3081,13 @@ static void nv_ir(const char *texto) {
 }
 
 static void nv_hist_ir(int d);
+static void nv_registra(const char *f, int rc, int empuja, int ms);
 
 static void nv_navegar(const char *f, int empuja) {
     int rc, t0;
     /* Hito 4: f puede aliasar NV_enl[i].url, que nv_cargar
        reconstruye; se copia a slot estable antes de cargar. */
     static char dest[NV_MAXURL + 1];
-    /* La bienvenida deja el foco en su casilla de busqueda. */
-    NV_qfoco = !u_strcmp(f, NV_BIENV_URL);
     {
         int i = 0;
         if (!f || !f[0]) return;
@@ -2660,8 +3115,19 @@ static void nv_navegar(const char *f, int empuja) {
     rc = nv_cargar(f);
     {
         int ms = (u_ticks() - t0) * 10;
-        int p = 0, q;
         if (ms < 0) ms = 0;
+        nv_registra(f, rc, empuja, ms);
+    }
+}
+
+/* Cola comun tras cargar (GET de nv_cargar o POST de nv_envia_post):
+   NV_ult_* ya puestos por quien cargo; NV_qfoco, estado, historial
+   y tick van aqui para no duplicarlos. */
+static void nv_registra(const char *f, int rc, int empuja, int ms) {
+    {
+        int p = 0, q;
+        /* La bienvenida deja el foco en su casilla de busqueda. */
+        NV_qfoco = !u_strcmp(f, NV_BIENV_URL);
         /* NV_red: "200 110B 30ms" | "fich 1234B 5ms" | "ERR ..." */
         if (rc == 0 && NV_ult_cod != 0) {
             u_itoa(NV_ult_cod, NV_red);
@@ -2717,6 +3183,7 @@ static void nv_navegar(const char *f, int empuja) {
         int i = 0;
         NV_tiene = 1;
         NV_foco_enl = -1;
+        NV_foco_campo = -1;
         while (f[i] && i < NV_MAXURL) {
             NV_url[i] = f[i];
             NV_bar[i] = f[i];
@@ -2735,6 +3202,7 @@ static void nv_navegar(const char *f, int empuja) {
     } else {
         NV_tiene = 0;
         NV_foco_enl = -1;
+        NV_foco_campo = -1;
         if (rc <= -10 && rc >= -19)
             nv_pon_estado("error de red");
         else if (rc == -20)
@@ -2747,6 +3215,46 @@ static void nv_navegar(const char *f, int empuja) {
     ug_tick(&NV_v, 1);
 }
 
+/* Respuesta POST (64K basta para formularios; el cuerpo grande es
+   de GET con su propio tope). */
+static unsigned char NV_post_res[65536];
+
+/* Envia un formulario por POST y registra la respuesta como pagina.
+   Devuelve como nv_cargar (0 ok, -20 no-2xx, resto error). */
+static int nv_envia_post(const char *url, const char *qs) {
+    u_http_res_t h;
+    int n = 0, rc, t0, i;
+    static const char ct[] =
+        "Content-Type: application/x-www-form-urlencoded\r\n";
+    while (qs[n] && n < 60000) n++;
+    /* base para resolver relativas de la respuesta */
+    i = 0;
+    while (url[i] && url[i] != '#' && i < NV_MAXURL) {
+        NV_base[i] = url[i];
+        i++;
+    }
+    NV_base[i] = 0;
+    NV_ult_cod = 0;
+    NV_ult_tam = 0;
+    t0 = u_ticks();
+    rc = nsfetch_trae_x(url, "POST", ct,
+                         (const unsigned char *)qs, n, &h,
+                         NV_post_res, (int)sizeof(NV_post_res),
+                         6000, 0, 0);
+    if (rc != 0) return -10 - (rc < 0 ? -rc : rc);
+    if (h.codigo < 200 || h.codigo > 299) return -20;
+    NV_ult_cod = (int)h.codigo;
+    NV_ult_tam = (int)h.cuerpo_n;
+    rc = nv_procesa_auto(NV_post_res, (int)h.cuerpo_n);
+    nv_css_fin();
+    {
+        int ms = (u_ticks() - t0) * 10;
+        if (ms < 0) ms = 0;
+        nv_registra(url, rc, 1, ms);
+    }
+    return rc;
+}
+
 static void nv_hist_ir(int d) {
     int j = NV_ihist + d;
     if (j < 0 || j >= NV_nhist) return;
@@ -2755,6 +3263,93 @@ static void nv_hist_ir(int d) {
     nv_pide(NV_hist[j], 0);
     NV_desplaza = NV_hscroll[j];
     if (NV_desplaza < 0) NV_desplaza = 0;
+}
+
+/* Origen en pantalla de la caja del campo (0 ok, -1 no visible).
+   Misma geometria que el pintado de filas (alineacion incluida). */
+static int nv_campo_xy(int ci, int *xo, int *yo) {
+    int f, rel, y, x, q, cw, cols, margen;
+    if (ci < 0 || ci >= NV_ncampos) return -1;
+    if (NV_campos[ci].tipo == 2) return -1;
+    f = NV_campos[ci].fila;
+    if (f < 0 || f >= NV_nfilas) return -1;
+    margen = nv_bienv() ? 92 : 0;
+    rel = f - NV_desplaza;
+    {
+        int vis = (NV_v.h - NV_BAR_H - margen - NV_EST_H) / UG_FH;
+        if (vis < 1) vis = 1;
+        if (rel < 0 || rel >= vis) return -1;
+    }
+    y = NV_BAR_H + margen + rel * UG_FH;
+    cw = NV_v.w - 14;
+    if (cw < 80) cw = 80;
+    cols = cw / UG_FW;
+    x = 4;
+    q = NV_filas[f].len;
+    if (q > 159) q = 159;
+    if (q > cols) q = cols;
+    if (NV_filas[f].al == 1 || NV_filas[f].al == 2) {
+        int disp = (cw - 8) - q * UG_FW;
+        if (disp > 0)
+            x += NV_filas[f].al == 1 ? disp / 2 : disp;
+    }
+    *xo = x + NV_campos[ci].col * UG_FW;
+    *yo = y;
+    return 0;
+}
+
+/* Pinta la caja del campo sobre su fila (ventana de valor con
+   desplazamiento + cursor si tiene el foco). */
+static void nv_campo_caja(int ci, int bx, int by) {
+    int enf = NV_tiene && ci == NV_foco_campo;
+    int tp = NV_campos[ci].tipo;
+    int bw = NV_campos[ci].ancho * UG_FW;
+    int fg = enf ? C_BLANCO : NS_TINTA;
+    ug_relleno(&NV_v, bx, by, bw, UG_FH,
+               enf ? T_SELECCION : NS_BLANCO);
+    if (tp == 4) {
+        ug_texto(&NV_v, bx, by,
+                 NV_campos[ci].marca ? "[X]" : "[ ]", fg);
+    } else if (tp == 3) {
+        const char *et = NV_campos[ci].valor[0] ?
+            NV_campos[ci].valor : "Enviar";
+        char b[64];
+        int j = 0, k = 0;
+        b[j++] = '[';
+        b[j++] = ' ';
+        while (et[k] && j < 60) b[j++] = et[k++];
+        b[j++] = ' ';
+        b[j++] = ']';
+        b[j] = 0;
+        ug_texto(&NV_v, bx, by, b, fg);
+    } else {
+        char b[NV_CAMPO_ANCHO + 3];
+        int j = 0, k, ini = 0, n = 0;
+        while (NV_campos[ci].valor[n]) n++;
+        if (n > NV_CAMPO_ANCHO) {
+            ini = NV_campos[ci].pos - NV_CAMPO_ANCHO + 1;
+            if (ini < 0) ini = 0;
+            if (ini > n - NV_CAMPO_ANCHO)
+                ini = n - NV_CAMPO_ANCHO;
+        }
+        b[j++] = '[';
+        for (k = 0; k < NV_CAMPO_ANCHO; k++) {
+            char c = NV_campos[ci].valor[ini + k];
+            if (!c) break;
+            b[j++] = (tp == 1) ? (char)'*' : c;
+        }
+        while (k < NV_CAMPO_ANCHO) {
+            b[j++] = ' ';
+            k++;
+        }
+        b[j++] = ']';
+        b[j] = 0;
+        ug_texto(&NV_v, bx, by, b, fg);
+        if (enf) {
+            int cx = bx + (1 + NV_campos[ci].pos - ini) * UG_FW;
+            ug_relleno(&NV_v, cx, by + 2, 7, 12, C_BLANCO);
+        }
+    }
 }
 
 static void nv_dibuja(void) {
@@ -2847,7 +3442,7 @@ static void nv_dibuja(void) {
                  "Intro=ir  R=recargar  H=inicio  Retroceso=barra",
                  NS_GRIS);
         ug_texto(&NV_v, 24, NV_BAR_H + 136,
-                 "Tab=enlace  Sin JS.",
+                 "Tab=enlace/campo  Sin JS.",
                  NS_GRIS);
     } else {
         int maxd = NV_nfilas - NV_vis;
@@ -2967,6 +3562,18 @@ static void nv_dibuja(void) {
                     }
                 }
             }
+            /* v2.7: cajas de formulario de esta fila */
+            if (NV_tiene && NV_ncampos > 0) {
+                int cc;
+                for (cc = 0; cc < NV_ncampos; cc++) {
+                    if (NV_campos[cc].tipo != 2 &&
+                        NV_campos[cc].fila == f) {
+                        int bx, by;
+                        if (!nv_campo_xy(cc, &bx, &by))
+                            nv_campo_caja(cc, bx, by);
+                    }
+                }
+            }
         }
         /* scrollbar */
         if (NV_nfilas > NV_vis) {
@@ -3003,6 +3610,84 @@ static void nv_asegura_enlace(int idx) {
     else if (f >= NV_desplaza + NV_vis)
         NV_desplaza = f - NV_vis + 1;
     if (NV_desplaza < 0) NV_desplaza = 0;
+}
+
+/* v2.7: lleva el campo con foco a la vista */
+static void nv_asegura_campo(int idx) {
+    int f;
+    if (idx < 0 || idx >= NV_ncampos) return;
+    f = NV_campos[idx].fila;
+    if (f < 0) return;
+    if (f < NV_desplaza)
+        NV_desplaza = f;
+    else if (f >= NV_desplaza + NV_vis)
+        NV_desplaza = f - NV_vis + 1;
+    if (NV_desplaza < 0) NV_desplaza = 0;
+}
+
+/* v2.7: teclas de edicion dentro de un campo de texto (0 = texto,
+   1 = clave). Devuelve 1 si la consumio. */
+static int nv_campo_tecla(int ci, int tecla) {
+    nv_campo_t *c;
+    int n;
+    if (ci < 0 || ci >= NV_ncampos) return 0;
+    c = &NV_campos[ci];
+    if (c->tipo != 0 && c->tipo != 1) return 0;
+    n = 0;
+    while (c->valor[n]) n++;
+    if (tecla == 8) {
+        if (c->pos > 0) {
+            int i;
+            c->pos--;
+            for (i = c->pos; i < n; i++) c->valor[i] = c->valor[i + 1];
+        }
+        return 1;
+    }
+    if (tecla == 0x103) {
+        if (c->pos > 0) c->pos--;
+        return 1;
+    }
+    if (tecla == 0x104) {
+        if (c->pos < n) c->pos++;
+        return 1;
+    }
+    if (tecla == 0x107) {
+        c->pos = 0;
+        return 1;
+    }
+    if (tecla == 0x108) {
+        c->pos = n;
+        return 1;
+    }
+    if (tecla == 0x106) {
+        if (c->pos < n) {
+            int i;
+            for (i = c->pos; i < n; i++) c->valor[i] = c->valor[i + 1];
+        }
+        return 1;
+    }
+    if (tecla >= 32 && tecla < 127 && n < NV_CAMPO_TAM) {
+        int i;
+        for (i = n; i > c->pos; i--) c->valor[i] = c->valor[i - 1];
+        c->valor[c->pos++] = (char)tecla;
+        c->valor[n + 1] = 0;
+        return 1;
+    }
+    return 0;
+}
+
+/* v2.7: activa el campo con foco (Intro o clic): enviar lo manda,
+   la caja conmuta, el texto manda su formulario. */
+static void nv_campo_activa(int ci) {
+    nv_campo_t *c;
+    if (ci < 0 || ci >= NV_ncampos) return;
+    c = &NV_campos[ci];
+    if (c->tipo == 4) {
+        c->marca = !c->marca;
+        return;
+    }
+    if (c->tipo == 3 || c->tipo == 0 || c->tipo == 1)
+        nv_envia_form(c->form, ci);
 }
 
 static void nv_ev_tecla(int tecla) {
@@ -3052,10 +3737,16 @@ static void nv_ev_tecla(int tecla) {
             NV_bpos = i;
             NV_foco_barra = 0;
         } else if (tecla == 9) {
-            /* Tab en barra: primer enlace */
+            /* Tab en barra: primer enlace, si no el primer campo */
             NV_foco_barra = 0;
+            NV_foco_campo = -1;
             NV_foco_enl = (NV_tiene && NV_nenl > 0) ? 0 : -1;
-            nv_asegura_enlace(NV_foco_enl);
+            if (NV_foco_enl >= 0) {
+                nv_asegura_enlace(NV_foco_enl);
+            } else if (NV_tiene && NV_ncampos > 0) {
+                NV_foco_campo = 0;
+                nv_asegura_campo(0);
+            }
         } else {
             ug_campo_tecla(NV_bar, (int)sizeof(NV_bar),
                            &NV_bpos, tecla);
@@ -3063,45 +3754,78 @@ static void nv_ev_tecla(int tecla) {
         ug_tick(&NV_v, 1);
         return;
     }
-    if (tecla == 0x101) {
+    /* v2.7: el campo de texto con foco se come la edicion
+       (incluido el espacio y el retroceso). */
+    if (NV_tiene && NV_foco_campo >= 0 &&
+        NV_foco_campo < NV_ncampos &&
+        (NV_campos[NV_foco_campo].tipo == 0 ||
+         NV_campos[NV_foco_campo].tipo == 1) &&
+        (tecla == 8 || tecla == 0x103 || tecla == 0x104 ||
+         tecla == 0x106 || tecla == 0x107 || tecla == 0x108 ||
+         (tecla >= 32 && tecla < 127))) {
+        nv_campo_tecla(NV_foco_campo, tecla);
+    } else if (tecla == 0x101) {
+        NV_foco_campo = -1;
         NV_desplaza--;
         if (NV_desplaza < 0) NV_desplaza = 0;
     } else if (tecla == 0x102) {
+        NV_foco_campo = -1;
         NV_desplaza++;
     } else if (tecla == 0x109) {
+        NV_foco_campo = -1;
         NV_desplaza -= NV_vis;
         if (NV_desplaza < 0) NV_desplaza = 0;
     } else if (tecla == 0x10A) {
+        NV_foco_campo = -1;
         NV_desplaza += NV_vis;
     } else if (tecla == 0x107) {
+        NV_foco_campo = -1;
         NV_desplaza = 0;
     } else if (tecla == 0x108) {
+        NV_foco_campo = -1;
         NV_desplaza = NV_nfilas - NV_vis;
         if (NV_desplaza < 0) NV_desplaza = 0;
     } else if (tecla == 8) {
+        NV_foco_campo = -1;
         nv_hist_ir(-1);
     } else if (tecla == 'r' || tecla == 'R') {
         if (NV_url[0])
             nv_pide(NV_url, 0);
     } else if (tecla == 9) {
-        /* Tab: siguiente enlace (al final, vuelve a la barra) */
-        if (NV_tiene && NV_nenl > 0 && NV_foco_enl + 1 < NV_nenl) {
+        /* Tab: enlaces, luego campos, al final la barra */
+        if (NV_tiene && NV_foco_campo < 0 && NV_nenl > 0 &&
+            NV_foco_enl + 1 < NV_nenl) {
             NV_foco_enl++;
             nv_asegura_enlace(NV_foco_enl);
+        } else if (NV_tiene && NV_foco_campo + 1 < NV_ncampos) {
+            NV_foco_enl = -1;
+            NV_foco_campo++;
+            nv_asegura_campo(NV_foco_campo);
         } else {
             NV_foco_enl = -1;
+            NV_foco_campo = -1;
             NV_foco_barra = 1;
             NV_qfoco = 0;
         }
     } else if (tecla == 13) {
-        /* Intro: sigue el enlace con foco */
-        if (NV_tiene && NV_foco_enl >= 0 &&
-            NV_foco_enl < NV_nenl)
+        /* Intro: campo con foco, si no enlace con foco */
+        if (NV_tiene && NV_foco_campo >= 0 &&
+            NV_foco_campo < NV_ncampos)
+            nv_campo_activa(NV_foco_campo);
+        else if (NV_tiene && NV_foco_enl >= 0 &&
+                 NV_foco_enl < NV_nenl)
             nv_pide(NV_enl[NV_foco_enl].url, 1);
         else if (!NV_tiene)
             NV_foco_barra = 1;
+    } else if (tecla == 32) {
+        /* Espacio: conmuta la caja con foco */
+        if (NV_tiene && NV_foco_campo >= 0 &&
+            NV_foco_campo < NV_ncampos &&
+            NV_campos[NV_foco_campo].tipo == 4)
+            nv_campo_activa(NV_foco_campo);
     } else if (tecla == 27) {
         NV_foco_enl = -1;
+        NV_foco_campo = -1;
         NV_foco_barra = 1;
         NV_qfoco = 0;
     }
@@ -3211,16 +3935,40 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
                 NV_desplaza += NV_vis;
             if (NV_desplaza < 0) NV_desplaza = 0;
         } else if (lx < NV_v.w - 12) {
-            /* Hito 4: clic en enlace */
+            /* v2.7: clic en caja antes que en enlace */
             int f = NV_desplaza +
                 (ly - NV_BAR_H - (nv_bienv() ? 92 : 0)) /
                 UG_FH, idx;
             if ((ly - NV_BAR_H - (nv_bienv() ? 92 : 0)) < 0)
                 f = -1;
             if (f >= 0 && f < NV_nfilas) {
+                int cc = nv_campo_en(f, (lx - 4) / UG_FW);
+                if (cc >= 0) {
+                    int tp = NV_campos[cc].tipo;
+                    NV_foco_enl = -1;
+                    NV_foco_campo = cc;
+                    NV_foco_barra = 0;
+                    NV_qfoco = 0;
+                    if (tp == 0 || tp == 1) {
+                        int bx, by, off, n = 0;
+                        if (!nv_campo_xy(cc, &bx, &by)) {
+                            off = (lx - bx) / UG_FW - 1;
+                            if (off < 0) off = 0;
+                            while (NV_campos[cc].valor[n]) n++;
+                            if (off > n) off = n;
+                            NV_campos[cc].pos = off;
+                        }
+                    } else {
+                        nv_campo_activa(cc);
+                    }
+                    ug_tick(&NV_v, 1);
+                    return;
+                }
                 idx = nv_enlace_en(f);
-                if (idx >= 0)
+                if (idx >= 0) {
+                    NV_foco_campo = -1;
                     nv_pide(NV_enl[idx].url, 1);
+                }
             }
         }
     }
@@ -3323,14 +4071,19 @@ int main(void) {
                        presento "cargando...". Al terminar se
                        repinta de inmediato. */
                     static char tmp[NV_MAXURL + 1];
-                    int i = 0, e = NV_pend_empuja;
+                    int i = 0, e = NV_pend_empuja, es_post =
+                        NV_pend_post;
                     NV_hay_pend = 0;
+                    NV_pend_post = 0;
                     while (NV_pend[i] && i < NV_MAXURL) {
                         tmp[i] = NV_pend[i];
                         i++;
                     }
                     tmp[i] = 0;
-                    nv_navegar(tmp, e);
+                    if (es_post)
+                        nv_envia_post(tmp, NV_post_cuerpo);
+                    else
+                        nv_navegar(tmp, e);
                     nv_dibuja();
                     ug_tick(&NV_v, 1);
                 }

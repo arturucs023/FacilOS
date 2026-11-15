@@ -43,6 +43,9 @@ Rutas:
   /eco-cookie          : devuelve el Cookie recibido ("visto: ...").
   /form-post           : formulario method=post action=/eco-post.
   /eco-post            : devuelve el cuerpo POST ("visto: ...").
+  /form-get            : formulario method=get action=/eco-get
+                         (texto + checkbox + submit).
+  /eco-get             : devuelve la consulta ("visto: ?...").
   redirecciones (sin version: el codigo 301/302 nunca se probo):
   /redir               : 302 a /redir2 (cadena de 2 saltos).
   /redir2              : 302 a /pagina + Set-Cookie ruta=redir.
@@ -484,6 +487,26 @@ def atiende(cn):
                     "</body></html>").encode("latin1")
             cn.sendall(resp(200, "OK",
                          [("Content-Type", "text/html"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path == "/form-get":
+            body = ("<html><head><title>FormaGet</title></head><body>"
+                    "<h1>Busca</h1>"
+                    "<form method=\"get\" action=\"/eco-get\">"
+                    "<input name=\"q\">"
+                    "<input type=\"checkbox\" name=\"ok\" value=\"si\""
+                    " checked>"
+                    "<input type=\"submit\" value=\"Ir\"></form>"
+                    "</body></html>").encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/html"),
+                          ("Content-Length", str(len(body)))],
+                         body))
+        elif path.startswith("/eco-get"):
+            qs = path[len("/eco-get"):]
+            body = ("visto: " + qs).encode("latin1")
+            cn.sendall(resp(200, "OK",
+                         [("Content-Type", "text/plain"),
                           ("Content-Length", str(len(body)))],
                          body))
         elif path == "/eco-post":
