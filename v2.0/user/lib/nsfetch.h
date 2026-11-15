@@ -22,6 +22,18 @@ typedef struct {
 
 int nsfetch_get(const char *url, nsfetch_res_t *r);
 
+/* GET con galletas (v2.8): manda Cookie del tarro (por host) y guarda
+   los Set-Cookie de cada respuesta (incluidas redirecciones).
+   Mismos codigos que nsfetch_get. */
+int nsfetch_get_ck(const char *url, nsfetch_res_t *r);
+
+/* POST con galletas (v2.8): igual, una sola peticion sin seguir
+   redirecciones. extra son cabeceras "N: v\r\n" (p. ej.
+   Content-Type) que viajan tras la Cookie. Mismos codigos que
+   nsfetch_get. */
+int nsfetch_post_ck(const char *url, const unsigned char *post,
+                    int npost, const char *extra, nsfetch_res_t *r);
+
 /* Trae http/https en el buffer del llamador (una peticion, sin
    redirecciones: como u_http_trae_x). Mismos codigos que
    u_http_trae_x. suite/detalle solo en https (pueden ser 0). */

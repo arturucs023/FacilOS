@@ -477,6 +477,36 @@ static int https_pide_x(const char *url, const char *metodo,
     return NSFETCH_OK;
 }
 
+/* v2.8 (galletas): host en minusculas para el tarro (igual que
+   u_http_url_t.host). */
+static void ck_host(const char *url, char *sal, int max) {
+    int i = 0, j = 0;
+    while (url[i] && url[i] != ':' && i < 8) i++;
+    if (url[i] == ':' && url[i + 1] == '/' && url[i + 2] == '/')
+        i += 3;
+    else
+        i = 0;
+    while (url[i] && url[i] != '/' && url[i] != ':' &&
+           url[i] != '?' && url[i] != '#' && j + 1 < max) {
+        unsigned char c = (unsigned char)url[i++];
+        sal[j++] = (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+    }
+    sal[j] = 0;
+}
+
+/* Guarda todos los Set-Cookie de la respuesta en el tarro. */
+static void ck_guarda(const char *host, const u_http_res_t *h) {
+    int k;
+    char v[256];
+    if (!host || !host[0]) return;
+    for (k = 0; k < 16; k++) {
+        if (u_http_cabecera_n(h, "set-cookie", k, v,
+                              (int)sizeof(v)) < 0)
+            break;
+        u_http_galleta_guarda(host, v);
+    }
+}
+
 /* Sigue redirecciones 301/302/303/307/308 con Location (max 3).
    http via u_http_trae; https via motor BearSSL. */
 int nsfetch_get(const char *url, nsfetch_res_t *r) {
@@ -546,6 +576,141 @@ int nsfetch_get(const char *url, nsfetch_res_t *r) {
             cur[q] = 0;
         }
     }
+}
+
+/* GET con galletas: como nsfetch_get pero manda Cookie del tarro y
+   guarda los Set-Cookie de cada respuesta (incluidas las de las
+   redirecciones intermedias). */
+int nsfetch_get_ck(const char *url, nsfetch_res_t *r) {
+    char cur[U_HTTP_MAX_URL + 1];
+    int redir = 0, i = 0;
+    if (!url || !r) return NSFETCH_E_URL;
+    r->cuerpo = (const char *)HCUERPO;
+    r->tam = 0;
+    r->codigo = 0;
+    r->suite = 0;
+    r->detalle = 0;
+    HCUERPO[0] = 0;
+    while (url[i] && i < U_HTTP_MAX_URL) {
+        cur[i] = url[i];
+        i++;
+    }
+    cur[i] = 0;
+    if (!cur[0] || i >= U_HTTP_MAX_URL) return NSFETCH_E_URL;
+    for (;;) {
+        u_http_url_t u;
+        u_http_res_t h;
+        char host[256], ck[512];
+        const char *extra = 0;
+        int cod;
+        if (u_http_url(cur, &u)) return NSFETCH_E_URL;
+        if (u.esquema != 0 && u.esquema != 1) return NSFETCH_E_URL;
+        ck_host(cur, host, (int)sizeof(host));
+        if (u_http_galleta_cab(host, ck, (int)sizeof(ck)) > 0)
+            extra = ck;
+        u_http_res_inicia(&h);
+        if (u.esquema == 0) {
+            int rc = u_http_trae_x(cur, "GET", extra, 0, 0, &h,
+                                   HCUERPO, U_HTTP_MAX_CPO,
+                                   10000u);
+            if (rc < 0) {
+                r->detalle = -rc;
+                if (rc == -2 || rc == -1) return NSFETCH_E_URL;
+                if (rc == -3 || rc == -4) return NSFETCH_E_DNS;
+                return NSFETCH_E_RED;
+            }
+            cod = h.codigo;
+        } else {
+            int det = 0, rc;
+            unsigned su = 0;
+            rc = https_pide_x(cur, "GET", extra, 0, 0, HCUERPO,
+                              U_HTTP_MAX_CPO, 6000u, &h, &su, &det);
+            if (rc != NSFETCH_OK) {
+                r->detalle = det;
+                return rc;
+            }
+            cod = h.codigo;
+            r->suite = su;
+        }
+        ck_guarda(host, &h);
+        if (cod != 301 && cod != 302 && cod != 303 &&
+            cod != 307 && cod != 308) {
+            r->codigo = cod;
+            r->tam = (int)h.cuerpo_n;
+            HCUERPO[r->tam < U_HTTP_MAX_CPO ? r->tam
+                                            : U_HTTP_MAX_CPO] = 0;
+            return NSFETCH_OK;
+        }
+        if (++redir > 3) return NSFETCH_E_REDIR;
+        {
+            char loc[U_HTTP_MAX_URL + 1];
+            char nxt[U_HTTP_MAX_URL + 1];
+            int q;
+            if (u_http_cabecera(&h, "Location", loc,
+                                (int)sizeof(loc)) < 0)
+                return NSFETCH_E_REDIR;
+            if (u_html_resuelve_url(cur, loc, nxt)) return NSFETCH_E_URL;
+            for (q = 0; nxt[q] && q < U_HTTP_MAX_URL; q++)
+                cur[q] = nxt[q];
+            cur[q] = 0;
+        }
+    }
+}
+
+/* POST con galletas: una sola peticion sin seguir redirecciones.
+   extra viaja tras la Cookie (p. ej. Content-Type). */
+int nsfetch_post_ck(const char *url, const unsigned char *post,
+                    int npost, const char *extra,
+                    nsfetch_res_t *r) {
+    char host[256], comb[2048];
+    u_http_res_t h;
+    int rc, k = 0, n, det = 0;
+    unsigned su = 0;
+    if (!url || !r) return NSFETCH_E_URL;
+    if (npost < 0) return NSFETCH_E_URL;
+    r->cuerpo = (const char *)HCUERPO;
+    r->tam = 0;
+    r->codigo = 0;
+    r->suite = 0;
+    r->detalle = 0;
+    HCUERPO[0] = 0;
+    ck_host(url, host, (int)sizeof(host));
+    {
+        char ck[512];
+        if (u_http_galleta_cab(host, ck, (int)sizeof(ck)) > 0) {
+            int q = 0;
+            while (ck[q] && k + 1 < (int)sizeof(comb)) {
+                comb[k++] = ck[q++];
+            }
+        }
+    }
+    if (extra && extra[0]) {
+        int q = 0;
+        while (extra[q] && k + 1 < (int)sizeof(comb)) {
+            comb[k++] = extra[q++];
+        }
+    }
+    comb[k] = 0;
+    rc = nsfetch_trae_x(url, "POST", comb[0] ? comb : extra,
+                        post, npost, &h, HCUERPO,
+                        U_HTTP_MAX_CPO, 6000u, &su, &det);
+    if (rc != 0) {
+        /* http: codigos lib (-1..); https: ya NSFETCH_* */
+        if (rc == -1 || rc == -2) return NSFETCH_E_URL;
+        if (rc == -3 || rc == -4) return NSFETCH_E_DNS;
+        if (rc < 0) {
+            r->detalle = det ? det : -rc;
+            return NSFETCH_E_RED;
+        }
+        r->detalle = det;
+        return rc;
+    }
+    r->suite = su;
+    ck_guarda(host, &h);
+    r->codigo = h.codigo;
+    r->tam = (int)h.cuerpo_n;
+    HCUERPO[r->tam < U_HTTP_MAX_CPO ? r->tam : U_HTTP_MAX_CPO] = 0;
+    return NSFETCH_OK;
 }
 
 /* Trae una URL http o https en el buffer del llamador (una sola

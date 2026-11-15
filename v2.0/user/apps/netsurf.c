@@ -1673,7 +1673,7 @@ static void nv_imagen(dom_node *h) {
     }
     if (!nv_resuelve(src, NV_tmpurl) && nv_es_url(NV_tmpurl)) {
         nsfetch_res_t r;
-        if (nsfetch_get(NV_tmpurl, &r) == NSFETCH_OK &&
+        if (nsfetch_get_ck(NV_tmpurl, &r) == NSFETCH_OK &&
             r.codigo == 200 && r.tam > 0) {
             int w = 0, hh = 0;
             unsigned char *rgb = 0;
@@ -2191,7 +2191,7 @@ static void nv_css_link_uno(dom_node *h) {
     if (nv_atributo(h, "href", href, (int)sizeof(href))) return;
     if (nv_resuelve(href, NV_tmpurl) || !nv_es_url(NV_tmpurl))
         return;
-    if (nsfetch_get(NV_tmpurl, &r) != NSFETCH_OK) return;
+    if (nsfetch_get_ck(NV_tmpurl, &r) != NSFETCH_OK) return;
     if (r.codigo < 200 || r.codigo > 299 || r.tam <= 0) return;
     n = r.tam > NV_LINKCAP ? NV_LINKCAP : r.tam;
     if (NV_pu.nestilo + n + 2 >= NV_MAXCSS) return;
@@ -2461,7 +2461,7 @@ static int nv_cargar(const char *f) {
     }
     if (nv_es_url(f)) {
         nsfetch_res_t r;
-        int e = nsfetch_get(f, &r);
+        int e = nsfetch_get_ck(f, &r);
         if (e != NSFETCH_OK) return -10 - e;
         NV_ult_cod = r.codigo;
         NV_ult_tam = r.tam;
@@ -2626,6 +2626,13 @@ static int nv_modo_p(const char *resto) {
         nv_ok(!u_strcmp(NV_titulo, "ConCSS"), "csslink-titulo");
         nv_ok(NV_nestilos >= 2, "csslink-estilos");
         nv_ok(nv_contiene("Verde externo"), "csslink-texto");
+        /* v2.8: galletas (/galleta fija dos, /eco-cookie las devuelve) */
+        nv_navegar("http://10.0.2.2:18080/galleta", 1);
+        nv_ok(NV_tiene, "galleta-carga");
+        nv_navegar("http://10.0.2.2:18080/eco-cookie", 1);
+        nv_ok(NV_tiene && nv_contiene("sesion=abc123"),
+              "galleta-sesion");
+        nv_ok(nv_contiene("tema=oscuro"), "galleta-tema");
         /* Hito 4: enlaces (misma pagina que el stub /enlaces) */
         nv_navegar("http://10.0.2.2:18080/enlaces", 1);
         nv_ok(NV_tiene, "enl-carga");
@@ -3215,14 +3222,13 @@ static void nv_registra(const char *f, int rc, int empuja, int ms) {
     ug_tick(&NV_v, 1);
 }
 
-/* Respuesta POST (64K basta para formularios; el cuerpo grande es
-   de GET con su propio tope). */
-static unsigned char NV_post_res[65536];
+/* Respuesta POST: usa HCUERPO via nsfetch_post_ck (mismo tope que
+   GET); sin bufer propio. */
 
 /* Envia un formulario por POST y registra la respuesta como pagina.
    Devuelve como nv_cargar (0 ok, -20 no-2xx, resto error). */
 static int nv_envia_post(const char *url, const char *qs) {
-    u_http_res_t h;
+    nsfetch_res_t r;
     int n = 0, rc, t0, i;
     static const char ct[] =
         "Content-Type: application/x-www-form-urlencoded\r\n";
@@ -3237,15 +3243,12 @@ static int nv_envia_post(const char *url, const char *qs) {
     NV_ult_cod = 0;
     NV_ult_tam = 0;
     t0 = u_ticks();
-    rc = nsfetch_trae_x(url, "POST", ct,
-                         (const unsigned char *)qs, n, &h,
-                         NV_post_res, (int)sizeof(NV_post_res),
-                         6000, 0, 0);
+    rc = nsfetch_post_ck(url, (const unsigned char *)qs, n, ct, &r);
     if (rc != 0) return -10 - (rc < 0 ? -rc : rc);
-    if (h.codigo < 200 || h.codigo > 299) return -20;
-    NV_ult_cod = (int)h.codigo;
-    NV_ult_tam = (int)h.cuerpo_n;
-    rc = nv_procesa_auto(NV_post_res, (int)h.cuerpo_n);
+    if (r.codigo < 200 || r.codigo > 299) return -20;
+    NV_ult_cod = r.codigo;
+    NV_ult_tam = r.tam;
+    rc = nv_procesa_auto((const unsigned char *)r.cuerpo, r.tam);
     nv_css_fin();
     {
         int ms = (u_ticks() - t0) * 10;
