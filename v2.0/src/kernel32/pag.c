@@ -548,10 +548,14 @@ int pag_nuevo_dir(void) {
     uint32_t *pk = pd_pool[0];
     for (int i = 0; i < 1024; i++) pd[i] = pk[i];
     /* 0-4 MB y 4-8 MB: tablas propias con la misma imagen del nucleo y
-       las paginas de usuario sustituidas por las del proceso. */
+       las paginas de usuario sustituidas por las del proceso.
+       v2.8: si el nucleo no tiene tabla (p. ej. PD[1]: 4-8 MB nunca
+       se mapea en el nucleo), la nueva ya viene a cero de pt_nueva
+       y NO se copia: antes se leia desde NULL (la IVT en 0x0) y el
+       proceso heredaba entradas basura PRESENTES; cualquier programa
+       de mas de 2 MB (cola en 0x400000+) paniqueaba al mapear. */
     uint32_t flags_pde = PAG_PRESENTE | PAG_ESCRITURA | PAG_USUARIO;
     for (int b = 0; b < 2; b++) {
-        uint32_t *vieja = (uint32_t *)(pk[b] & 0xFFFFF000u);
         uint32_t *nueva = pt_nueva();
         if (!nueva) {
             /* libera lo pedido hasta ahora */
@@ -565,7 +569,10 @@ int pag_nuevo_dir(void) {
         }
         unsigned idx = (unsigned)(nueva - (uint32_t *)pt_pool[0]) / 1024u;
         pt_de_dir[di][b] = idx + 1;
-        for (int i = 0; i < 1024; i++) nueva[i] = vieja[i];
+        if (pk[b] & PAG_PRESENTE) {
+            uint32_t *vieja = (uint32_t *)(pk[b] & 0xFFFFF000u);
+            for (int i = 0; i < 1024; i++) nueva[i] = vieja[i];
+        }
         pd[b] = (uint32_t)nueva | flags_pde;
     }
     cpu_if_restaura(fl);

@@ -355,10 +355,37 @@ if NSHAVE and BRHAVE:
 # imgdec (v2.5): PNG + JPEG baseline propios, freestanding.
 # Se enlaza en netsurf y t_fb (ver haz_programa).
 IMGDEC = str(BLD / "imgdec.o")
+# ttf (v2.8): rasterizador TrueType propio + fuente DejaVu Sans.
+# La fuente va como binario (objcopy) y se enlaza solo en netsurf
+# y t_font (no en ulib: pesa ~750K y no la necesita nadie mas).
+TTF = str(BLD / "ttf.o")
+FUENTE = str(BLD / "fuente.o")
 run([GCC] + PROGFLAGS + ["-I", str(LIB / "nslibc"), "-I", str(LIB),
      "-I", str(APPS)] +
      ["-DWITHOUT_ICONV_FILTER", "-DNDEBUG", "-w",
       "-c", str(LIB / "imgdec.c"), "-o", IMGDEC])
+run([GCC] + PROGFLAGS + ["-I", str(LIB / "nslibc"), "-I", str(LIB),
+     "-I", str(APPS)] +
+    ["-DNDEBUG", "-w",
+     "-c", str(LIB / "fuente" / "ttf.c"), "-o", TTF])
+# OJO: el nombre de simbolo sale del nombre de fichero tal cual se
+# pasa; con ruta absoluta saldria mutilado. Se copia a BLD y se corre
+# ahi con nombre base para que quede _binary_sans_ttf_{start,end}.
+shutil.copyfile(str(LIB / "fuente" / "sans.ttf"),
+                str(BLD / "sans.ttf"))
+_oc = [str(pathlib.Path(GCC).parent / "objcopy.exe"), "-I", "binary",
+       "-O", "elf32-i386", "-B", "i386",
+       "--redefine-sym", "_binary_sans_ttf_start=_fuente_datos",
+       "--redefine-sym", "_binary_sans_ttf_end=_fuente_fin",
+       "--redefine-sym", "_binary_sans_ttf_size=_fuente_tam",
+       "sans.ttf", "fuente.o"]
+_env = dict(os.environ)
+_env["PATH"] = os.path.dirname(GCC) + os.pathsep + _env.get("PATH", "")
+_rr = subprocess.run(_oc, capture_output=True, text=True, env=_env,
+                     cwd=str(BLD))
+if _rr.returncode != 0:
+    print("FALLO objcopy fuente:", _rr.stdout, _rr.stderr)
+    sys.exit(1)
 
 _datos_img = IMG_DIR / "FacilOS-v1.8-32-datos.img"
 
@@ -407,6 +434,10 @@ def haz_programa(nom, primero, fuentes=None, ver=2, con_ulib=False,
             objs += NSOBJS + NS1OBJS
         if nom in ("netsurf", "t_fb"):
             objs.append(IMGDEC)
+        # v2.8: ttf + fuente DejaVu Sans (objcopy binario) solo donde
+        # se dibuja texto proporcional (navegador y su test).
+        if nom in ("netsurf", "t_font"):
+            objs += [TTF, FUENTE]
         if con_br:
             objs += BROBJS
             # NSHIM ya viene dentro de NSOBJS (con_ns/con_ns1);
@@ -543,6 +574,8 @@ _apps3 = [
     ("t_ns", ["t_ns.c"], True),
     # Hito 2 NetSurf: KAT del fetch HTTP/HTTPS sobre stubs locales.
     ("t_fetch", ["t_fetch.c"], True, False, True),
+    # v2.8: KAT del rasterizador propio (ttf.c + DejaVu Sans).
+    ("t_font", ["t_font.c"], True),
     # Hito 3 NetSurf: navegador NetSurf (ugfx + nsfetch + hubbub/dom/css).
     # (fbrowser retirado en v2.5: netsurf es el unico navegador.)
 ]
@@ -561,9 +594,12 @@ for _nom, _fs, _u, *_g in _apps3:
     if _nom == "https":
         _tope = 524288
     if _nom == "netsurf":
-        _tope = 1572864
+        _tope = 2359296  # 2,25 MB: suma la fuente DejaVu
         _ns1 = True
         _br = True
+    if _nom == "t_font":
+        # test de fuentes: ttf + DejaVu (pesa ~800K)
+        _tope = 2097152
     if _nom == "t_fb":
         _tope = 770048
         _ns = True

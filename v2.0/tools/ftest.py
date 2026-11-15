@@ -29,7 +29,7 @@ ROOT = BASE.parent                             # raiz del repo
 TOOLS = BASE / "tools"
 STATE = BASE / "build" / ".ftest_state.json"
 LOGS = BASE / "build" / "logs"
-FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns", "t_fetch", "netsurf -p"]
+FULL_SUITE = ["t1_lib", "tutf8", "mem32", "t_cpp", "t_fb", "t_tls", "t_f32", "t_ns", "t_fetch", "t_font", "netsurf -p"]
 TIMEOUT = {"t_fb": 150.0, "t_red": 150.0}
 DFLT_TO = 60.0
 # fichero -> patron de tests afectados ("*" = todos). Lo no listado
@@ -55,6 +55,7 @@ IMPACTO = [
     ("v2.0/user/apps/f32.c", "*"),
     ("v2.0/user/apps/t_ns.c", "t_ns"),
     ("v2.0/user/apps/t_fetch.c", "t_fetch"),
+    ("v2.0/user/apps/t_font.c", "t_font"),
     ("v2.0/user/lib/nsfetch.h", "t_fetch"),
     ("v2.0/user/lib/nsfetch.c", "t_fetch"),
     ("v2.0/tools/tls_stub.py", "t_fetch"),

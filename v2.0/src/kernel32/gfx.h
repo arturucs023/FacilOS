@@ -41,6 +41,8 @@ void g_sprite(int x, int y, int w, int h, const uint32_t *pix);
 void g_sprite_t(int x, int y, int w, int h, const uint32_t *pix,
                 uint32_t clave);
 void g_blit(int x0, int y0, int w, int h, int x1, int y1);
+void g_mezcla(const unsigned char *masc, int w, int h, int x, int y,
+              unsigned int color);
 uint32_t g_leer_pixel(int x, int y);
 
 #endif

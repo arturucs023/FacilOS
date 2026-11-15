@@ -125,6 +125,8 @@ void u_limpiar(int color);
 void u_sprite(int x, int y, const USPRITE *s);
 void u_sprite_t(int x, int y, const USPRITE *s, unsigned int clave);
 void u_blit(int x0, int y0, int w, int h, int x1, int y1);
+void u_mezcla(const unsigned char *masc, int w, int h, int x, int y,
+              unsigned int color);
 unsigned int u_punto(int x, int y);
 
 /* ---- tiempo ---- */

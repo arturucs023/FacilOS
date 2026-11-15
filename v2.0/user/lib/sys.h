@@ -134,6 +134,19 @@ static inline int sys_blit(const void *op) {
     return sys_llama(22, (int)op, 0, 0);
 }
 
+/* v2.8-fuentes: mezcla mascara de alfa (1 B/px) con color XRGB.
+   op: u32 mascara, u16 w, u16 h (w|h<<16), int x, y; color por EDI. */
+static inline int sys_mezcla(const void *masc, int wh, int x, int y,
+                             unsigned color) {
+    int r;
+    __asm__ volatile ("int $0x80"
+                      : "=a"(r)
+                      : "0"(64), "b"((int)masc), "c"(wh), "d"(x),
+                        "S"(y), "D"(color)
+                      : "memory");
+    return r;
+}
+
 static inline int sys_leer_pixel(int x, int y) {
     return sys_llama(23, x, y, 0);
 }

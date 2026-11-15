@@ -1993,9 +1993,32 @@ static void sc_63(regs_t *r, int di)
         return;
  }
 
+__attribute__((optimize("O0"))) static void sc_64(regs_t *r, int di)
+ {
+        /* v2.8-fuentes: mezcla mascara de alfa (masc[0..w*h), 1 B/px)
+           del proceso sobre el dorso con color XRGB. ebx=masc,
+           ecx=w|(h<<16), edx=x, esi=y, edi=color. 0 ok. */
+        const uint8_t *ms = (const uint8_t *)r->ebx;
+        uint32_t wh = r->ecx;
+        int w = (int)(wh & 0xFFFFu), h = (int)((wh >> 16) & 0xFFFFu);
+        int x = (int)r->edx, y = (int)r->esi;
+        r->eax = (uint32_t)-1;
+        /* Toma propiedad como sc_13 (texto): ttf_texto equivale a u_texto. */
+        gfx_toma(di);
+        if (w < 1 || h < 1 || w > 256 || h > 256) return;
+        if ((uint32_t)w * (uint32_t)h > 65536u) return;
+        if (!ms) return;
+        if (di >= 0 && !ptr_ok(di, r->ebx, (uint32_t)w * (uint32_t)h,
+                               0))
+            return;
+        g_mezcla(ms, w, h, x, y, r->edi);
+        r->eax = 0;
+        return;
+    }
+
 
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 64
+#define SC_N 65
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -2062,6 +2085,7 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [62] = sc_62,   /* F8-compositor: recorte por arrendamiento */
     /* 62 reservada */
     [63] = sc_63,
+    [64] = sc_64,   /* v2.8-fuentes: mezcla alfa (mascara del proceso) */
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -2128,6 +2152,7 @@ static const char *const sc_nombre[SC_N] = {
     [61] = "red_tcp",
     [62] = "fija_clip",
     [63] = "red_rutas",
+    [64] = "mezclar",
 };
 static uint32_t sc_count[SC_N];
 

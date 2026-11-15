@@ -687,6 +687,75 @@ uint32_t g_leer_pixel(int x, int y) {
     return *(volatile uint32_t *)(b + (uint32_t)y * GP + (uint32_t)x * 4);
 }
 
+/* v2.8-fuentes: mezcla una mascara de alfa 8 bits (del proceso) sobre
+   el dorso con un color XRGB. Para texto proporcional renderizado en
+   anillo 3 (la fuente vive en el programa, no en el nucleo). */
+void g_mezcla(const uint8_t *masc, int w, int h, int x, int y,
+              uint32_t color) {
+    uint32_t b = base_dib();
+    uint32_t fr, fg, fb;
+    int xx, yy, paso, dx0;
+    if (!lfb || !masc || w <= 0 || h <= 0) return;
+    if (w > 256 || h > 256) return;
+    if ((uint32_t)w * (uint32_t)h > 65536u) return;
+    paso = w;
+    /* recorte a pantalla y arrendamiento (como g_presentar) */
+    if (x < 0) {
+        dx0 = -x;
+        w += x;
+        x = 0;
+    } else {
+        dx0 = 0;
+    }
+    if (y < 0) {
+        masc += (uint32_t)(-y) * (uint32_t)paso;
+        h += y;
+        y = 0;
+    }
+    if (x + w > GW) w = GW - x;
+    if (y + h > GH) h = GH - y;
+    if (clip_on) {
+        if (x < clip_x0) {
+            dx0 += clip_x0 - x;
+            w -= clip_x0 - x;
+            x = clip_x0;
+        }
+        if (y < clip_y0) {
+            masc += (uint32_t)(clip_y0 - y) * (uint32_t)paso;
+            h -= clip_y0 - y;
+            y = clip_y0;
+        }
+        if (x + w > clip_x1) w = clip_x1 - x;
+        if (y + h > clip_y1) h = clip_y1 - y;
+    }
+    if (w <= 0 || h <= 0) return;
+    fr = (color >> 16) & 0xFFu;
+    fg = (color >> 8) & 0xFFu;
+    fb = color & 0xFFu;
+    for (yy = 0; yy < h; yy++) {
+        volatile uint32_t *d = (volatile uint32_t *)
+            (b + (uint32_t)(y + yy) * GP + (uint32_t)x * 4);
+        const uint8_t *s = masc + (uint32_t)yy * (uint32_t)paso +
+                           (uint32_t)dx0;
+        for (xx = 0; xx < w; xx++) {
+            unsigned a = s[xx];
+            if (!a) continue;
+            if (a >= 255) {
+                d[xx] = (fr << 16) | (fg << 8) | fb;
+            } else {
+                uint32_t bg = d[xx];
+                unsigned br = (bg >> 16) & 0xFFu;
+                unsigned bg2 = (bg >> 8) & 0xFFu;
+                unsigned bb = bg & 0xFFu;
+                unsigned r = (fr * a + br * (255u - a)) / 255u;
+                unsigned g = (fg * a + bg2 * (255u - a)) / 255u;
+                unsigned bl = (fb * a + bb * (255u - a)) / 255u;
+                d[xx] = (r << 16) | (g << 8) | bl;
+            }
+        }
+    }
+}
+
 static void p_pixel(int x, int y, uint32_t fg) {
     uint32_t b = base_dib();
     if (!lfb) return;

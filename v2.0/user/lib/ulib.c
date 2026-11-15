@@ -508,6 +508,12 @@ void u_blit(int x0, int y0, int w, int h, int x1, int y1) {
     sys_blit(op);
 }
 
+void u_mezcla(const unsigned char *masc, int w, int h, int x, int y,
+              unsigned int color) {
+    if (!masc || w <= 0 || h <= 0) return;
+    sys_mezcla(masc, (w & 0xFFFF) | ((h & 0xFFFF) << 16), x, y, color);
+}
+
 unsigned int u_punto(int x, int y) {
     return (unsigned int)sys_leer_pixel(x, y);
 }
