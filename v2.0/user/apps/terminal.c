@@ -292,6 +292,10 @@ static const cmd_t CMDS[] = {
       "Entra en una carpeta.",
       "Cambia la carpeta actual. Acepta rutas, / y ..",
       "entrar_carpeta \"ruta\"", "entrar_carpeta \"Documentos\"", 1, 1, 0, 0 },
+    { "salir_carpeta", "carpetas",
+      "Sube a la carpeta madre.",
+      "Sube un nivel (equivale a entrar en ..). En / avisa y se queda.",
+      "salir_carpeta", "salir_carpeta", 0, 0, 0, 0 },
     { "mostrar_ruta", "carpetas",
       "Muestra la carpeta actual.",
       "Escribe la ruta de la carpeta donde estas.",
@@ -469,6 +473,8 @@ static int pop_construye(void);
 static void pop_abre_uno(void);
 static void pop_aplica(void);
 static void op_ruta(const cmd_t *c);
+static void adopta_dir(int dir);
+static void ruta_actual(char *b, int max);
 static void pon_ip(const char *tit, unsigned int v);
 static int lee_ip(const char *s, unsigned int *v);
 static ug_win_t *v_term = 0;   /* ventana actual (para modales) */
@@ -1185,6 +1191,77 @@ static int nombres_hasta(int idx, char pila_out[8][32], int *prof_out) {
     return 0;
 }
 
+/* ruta actual en b ("/" en la raiz). */
+static void ruta_actual(char *b, int max) {
+    int t = 0, k;
+    if (!b || max < 2) return;
+    b[t++] = '/';
+    for (k = 0; k < prof && k < 8 && t < max - 1; k++) {
+        int q = 0;
+        if (k) {
+            if (t < max - 1) b[t++] = '/';
+        }
+        while (pila[k][q] && t < max - 1) b[t++] = pila[k][q++];
+    }
+    b[t] = 0;
+}
+
+/* prompt en b ("FacilOS32> " en /, "FacilOS32/ruta> " dentro).
+   Recorta la ruta por la izquierda si no cabe (max 40). Devuelve
+   los bytes escritos (el dibujo cuenta por bytes). */
+static int prompt(char *b, int max) {
+    char r[128];
+    int p = 0, n = 0, i = 0;
+    const char *s = "FacilOS32";
+    if (!b || max < 14) return 0;
+    while (s[n] && p < max - 1) b[p++] = s[n++];
+    ruta_actual(r, (int)sizeof(r));
+    if (r[1]) {   /* fuera de /: anexa la ruta */
+        while (r[i] && p < max - 1) b[p++] = r[i++];
+        n = p - 9;   /* 9 = "FacilOS32" */
+        if (n > 40) {
+            int ini = 9 + n - 37, t = 12;
+            while (ini < p && (b[ini] & 0xC0) == 0x80) ini++;
+            b[9] = '.';
+            b[10] = '.';
+            b[11] = '.';
+            while (ini < p && t < max - 1) b[t++] = b[ini++];
+            p = t;
+        }
+    }
+    if (p < max - 1) b[p++] = '>';
+    if (p < max - 1) b[p++] = ' ';
+    b[p] = 0;
+    return p;
+}
+
+/* adopta el directorio dir como actual (pila y cwd). */
+static void adopta_dir(int dir) {
+    if (dir == 0) {
+        prof = 0;
+        cwd_idx = 0;
+        pon("Estas en /.");
+    } else {
+        char npila[8][32];
+        int nprof = 0, k;
+        if (nombres_hasta(dir, npila, &nprof)) {
+            perr(14, "Ruta no valida.");
+            return;
+        }
+        for (k = 0; k < nprof; k++) {
+            int q = 0;
+            while (npila[k][q] && q < 31) {
+                pila[k][q] = npila[k][q];
+                q++;
+            }
+            pila[k][q] = 0;
+        }
+        prof = nprof;
+        cwd_idx = dir;
+        op_ruta(0);
+    }
+}
+
 static void op_entrar(const cmd_t *c) {
     int dir;
     char base[32];
@@ -1199,29 +1276,7 @@ static void op_entrar(const cmd_t *c) {
     }
     if (!base[0]) {
         /* es un directorio ya (acaba en / o es ..): adopta */
-        if (dir == 0) {
-            prof = 0;
-            cwd_idx = 0;
-            pon("Estas en /.");
-        } else {
-            char npila[8][32];
-            int nprof = 0, k;
-            if (nombres_hasta(dir, npila, &nprof)) {
-                perr(14, "Ruta no valida.");
-                return;
-            }
-            for (k = 0; k < nprof; k++) {
-                int q = 0;
-                while (npila[k][q] && q < 31) {
-                    pila[k][q] = npila[k][q];
-                    q++;
-                }
-                pila[k][q] = 0;
-            }
-            prof = nprof;
-            cwd_idx = dir;
-            op_ruta(&CMDS[8]);
-        }
+        adopta_dir(dir);
         return;
     }
     {
@@ -1250,16 +1305,25 @@ static void op_entrar(const cmd_t *c) {
 
 static void op_ruta(const cmd_t *c) {
     char b[128];
-    int t = 0, k;
     (void)c;
-    b[t++] = '/';
-    for (k = 0; k < prof && k < 8; k++) {
-        int q = 0;
-        if (k) b[t++] = '/';
-        while (pila[k][q] && t < 120) b[t++] = pila[k][q++];
-    }
-    b[t] = 0;
+    ruta_actual(b, (int)sizeof(b));
     pon(b);
+}
+
+/* salir_carpeta: sube un nivel (equivale a entrar en ..). */
+static void op_salir(const cmd_t *c) {
+    int dir;
+    char base[32];
+    (void)c;
+    if (prof <= 0) {
+        pon("Ya estas en /.");
+        return;
+    }
+    if (resuelve("..", &dir, base)) {
+        perr(14, "Ruta no valida.");
+        return;
+    }
+    adopta_dir(dir);
 }
 
 static void op_arbol_rec(int dir, int nivel, int *nd, int *nf) {
@@ -3428,13 +3492,14 @@ static void dibuja_term(ug_win_t *v) {
     for (li = 0; li < vis && ini + li < nlin; li++)
         ug_texto(v, 4, 4 + li * UG_FH, pant[ini + li], C_GRIS);
     {
-        char pr[32];
-        int p = 0;
-        const char *s = "FacilOS32> ";
-        int maxc = (v->w - 60) / UG_FW, st = 0;
+        char pr[64];
+        int plen;
+        int maxc, st = 0;
         int yb = 4 + li * UG_FH;
-        while (*s && p < 30) pr[p++] = *s++;
-        pr[p] = 0;
+        plen = prompt(pr, (int)sizeof(pr));
+        maxc = (v->w - 12 - plen * UG_FW) / UG_FW;
+        if (maxc > NENTB) maxc = NENTB;
+        if (maxc < 1) maxc = 1;
         ug_texto(v, 4, yb, pr, C_VERDE_CLARO);
         if (maxc > NENTB) maxc = NENTB;
         if (maxc < 1) maxc = 1;
@@ -3467,14 +3532,14 @@ static void dibuja_term(ug_win_t *v) {
                     bi += av;
                 }
                 vv[t] = 0;
-                ug_texto(v, 4 + 11 * UG_FW, yb, vv, C_BLANCO);
+                ug_texto(v, 4 + plen * UG_FW, yb, vv, C_BLANCO);
             }
         }
         if (v->foco && !pop_abierto) {
             int col = cuenta_hasta(ent, pos) - st;
             if (col < 0) col = 0;
             if (col >= maxc) col = maxc - 1;
-            ug_relleno(v, 4 + 11 * UG_FW + col * UG_FW, yb, 2, UG_FH,
+            ug_relleno(v, 4 + plen * UG_FW + col * UG_FW, yb, 2, UG_FH,
                        C_BLANCO);
         }
     }
@@ -3593,11 +3658,12 @@ int main(void) {
                 }
             }
             if (k == 13) {
-                char eco[NENTB + 16];
-                int e = 0;
-                const char *pr = "FacilOS32> ";
-                while (*pr && e < NENTB + 14) eco[e++] = *pr++;
-                for (i = 0; i < nent && e < NENTB + 14; i++)
+                char eco[NENTB + 64];
+                char prb[64];
+                int e = 0, q = 0, qp;
+                qp = prompt(prb, (int)sizeof(prb));
+                while (q < qp && e < NENTB + 62) eco[e++] = prb[q++];
+                for (i = 0; i < nent && e < NENTB + 62; i++)
                     eco[e++] = ent[i];
                 eco[e] = 0;
                 pon(eco);
@@ -4078,6 +4144,8 @@ static void ejecuta_uno(ug_win_t *v, const char *ln) {
         op_listar(&CMDS[id]);
     } else if (!u_strcmp(cmd, "entrar_carpeta")) {
         op_entrar(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "salir_carpeta")) {
+        op_salir(&CMDS[id]);
     } else if (!u_strcmp(cmd, "mostrar_ruta")) {
         op_ruta(&CMDS[id]);
     } else if (!u_strcmp(cmd, "arbol")) {
