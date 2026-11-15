@@ -16,6 +16,7 @@ void __main(void) {
 #include "ugfx.h"
 #include "utext.h"
 #include "imgdec.h"
+#include "fuente/ttf.h"
 
 /* netsurf (Hito 3 NetSurf): visor minimo web/local.
  * fetch (nsfetch) o fichero -> hubbub -> libdom -> select CSS
@@ -1231,7 +1232,38 @@ static void nv_colores(css_computed_style *st, int *fg, int *bg) {
 /* ---- layout de texto ---- */
 static char NV_titulo[NV_MAXTITULO];
 static int NV_fg = -1, NV_bg = -1;
-static int NV_cols = 76;
+extern char fuente_datos[];
+extern char fuente_fin[];
+
+/* v2.8: texto proporcional propio. El contenido se envuelve por
+   ancho medido (NV_MAXW px) y las filas miden NV_FH px (metrica de
+   la fuente a NV_PX). Los campos siguen en celdas de 8 px para su
+   valor en mapa de bits; solo su posicion X se mide. */
+#define NV_PX 16
+#define NV_MAXW 600
+static int NV_FH = 16;
+static int NV_asc = 12;
+static int NV_CELDA = 8;   /* avance medio para estimar cajas */
+
+/* Abre la fuente enlazada; fija fila y ascenso. Sin video tambien
+   vale (solo tablas en memoria): el KAT -p envuelve con lo mismo. */
+static void nv_fuente_ini(void) {
+    int tam = (int)(fuente_fin - fuente_datos);
+    NV_FH = 16;
+    NV_asc = 12;
+    if (tam > 100000 &&
+        !ttf_abre((const unsigned char *)fuente_datos, tam)) {
+        int fh = ttf_alto_linea(NV_PX);
+        int asc = ttf_ascenso(NV_PX);
+        if (fh >= 8 && fh <= 64) NV_FH = fh;
+        if (asc >= 6 && asc <= NV_FH) NV_asc = asc;
+        {
+            int cm = ttf_ancho("abcdefghijklmnopqrstuvwxyz",
+                               26, NV_PX);
+            if (cm > 26) NV_CELDA = cm / 26;
+        }
+    }
+}
 static int NV_pend_esp = 0;
 /* Hito 6: subrayado (contador: <a> anidados), fondo de bloque
    explicito (contador) y alineacion (0 izq, 1 centro, 2 der) */
@@ -1354,7 +1386,80 @@ static int nv_ancho_linea(void) {
     return NV_ntxt - NV_filas[NV_nfilas].ini;
 }
 
-/* vuelca un byte al buffer (con wrap); devuelve 0 si no cabe */
+/* v2.8: ancho medido de la fila actual (bytes UTF-8). */
+static int nv_ancho_px(void) {
+    int ini = NV_filas[NV_nfilas].ini;
+    return ttf_ancho((const char *)NV_txt + ini, NV_ntxt - ini,
+                     NV_PX);
+}
+
+/* Ancho de los primeros n bytes de la fila f (n recortado). */
+static int nv_ancho_hasta(int f, int n) {
+    int len;
+    if (f < 0 || f >= NV_nfilas) return 0;
+    len = NV_filas[f].len;
+    if (n > len) n = len;
+    if (n < 0) n = 0;
+    return ttf_ancho((const char *)NV_txt + NV_filas[f].ini, n,
+                     NV_PX);
+}
+
+/* Bytes de la fila f que caben en maxw sin partir UTF-8 (max 159). */
+static int nv_ajusta(int f, int maxw) {
+    int len, ini, lo, hi, mid, w;
+    if (f < 0 || f >= NV_nfilas) return 0;
+    if (maxw < 0) maxw = 0;
+    len = NV_filas[f].len;
+    if (len > 159) len = 159;
+    ini = NV_filas[f].ini;
+    lo = 0;
+    hi = len;
+    while (lo < hi) {
+        mid = (lo + hi + 1) / 2;
+        w = ttf_ancho((const char *)NV_txt + ini, mid, NV_PX);
+        if (w <= maxw)
+            lo = mid;
+        else
+            hi = mid - 1;
+    }
+    while (lo > 0 &&
+           ((NV_txt[ini + lo] & 0xC0) == 0x80))
+        lo--;
+    return lo;
+}
+
+/* 1 si la cola de la fila actual es secuencia UTF-8 incompleta. */
+static int nv_cola_incompleta(void) {
+    int ini = NV_filas[NV_nfilas].ini;
+    int len = NV_ntxt - ini, cont = 0;
+    unsigned char c;
+    if (len <= 0) return 0;
+    while (len - 1 - cont >= 0 &&
+           ((NV_txt[ini + len - 1 - cont] & 0xC0) == 0x80)) {
+        cont++;
+        if (cont >= 3) break;
+    }
+    if (ini + len - 1 - cont < ini) return 0;
+    c = NV_txt[ini + len - 1 - cont];
+    if (c < 0x80) return 0;
+    if (c >= 0xC2 && c <= 0xDF) return cont < 1;
+    if (c >= 0xE0 && c <= 0xEF) return cont < 2;
+    if (c >= 0xF0 && c <= 0xF4) return cont < 3;
+    return 0;
+}
+
+/* Bytes del ultimo caracter de la fila actual (1..4). */
+static int nv_ultimo_car(void) {
+    int ini = NV_filas[NV_nfilas].ini;
+    int len = NV_ntxt - ini, j = 1;
+    if (len <= 0) return 0;
+    while (j < len && j < 4 &&
+           ((NV_txt[ini + len - j] & 0xC0) == 0x80))
+        j++;
+    return j;
+}
+
+/* vuelca un byte al buffer (con wrap medido); devuelve 0 si no cabe */
 static void nv_pon_byte(unsigned char c) {
     if (NV_nfilas >= NV_MAXFILAS) return;
     if (c == '\n') {
@@ -1362,9 +1467,30 @@ static void nv_pon_byte(unsigned char c) {
         return;
     }
     if (NV_ntxt >= NV_MAXTEXTO - 1) return;
-    if (nv_ancho_linea() >= NV_cols)
-        nv_salto();
-    if (NV_nfilas >= NV_MAXFILAS) return;
+    /* v2.8: el wrap es por ancho medido, no por celdas. No parte
+       UTF-8: si la cola queda incompleta y el exceso es poco, el
+       caracter entero pasa a esta fila. */
+    NV_txt[NV_ntxt++] = c;
+    {
+        int ini = NV_filas[NV_nfilas].ini;
+        int w = ttf_ancho((const char *)NV_txt + ini,
+                          NV_ntxt - ini, NV_PX);
+        if (w > NV_MAXW &&
+            (!nv_cola_incompleta() || w > NV_MAXW + 24)) {
+            int j = nv_ultimo_car();
+            NV_ntxt -= j;
+            nv_salto();
+            if (NV_nfilas >= NV_MAXFILAS) return;
+            NV_ntxt += j;
+            NV_filas[NV_nfilas].fg = NV_fg;
+            NV_filas[NV_nfilas].bg = NV_bg;
+            if (NV_sub > 0)
+                NV_filas[NV_nfilas].sub = 1;
+            if (NV_b > 0)
+                NV_filas[NV_nfilas].bd = 1;
+            return;
+        }
+    }
     /* Hito 6: la fila adopta el estilo vigente (los elementos en
        linea cambian fg/bg despues de crearla) */
     NV_filas[NV_nfilas].fg = NV_fg;
@@ -1373,7 +1499,6 @@ static void nv_pon_byte(unsigned char c) {
         NV_filas[NV_nfilas].sub = 1;
     if (NV_b > 0)
         NV_filas[NV_nfilas].bd = 1;
-    NV_txt[NV_ntxt++] = c;
 }
 
 /* texto normal: colapsa blancos, respeta wrap.
@@ -1449,7 +1574,7 @@ static int nv_resuelve(const char *ref, char *sal) {
 /* Hito 4: indice del enlace que cubre la fila f, o -1.
    Del ultimo al primero: el mas interno gana. */
 static int nv_campo_xy(int ci, int f, int *xo, int *yo);
-static int nv_campo_en(int f, int col);
+static int nv_campo_en_px(int f, int lx);
 static int nv_enlace_en(int f) {
     int i;
     for (i = NV_nenl - 1; i >= 0; i--) {
@@ -1459,9 +1584,9 @@ static int nv_enlace_en(int f) {
     return -1;
 }
 
-/* v2.7: indice del campo cuya caja cubre la celda (fila, col),
-   o -1. Del ultimo al primero: el mas interno gana. */
-static int nv_campo_en(int f, int col) {
+/* v2.7: indice del campo cuya caja cubre el pixel (f, lx), o -1.
+   Del ultimo al primero: el mas interno gana. */
+static int nv_campo_en_px(int f, int lx) {
     int i;
     for (i = NV_ncampos - 1; i >= 0; i--) {
         if (NV_campos[i].tipo != 2 &&
@@ -1469,10 +1594,8 @@ static int nv_campo_en(int f, int col) {
             f < NV_campos[i].fila + NV_campos[i].alto) {
             int bx, by;
             if (!nv_campo_xy(i, f, &bx, &by)) {
-                int x0 = (bx - 4) / UG_FW;
-                if (col >= x0 &&
-                    col < x0 + NV_campos[i].ancho)
-                    return i;
+                int bw = NV_campos[i].ancho * UG_FW;
+                if (lx >= bx && lx < bx + bw) return i;
             }
         }
     }
@@ -1986,7 +2109,9 @@ static void nv_campo(dom_node *h) {
     }
     else
         est = NV_CAMPO_ANCHO + 2;
-    if (NV_cols - nv_ancho_linea() < est + 1)
+    /* v2.8: la caja no se parte: si no cabe, salto antes (medido;
+       est es su longitud exacta en bytes, NV_CELDA la estima) */
+    if (NV_MAXW - nv_ancho_px() < (est + 1) * NV_CELDA)
         nv_salto();
     col = NV_ntxt - NV_filas[NV_nfilas].ini;
     NV_campos[ci].fila = NV_nfilas;
@@ -2162,7 +2287,7 @@ static void nv_lista(dom_node *h) {
     if (maxlen > 24) maxlen = 24;
     {
         int est = maxlen + 5, col;
-        if (NV_cols - nv_ancho_linea() < est + 1)
+        if (NV_MAXW - nv_ancho_px() < (est + 1) * NV_CELDA)
             nv_salto();
         col = NV_ntxt - NV_filas[NV_nfilas].ini;
         NV_campos[ci].fila = NV_nfilas;
@@ -2207,7 +2332,7 @@ static void nv_boton(dom_node *h) {
         int j = 0, k = 0, ci, est;
         while (et[k] && k < 56) k++;
         est = k + 4;
-        if (NV_cols - nv_ancho_linea() < est + 1)
+        if (NV_MAXW - nv_ancho_px() < (est + 1) * NV_CELDA)
             nv_salto();
         ci = nv_campo_nuevo(tp, nombre, valor, 0);
         if (ci < 0) return;
@@ -2570,7 +2695,6 @@ static int nv_procesa(const unsigned char *pg, int n) {
     NV_ntab = 0;
     NV_fg = -1;
     NV_bg = -1;
-    NV_cols = 76;
     NV_pend_esp = 0;
     NV_nenl = 0;
     NV_foco_enl = -1;
@@ -3697,7 +3821,7 @@ static int nv_linea_fin(const char *v, int ini) {
    (0 ok, -1 no visible). Misma geometria que el pintado de filas
    (alineacion incluida). */
 static int nv_campo_xy(int ci, int f, int *xo, int *yo) {
-    int rel, y, x, q, cw, cols, margen;
+    int rel, y, x, q, cw, margen;
     if (ci < 0 || ci >= NV_ncampos) return -1;
     if (NV_campos[ci].tipo == 2) return -1;
     if (f < NV_campos[ci].fila ||
@@ -3707,24 +3831,27 @@ static int nv_campo_xy(int ci, int f, int *xo, int *yo) {
     margen = nv_bienv() ? 92 : 0;
     rel = f - NV_desplaza;
     {
-        int vis = (NV_v.h - NV_BAR_H - margen - NV_EST_H) / UG_FH;
+        int vis = (NV_v.h - NV_BAR_H - margen - NV_EST_H) / NV_FH;
         if (vis < 1) vis = 1;
         if (rel < 0 || rel >= vis) return -1;
     }
-    y = NV_BAR_H + margen + rel * UG_FH;
+    y = NV_BAR_H + margen + rel * NV_FH;
     cw = NV_v.w - 14;
     if (cw < 80) cw = 80;
-    cols = cw / UG_FW;
     x = 4;
     q = NV_filas[f].len;
     if (q > 159) q = 159;
-    if (q > cols) q = cols;
-    if (NV_filas[f].al == 1 || NV_filas[f].al == 2) {
-        int disp = (cw - 8) - q * UG_FW;
-        if (disp > 0)
-            x += NV_filas[f].al == 1 ? disp / 2 : disp;
+    /* v2.8: la caja arranca donde mide la columna (no col*8) */
+    {
+        int qv = nv_ajusta(f, cw - 8);
+        int wq = nv_ancho_hasta(f, qv);
+        if (NV_filas[f].al == 1 || NV_filas[f].al == 2) {
+            int disp = (cw - 8) - wq;
+            if (disp > 0)
+                x += NV_filas[f].al == 1 ? disp / 2 : disp;
+        }
     }
-    *xo = x + NV_campos[ci].col * UG_FW;
+    *xo = x + nv_ancho_hasta(f, NV_campos[ci].col);
     *yo = y;
     return 0;
 }
@@ -3736,7 +3863,7 @@ static void nv_campo_caja(int ci, int bx, int by, int rel) {
     int tp = NV_campos[ci].tipo;
     int bw = NV_campos[ci].ancho * UG_FW;
     int fg = enf ? C_BLANCO : NS_TINTA;
-    ug_relleno(&NV_v, bx, by, bw, UG_FH,
+    ug_relleno(&NV_v, bx, by, bw, NV_FH,
                enf ? T_SELECCION : NS_BLANCO);
     if (tp == 4) {
         ug_texto(&NV_v, bx, by,
@@ -3833,7 +3960,7 @@ static void nv_campo_caja(int ci, int bx, int by, int rel) {
 
 static void nv_dibuja(void) {
     int w = NV_v.w, h = NV_v.h, i;
-    int cw, ch, cols;
+    int cw, ch;
     ug_comienza(&NV_v);
     ug_limpia(&NV_v, NS_BLANCO);
     /* Barra superior clara con borde inferior */
@@ -3856,16 +3983,15 @@ static void nv_dibuja(void) {
     ug_texto(&NV_v, w - 60 + 14, 8 + 6, "Ir", C_BLANCO);
     cw = w - 14;
     if (cw < 80) cw = 80;
-    cols = cw / UG_FW;
     ch = h - NV_BAR_H - NV_EST_H;
-    if (ch < UG_FH) ch = UG_FH;
+    if (ch < NV_FH) ch = NV_FH;
     {
         /* En la bienvenida el panel de busqueda ocupa la parte
            superior; el contenido baja. */
         int margen = nv_bienv() ? 92 : 0;
         ch -= margen;
-        if (ch < UG_FH) ch = UG_FH;
-        NV_vis = ch / UG_FH;
+        if (ch < NV_FH) ch = NV_FH;
+        NV_vis = ch / NV_FH;
         if (NV_vis < 1) NV_vis = 1;
         if (margen) {
             int fx, fy, fw, bx, qx;
@@ -3931,14 +4057,14 @@ static void nv_dibuja(void) {
         if (NV_desplaza < 0) NV_desplaza = 0;
         for (i = 0; i < NV_vis; i++) {
             int f = NV_desplaza + i;
-            int y = NV_BAR_H + (nv_bienv() ? 92 : 0) + i * UG_FH,
+            int y = NV_BAR_H + (nv_bienv() ? 92 : 0) + i * NV_FH,
                 q, k;
             int x = 4, color = NS_TINTA;
             if (f >= NV_nfilas) break;
             if (NV_filas[f].estilo == 1) continue;
             if (NV_filas[f].estilo == 2) {
-                ug_linea(&NV_v, 4, y + 8, cw - 4, y + 8,
-                         C_GRIS);
+                ug_linea(&NV_v, 4, y + NV_FH / 2, cw - 4,
+                         y + NV_FH / 2, C_GRIS);
                 continue;
             }
             if (NV_filas[f].estilo == 3) {
@@ -3954,9 +4080,9 @@ static void nv_dibuja(void) {
                         NV_img[gi].w;
                     int yy, xx;
                     if (dh < 1) dh = 1;
-                    for (yy = 0; yy < UG_FH &&
-                         band * UG_FH + yy < dh; yy++) {
-                        int sy = (band * UG_FH + yy) *
+                    for (yy = 0; yy < NV_FH &&
+                         band * NV_FH + yy < dh; yy++) {
+                        int sy = (band * NV_FH + yy) *
                             NV_img[gi].h / dh;
                         for (xx = 0; xx < dw &&
                              x + xx < cw - 4; xx++) {
@@ -3973,9 +4099,9 @@ static void nv_dibuja(void) {
                 }
                 continue;
             }
-            q = NV_filas[f].len;
-            if (q > (int)sizeof(tmp) - 2) q = (int)sizeof(tmp) - 2;
-            if (q > cols) q = cols;
+            /* v2.8: la fila se mide en px y se pinta proporcional.
+               tmp lleva los bytes visibles (frontera UTF-8). */
+            q = nv_ajusta(f, cw - 8);
             for (k = 0; k < q; k++)
                 tmp[k] = (char)NV_txt[NV_filas[f].ini + k];
             tmp[q] = 0;
@@ -3986,7 +4112,8 @@ static void nv_dibuja(void) {
                 color = NS_ENLACE;
             /* Hito 6: alineacion del bloque */
             if (NV_filas[f].al == 1 || NV_filas[f].al == 2) {
-                int disp = (cw - 8) - q * UG_FW;
+                int wq = ttf_ancho(tmp, q, NV_PX);
+                int disp = (cw - 8) - wq;
                 if (disp > 0)
                     x += NV_filas[f].al == 1 ? disp / 2 :
                                                disp;
@@ -3994,12 +4121,12 @@ static void nv_dibuja(void) {
             if (NV_filas[f].bg >= 0) {
                 if (NV_filas[f].full) {
                     /* Hito 6: el bloque cubre todo el ancho */
-                    ug_relleno(&NV_v, 4, y, cw - 8, UG_FH,
+                    ug_relleno(&NV_v, 4, y, cw - 8, NV_FH,
                                0x01000000 |
                                (NV_filas[f].bg & 0xFFFFFF));
                 } else {
-                    int wpx = q * UG_FW;
-                    ug_relleno(&NV_v, x, y, wpx, UG_FH,
+                    int wpx = ttf_ancho(tmp, q, NV_PX);
+                    ug_relleno(&NV_v, x, y, wpx, NV_FH,
                                0x01000000 |
                                (NV_filas[f].bg & 0xFFFFFF));
                 }
@@ -4009,16 +4136,27 @@ static void nv_dibuja(void) {
                 NV_foco_enl < NV_nenl &&
                 f >= NV_enl[NV_foco_enl].f0 &&
                 f <= NV_enl[NV_foco_enl].f1) {
-                int wpx = q * UG_FW;
+                int wpx = ttf_ancho(tmp, q, NV_PX);
                 if (wpx < 8) wpx = 8;
-                ug_relleno(&NV_v, x, y, wpx, UG_FH,
+                ug_relleno(&NV_v, x, y, wpx, NV_FH,
                            T_SELECCION);
-                color = C_BLANCO;
+                color = 0xFFFFFF;
             }
-            ug_texto(&NV_v, x, y, tmp, color);
-            /* Hito 6: negrita por doble pasada */
-            if (NV_filas[f].bd && q > 0)
-                ug_texto(&NV_v, x + 1, y, tmp, color);
+            if (!(color & 0x01000000))
+                color = 0xFFFFFF;
+            /* v2.8: texto proporcional con base en yb.
+               ug_* suma NV_v.ox/oy en recorta; ttf_texto va por
+               sc_64 directo (absoluto), asi que se suma aqui. */
+            if (q > 0) {
+                int yb = y + NV_asc + NV_v.oy;
+                int xa = x + NV_v.ox;
+                ttf_texto(xa, yb, tmp, q, NV_PX,
+                          (unsigned)color);
+                /* Hito 6: negrita por doble pasada */
+                if (NV_filas[f].bd)
+                    ttf_texto(xa + 1, yb, tmp, q, NV_PX,
+                              (unsigned)color);
+            }
             /* Hito 6: subrayado por tramo de enlace */
             if (NV_filas[f].sub && q > 0) {
                 int li;
@@ -4030,13 +4168,16 @@ static void nv_dibuja(void) {
                         int xe = (f == NV_enl[li].f1 &&
                                  NV_enl[li].c1 >= 0) ?
                             NV_enl[li].c1 : q;
+                        int xspx, xepx;
                         if (xs < 0) xs = 0;
                         if (xe > q) xe = q;
                         if (xe > xs) {
-                            ug_linea(&NV_v, x + xs * UG_FW,
-                                     y + UG_FH - 3,
-                                     x + xe * UG_FW - 1,
-                                     y + UG_FH - 3, color);
+                            xspx = nv_ancho_hasta(f, xs);
+                            xepx = nv_ancho_hasta(f, xe);
+                            ug_linea(&NV_v, x + xspx,
+                                     y + NV_asc + 2,
+                                     x + xepx - 1,
+                                     y + NV_asc + 2, color);
                         }
                     }
                 }
@@ -4059,7 +4200,7 @@ static void nv_dibuja(void) {
         }
         /* scrollbar */
         if (NV_nfilas > NV_vis) {
-            int th = NV_vis * UG_FH;
+            int th = NV_vis * NV_FH;
             int tam = th * NV_vis / NV_nfilas;
             int pos = th * NV_desplaza / NV_nfilas;
             if (tam < 8) tam = 8;
@@ -4338,14 +4479,13 @@ static void nv_ev_tecla(int tecla) {
         ug_tick(&NV_v, 1);
         return;
     }
-    /* v2.7: el campo de texto/area con foco se come la edicion
+    /* v2.7: el campo de texto/area/clave se come la edicion
        (incluido el espacio, el retroceso y el Intro del area). */
     if (NV_tiene && NV_foco_campo >= 0 &&
         NV_foco_campo < NV_ncampos &&
         (NV_campos[NV_foco_campo].tipo == 0 ||
          NV_campos[NV_foco_campo].tipo == 1 ||
-         (NV_campos[NV_foco_campo].tipo == 5 &&
-          (tecla == 13 || tecla == 0x101 || tecla == 0x102))) &&
+         NV_campos[NV_foco_campo].tipo == 5) &&
         (tecla == 8 || tecla == 0x103 || tecla == 0x104 ||
          tecla == 0x106 || tecla == 0x107 || tecla == 0x108 ||
          tecla == 0x101 || tecla == 0x102 || tecla == 13 ||
@@ -4594,7 +4734,7 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
             return;
         }
         if (lx >= NV_v.w - 12 && NV_nfilas > NV_vis) {
-            int th = NV_vis * UG_FH;
+            int th = NV_vis * NV_FH;
             int rel = ly - NV_BAR_H;
             int tam = th * NV_vis / NV_nfilas;
             int pos = th * NV_desplaza / NV_nfilas;
@@ -4607,11 +4747,11 @@ static void nv_ev_raton(int lx, int ly, int bot, int rueda) {
             /* v2.7: clic en caja antes que en enlace */
             int f = NV_desplaza +
                 (ly - NV_BAR_H - (nv_bienv() ? 92 : 0)) /
-                UG_FH, idx;
+                NV_FH, idx;
             if ((ly - NV_BAR_H - (nv_bienv() ? 92 : 0)) < 0)
                 f = -1;
             if (f >= 0 && f < NV_nfilas) {
-                int cc = nv_campo_en(f, (lx - 4) / UG_FW);
+                int cc = nv_campo_en_px(f, lx);
                 if (cc >= 0) {
                     int tp = NV_campos[cc].tipo;
                     NV_foco_enl = -1;
@@ -4682,6 +4822,7 @@ int main(void) {
     const char *a = u_args();
     int srv = 0;
     ug_ev_t ev;
+    nv_fuente_ini();
     while (*a == ' ') a++;
     if (a[0] == '-' && a[1] == 'p' &&
         (a[2] == 0 || a[2] == ' ')) {

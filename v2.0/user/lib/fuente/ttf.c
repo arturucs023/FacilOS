@@ -24,6 +24,9 @@ static int ASC, DESC, LGAP;
 static int CM_fmt;
 static int CM_tab;
 
+/* Reserva del scratch (definida tras las declaraciones). */
+static int tt_scratch(void);
+
 static u32 U16(const unsigned char *p) {
     return ((u32)p[0] << 8) | (u32)p[1];
 }
@@ -135,6 +138,11 @@ int ttf_abre(const unsigned char *d, int n) {
             CM_tab = 0;
             { F = Fold; Fn = Fnold; return -1; }
         }
+    }
+    /* v2.8: scratch en heap (no en .data: en PE ocuparia fichero).
+       Se reserva una sola vez; reabrir reutiliza. */
+    if (tt_scratch()) {
+        { F = Fold; Fn = Fnold; return -1; }
     }
     return 0;
 }
@@ -314,15 +322,18 @@ int ttf_ancho(const char *s, int n, int px) {
 #define TT_MAXSEG 4096
 #define TT_SS 2
 #define TT_POOLD (384 * 1024)
+#define TT_SUBN ((200 * 2) * (200 * 2))
 
+/* Scratch en heap (u_malloc en ttf_abre): en PE los estaticos
+   grandes caerian en .data y ocuparian fichero (~300 KB). */
 /* puntos en font units (con signo), contornos por indices finales */
-static long TT_fx[TT_MAXPT], TT_fy[TT_MAXPT];
-static char TT_fon[TT_MAXPT];
-static int TT_ffin[TT_MAXPT];
+static long *TT_fx, *TT_fy;
+static char *TT_fon;
+static int *TT_ffin;
 static int TT_np, TT_nfin;
 /* segmentos en subpixeles */
-static int TT_sx0[TT_MAXSEG], TT_sy0[TT_MAXSEG];
-static int TT_sx1[TT_MAXSEG], TT_sy1[TT_MAXSEG];
+static int *TT_sx0, *TT_sy0;
+static int *TT_sx1, *TT_sy1;
 static int TT_nseg;
 static int TT_px_actual;
 static int TT_ss;
@@ -334,10 +345,62 @@ typedef struct {
     int adv, xoff, ytop, w, h, off;
 } tt_ent_t;
 #define TT_NCACHE 256
-static tt_ent_t TT_cache[TT_NCACHE];
+static tt_ent_t *TT_cache;
 static unsigned char *TT_pool;
 static int TT_pool_usado;
-static unsigned char TT_sub[(200 * 2) * (200 * 2)];
+static unsigned char *TT_sub;
+/* puntos auxiliares de tt_simple / tt_emitir */
+static long *TT_qx, *TT_qy;
+static unsigned char *TT_qf;
+static int *TT_ex, *TT_ey;
+static char *TT_eo;
+
+/* Reserva unica del scratch; 0 ok, -1 sin memoria. */
+static int tt_scratch(void) {
+    int i;
+    if (TT_sub) return 0;
+    TT_fx = (long *)u_malloc(TT_MAXPT * (int)sizeof(long));
+    TT_fy = (long *)u_malloc(TT_MAXPT * (int)sizeof(long));
+    TT_fon = (char *)u_malloc(TT_MAXPT);
+    TT_ffin = (int *)u_malloc(TT_MAXPT * 4);
+    TT_sx0 = (int *)u_malloc(TT_MAXSEG * 4);
+    TT_sy0 = (int *)u_malloc(TT_MAXSEG * 4);
+    TT_sx1 = (int *)u_malloc(TT_MAXSEG * 4);
+    TT_sy1 = (int *)u_malloc(TT_MAXSEG * 4);
+    TT_cache = (tt_ent_t *)u_malloc(TT_NCACHE *
+                                    (int)sizeof(tt_ent_t));
+    TT_sub = (unsigned char *)u_malloc(TT_SUBN);
+    TT_qx = (long *)u_malloc(TT_MAXPT * (int)sizeof(long));
+    TT_qy = (long *)u_malloc(TT_MAXPT * (int)sizeof(long));
+    TT_qf = (unsigned char *)u_malloc(TT_MAXPT);
+    TT_ex = (int *)u_malloc(TT_MAXPT * 4);
+    TT_ey = (int *)u_malloc(TT_MAXPT * 4);
+    TT_eo = (char *)u_malloc(TT_MAXPT);
+    if (!TT_fx || !TT_fy || !TT_fon || !TT_ffin ||
+        !TT_sx0 || !TT_sy0 || !TT_sx1 || !TT_sy1 ||
+        !TT_cache || !TT_sub ||
+        !TT_qx || !TT_qy || !TT_qf ||
+        !TT_ex || !TT_ey || !TT_eo) {
+        u_free(TT_fx); u_free(TT_fy);
+        u_free(TT_fon); u_free(TT_ffin);
+        u_free(TT_sx0); u_free(TT_sy0);
+        u_free(TT_sx1); u_free(TT_sy1);
+        u_free(TT_cache); u_free(TT_sub);
+        u_free(TT_qx); u_free(TT_qy); u_free(TT_qf);
+        u_free(TT_ex); u_free(TT_ey); u_free(TT_eo);
+        TT_fx = 0; TT_fy = 0;
+        TT_fon = 0; TT_ffin = 0;
+        TT_sx0 = 0; TT_sy0 = 0;
+        TT_sx1 = 0; TT_sy1 = 0;
+        TT_cache = 0; TT_sub = 0;
+        TT_qx = 0; TT_qy = 0; TT_qf = 0;
+        TT_ex = 0; TT_ey = 0; TT_eo = 0;
+        return -1;
+    }
+    for (i = 0; i < TT_NCACHE; i++) TT_cache[i].vale = 0;
+    TT_pool_usado = 0;
+    return 0;
+}
 
 /* escala entera: font unit -> subpixel (con redondeo simetrico) */
 static int tt_escala(long v) {
@@ -408,8 +471,8 @@ static int tt_simple(const unsigned char *g, int len, long axx,
                      long axy, long ayx, long ayy, long ox,
                      long oy) {
     int nc, i, np = 0, off;
-    static long xs[TT_MAXPT], ys[TT_MAXPT];
-    static unsigned char fl[TT_MAXPT];
+    long *xs = TT_qx, *ys = TT_qy;
+    unsigned char *fl = TT_qf;
     if (len < 12) return -1;
     nc = I16(g);
     if (nc <= 0 || nc > 64) return -1;
@@ -658,8 +721,8 @@ static void tt_cache_limpia(void) {
 /* emite todos los contornos acumulados (escala a subpixeles) */
 static void tt_emitir(void) {
     int c, k;
-    static int sx[TT_MAXPT], sy[TT_MAXPT];
-    static char so[TT_MAXPT];
+    int *sx = TT_ex, *sy = TT_ey;
+    char *so = TT_eo;
     for (c = 0; c < TT_nfin; c++) {
         int ini = c == 0 ? 0 : TT_ffin[c - 1] + 1;
         int fin = TT_ffin[c];
@@ -741,6 +804,9 @@ static tt_ent_t *tt_cache_glifo(unsigned gi, int px) {
     int off, len, nc, i;
     int x0, x1, yy0, yy1, w, h;
     int need;
+    if (!TT_cache || !TT_sub || !TT_sx0 || !TT_fx || !TT_qx ||
+        !TT_ex)
+        return 0;
     if (e->vale && e->gi == gi && e->px == px) return e;
     if (glifo_off((int)gi, &off, &len) || len < 12) return 0;
     nc = I16(F + off);
@@ -802,7 +868,7 @@ static tt_ent_t *tt_cache_glifo(unsigned gi, int px) {
         }
         {
             unsigned total = (unsigned)W2 * (unsigned)H2;
-            if (total > sizeof(TT_sub)) return 0;
+            if (total > TT_SUBN) return 0;
             for (k = 0; (unsigned)k < total; k++) TT_sub[k] = 0;
         }
         tt_rellena(TT_sub, W2, H2);
