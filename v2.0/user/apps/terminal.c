@@ -36,6 +36,9 @@ static int prof = 0;
 
 /* Selector TAB. */
 static int pop_abierto = 0, pop_n = 0, pop_sel = 0, pop_ini = 0;
+/* v2.4-edicion: el popup sigue a lo escrito (se re-filtra tras
+   escribir o borrar en vez de cerrarse). */
+static int pop_reabre = 0;
 static char pop_items[NPOP][64];
 static char pop_titulo[32];
 static char list_dirpath[128];
@@ -715,7 +718,9 @@ static void cmd_ayuda(const char *arg) {
     }
     pon("Para saber mas: manual nombre_del_comando");
     pon("Teclas: flechas editan, arriba/abajo historial,");
-    pon("  repag/avpag y rueda desplazan la pantalla.");
+    pon("  repag/avpag y rueda desplazan la pantalla,");
+    pon("  TAB completa (sigue a lo escrito), Ctrl+A/E inicio/fin,");
+    pon("  Ctrl+W palabra, Ctrl+U/K borra atras/adelante.");
 }
 
 static void cmd_manual(const char *arg) {
@@ -3271,6 +3276,24 @@ static void pop_abre_uno(void) {
     pop_aplica();
 }
 
+/* v2.4-edicion: re-filtra el popup con lo escrito (sin aplicar:
+   la unica coincidencia espera su propio TAB). */
+static void pop_refresca(void) {
+    int n = pop_construye();
+    pop_reabre = 0;
+    if (n <= 0) {
+        pop_abierto = 0;
+        pop_n = 0;
+        pop_sel = 0;
+        pop_ini = 0;
+        return;
+    }
+    pop_abierto = 1;
+    pop_n = n;
+    pop_sel = 0;
+    pop_ini = 0;
+}
+
 static void hist_guarda_ent(void) {
     int l = u_strlen(ent), i;
     if (!l) return;
@@ -3328,6 +3351,48 @@ static void borra_en(void) {
         int i;
         for (i = pos; i <= nent; i++) ent[i] = ent[i + (s - pos)];
         nent -= s - pos;
+    }
+}
+
+/* v2.4-edicion: atajos propios con UTF-8 (nunca parten caracteres). */
+static int es_blanco_ed(char c) {
+    return c == ' ' || c == '\t';
+}
+
+/* Ctrl+W: borra la palabra anterior al cursor. */
+static void borra_palabra_antes(void) {
+    int fin = pos, n, i;
+    while (fin > 0) {
+        int a = ut_anterior(ent, fin);
+        if (!es_blanco_ed(ent[a])) break;
+        fin = a;
+    }
+    while (fin > 0) {
+        int a = ut_anterior(ent, fin);
+        if (es_blanco_ed(ent[a])) break;
+        fin = a;
+    }
+    n = pos - fin;
+    if (n <= 0) return;
+    for (i = fin; i <= nent; i++) ent[i] = ent[i + n];
+    nent -= n;
+    pos = fin;
+}
+
+/* Ctrl+U: borra desde el inicio hasta el cursor. */
+static void borra_hasta_ini(void) {
+    int i, n = pos;
+    if (n <= 0) return;
+    for (i = 0; i <= nent; i++) ent[i] = ent[i + n];
+    nent -= n;
+    pos = 0;
+}
+
+/* Ctrl+K: borra desde el cursor hasta el final. */
+static void borra_hasta_fin(void) {
+    if (pos < nent) {
+        ent[pos] = 0;
+        nent = pos;
     }
 }
 
@@ -3464,9 +3529,25 @@ int main(void) {
         if (t == UG_EV_SALIR) return 0;
         if (t == UG_EV_TECLA) {
             int k = ev.tecla;
+            /* v2.4-edicion: atajos Ctrl propios (el driver los trae
+               como 0xE100+letra, con May 0xE200+letra). Solo se
+               atienden los definidos; el resto se ignora. */
+            if ((k >= 0xE100 && k <= 0xE119) ||
+                (k >= 0xE200 && k <= 0xE219)) {
+                int idx = k >= 0xE200 ? k - 0xE200 : k - 0xE100;
+                if (idx == 0 || idx == 4 || idx == 22 ||
+                    idx == 20 || idx == 10)
+                    pop_abierto = 0;
+                if (idx == 0) pos = 0;          /* Ctrl+A inicio */
+                else if (idx == 4) pos = nent;  /* Ctrl+E fin */
+                else if (idx == 22) borra_palabra_antes();
+                else if (idx == 20) borra_hasta_ini();
+                else if (idx == 10) borra_hasta_fin();
+            }
             /* v2.2-editor: teclas con modificador del driver:
-               ctrl+letra y ctrl+retroceso se ignoran aqui (la
-               terminal no usa atajos); may+especial = base. */
+               ctrl+letra y ctrl+retroceso se ignoran aqui
+               (salvo los atajos de arriba);
+               may+especial = base. */
             if ((k >= 0xE100 && k <= 0xE219) || k == 0x7F) continue;
             if ((k >= 0x301 && k <= 0x30A) ||
                 (k >= 0x501 && k <= 0x50A) ||
@@ -3487,16 +3568,25 @@ int main(void) {
                     pop_abierto = 0;
                     continue;
                 } else if (k == 9) {
-                    if (pop_n > 1) {
+                    /* v2.4-edicion: con una sola opcion la aplica;
+                       con varias sigue ciclando. */
+                    if (pop_n == 1) pop_aplica();
+                    else if (pop_n > 1) {
                         pop_sel++;
                         if (pop_sel >= pop_n) pop_sel = 0;
                     }
                     continue;
-                } else if (k == 8 || k == TEC_IZQ_U || k == TEC_DER_U ||
-                           k == TEC_SUPR_U || k == TEC_INICIO_U ||
+                } else if (k == 8 || k == TEC_SUPR_U) {
+                    /* v2.4-edicion: el popup sigue a lo escrito */
+                    pop_reabre = 1;
+                    pop_abierto = 0;
+                } else if (k == TEC_IZQ_U || k == TEC_DER_U ||
+                           k == TEC_INICIO_U ||
                            k == TEC_FIN_U) {
                     pop_abierto = 0;
                 } else if (k >= 32) {
+                    /* v2.4-edicion: el popup sigue a lo escrito */
+                    pop_reabre = 1;
                     pop_abierto = 0;
                 } else {
                     continue;
@@ -3521,10 +3611,13 @@ int main(void) {
                 nent = 0;
                 pos = 0;
                 hay_borrador = 0;
+                pop_reabre = 0;
             } else if (k == 8) {
                 borra_antes();
+                if (pop_reabre) pop_refresca();
             } else if (k == TEC_SUPR_U) {
                 borra_en();
+                if (pop_reabre) pop_refresca();
             } else if (k == TEC_IZQ_U) {
                 pos = ut_anterior(ent, pos);
             } else if (k == TEC_DER_U) {
@@ -3574,12 +3667,14 @@ int main(void) {
                 ent[0] = 0;
                 nent = 0;
                 pos = 0;
+                pop_reabre = 0;
             } else if (k >= 32 && k != 0x7F &&
                        !(k >= 0x101 && k <= 0x10A) &&
                        !(k >= 0xE000 && k <= 0xE004) &&
                        !(k >= 0xE100 && k <= 0xE219) &&
                        !(k >= 0x300 && k <= 0x7FF)) {
                 inserta_cp((unsigned)k);
+                if (pop_reabre) pop_refresca();
             }
         } else if (t == UG_EV_RATON) {
             /* Rueda: desplaza el historial (3 lineas por paso). */
