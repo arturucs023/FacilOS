@@ -1244,6 +1244,9 @@ extern char fuente_fin[];
 static int NV_FH = 16;
 static int NV_asc = 12;
 static int NV_CELDA = 8;   /* avance medio para estimar cajas */
+/* v2.9-flex: tope de wrap vigente (NV_MAXW fuera de flex; fin de
+   columna dentro de un item). Entero, sin FPU. */
+static int NV_wrap = NV_MAXW;
 
 /* Abre la fuente enlazada; fija fila y ascenso. Sin video tambien
    vale (solo tablas en memoria): el KAT -p envuelve con lo mismo. */
@@ -1271,6 +1274,8 @@ static int NV_sub = 0, NV_bgexp = 0, NV_al = 0, NV_b = 0;
 /* ultimo estilo calculado: decoracion, bg explicito, alineacion */
 static int NV_last_dec = 0, NV_last_bgexp = 0, NV_last_al = -1;
 static int NV_last_bold = 0, NV_last_fgset = 0;
+/* v2.9-flex: display del ultimo nodo (1 = flex en fila). */
+static int NV_last_disp = 0;
 
 /* enlaces (Hito 4): filas [f0,f1] -> URL navegable.
    Hito 6: columnas [c0,c1] del subrayado (celdas de texto). */
@@ -1475,8 +1480,8 @@ static void nv_pon_byte(unsigned char c) {
         int ini = NV_filas[NV_nfilas].ini;
         int w = ttf_ancho((const char *)NV_txt + ini,
                           NV_ntxt - ini, NV_PX);
-        if (w > NV_MAXW &&
-            (!nv_cola_incompleta() || w > NV_MAXW + 24)) {
+        if (w > NV_wrap &&
+            (!nv_cola_incompleta() || w > NV_wrap + 24)) {
             int j = nv_ultimo_car();
             NV_ntxt -= j;
             nv_salto();
@@ -1846,6 +1851,7 @@ static void nv_estilo_nodo(dom_node *n) {
     NV_last_al = -1;
     NV_last_bold = 0;
     NV_last_fgset = 0;
+    NV_last_disp = 0;
     if (!NV_css_ok || !n) return;
     if (css_select_style(NV_ctx, n, &NV_uctx, &NV_media, 0,
                          &NV_sel, 0, &res) != CSS_OK || !res)
@@ -1887,6 +1893,14 @@ static void nv_estilo_nodo(dom_node *n) {
             (fw >= CSS_FONT_WEIGHT_600 &&
              fw <= CSS_FONT_WEIGHT_900))
             NV_last_bold = 1;
+        /* v2.9-flex: display del nodo (flex = fila por reparto
+           medido; inline-flex igual; grid cae a bloque). */
+        {
+            uint8_t dp = css_computed_display(st, false);
+            if (dp == CSS_DISPLAY_FLEX ||
+                dp == CSS_DISPLAY_INLINE_FLEX)
+                NV_last_disp = 1;
+        }
     }
     css_select_results_destroy(res);
     /* Hito 5: atributo style= como hoja inline (pesa mas que la
@@ -2111,7 +2125,7 @@ static void nv_campo(dom_node *h) {
         est = NV_CAMPO_ANCHO + 2;
     /* v2.8: la caja no se parte: si no cabe, salto antes (medido;
        est es su longitud exacta en bytes, NV_CELDA la estima) */
-    if (NV_MAXW - nv_ancho_px() < (est + 1) * NV_CELDA)
+    if (NV_wrap - nv_ancho_px() < (est + 1) * NV_CELDA)
         nv_salto();
     col = NV_ntxt - NV_filas[NV_nfilas].ini;
     NV_campos[ci].fila = NV_nfilas;
@@ -2287,7 +2301,7 @@ static void nv_lista(dom_node *h) {
     if (maxlen > 24) maxlen = 24;
     {
         int est = maxlen + 5, col;
-        if (NV_MAXW - nv_ancho_px() < (est + 1) * NV_CELDA)
+        if (NV_wrap - nv_ancho_px() < (est + 1) * NV_CELDA)
             nv_salto();
         col = NV_ntxt - NV_filas[NV_nfilas].ini;
         NV_campos[ci].fila = NV_nfilas;
@@ -2332,7 +2346,7 @@ static void nv_boton(dom_node *h) {
         int j = 0, k = 0, ci, est;
         while (et[k] && k < 56) k++;
         est = k + 4;
-        if (NV_MAXW - nv_ancho_px() < (est + 1) * NV_CELDA)
+        if (NV_wrap - nv_ancho_px() < (est + 1) * NV_CELDA)
             nv_salto();
         ci = nv_campo_nuevo(tp, nombre, valor, 0);
         if (ci < 0) return;
@@ -2347,6 +2361,388 @@ static void nv_boton(dom_node *h) {
         nv_pon_texto((const unsigned char *)b, j, 1);
         NV_campos[ci].ancho = j;
     }
+}
+
+/* v2.9-flex (primeros pasos): fila flexible por reparto medido.
+   Solo display:flex en bloque (inline-flex se ignora); grid cae a
+   bloque. Los items de solo texto/enlaces comparten fila; con
+   controles, imagenes o bloques anidados van en bloque propio.
+   Sin grow/shrink: cada item mide su contenido y el que no cabe
+   abre otra fila (wrap siempre activo, aun sin flex-wrap). */
+#define NV_FLEX_HUECO 16
+#define NV_FLEX_MAXITEM 24
+
+static void nv_recorre(dom_node *n, int prof);
+
+/* 1 si el subarbol es texto/enlaces en linea (sin bloques, img,
+   saltos ni controles). Presupuesto de nodos anti-cuelgue. */
+static int nv_simple_n(dom_node *n, int *pres, int prof) {
+    dom_node *h = 0;
+    if (!n || !pres || prof > 8) return 0;
+    if (*pres <= 0) return 0;
+    if (dom_node_get_first_child(n, &h) != DOM_NO_ERR || !h)
+        return 1;               /* sin hijos: simple */
+    for (;;) {
+        dom_node_type t = (dom_node_type)0;
+        if (--(*pres) < 0) {
+            dom_node_unref(h);
+            return 0;
+        }
+        if (dom_node_get_node_type(h, &t) == DOM_NO_ERR) {
+            if (t == DOM_ELEMENT_NODE) {
+                char nb[16];
+                int id = T_OTRO;
+                if (!nv_nom_el(h, nb)) id = nv_id_nom(nb);
+                if (nv_es_bloque(id) || id == T_IMG ||
+                    id == T_BR || id == T_HR ||
+                    id == T_INPUT || id == T_SELECT ||
+                    id == T_TEXTAREA || id == T_BUTTON ||
+                    id == T_FORM) {
+                    dom_node_unref(h);
+                    return 0;
+                }
+                if (!nv_simple_n(h, pres, prof + 1)) {
+                    dom_node_unref(h);
+                    return 0;
+                }
+            }
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(h, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(h);
+                break;
+            }
+            dom_node_unref(h);
+            h = s;
+        }
+    }
+    return 1;
+}
+
+/* junta el texto visible del subarbol (colapsado, sin marcas).
+   Ignora script/style (sin contenido visible). */
+static void nv_texto_todo_n(dom_node *n, char *sal, int max,
+                             int *pt, int *ppend, int prof) {
+    dom_node *h = 0;
+    if (!n || !sal || !pt || !ppend || prof > 8) return;
+    if (dom_node_get_first_child(n, &h) != DOM_NO_ERR || !h)
+        return;
+    for (;;) {
+        dom_node_type t = (dom_node_type)0;
+        if (dom_node_get_node_type(h, &t) == DOM_NO_ERR) {
+            if (t == DOM_TEXT_NODE) {
+                dom_string *ds = 0;
+                if (dom_characterdata_get_data(
+                        (dom_characterdata *)h,
+                        &ds) == DOM_NO_ERR && ds) {
+                    const uint8_t *p = dom_string_data(ds);
+                    uint32_t m = dom_string_length(ds), i;
+                    if (p) {
+                        for (i = 0; i < m; i++) {
+                            unsigned char c = p[i];
+                            if (c == '\r') continue;
+                            if (c == '\n' || c == '\t' ||
+                                c == ' ')
+                                *ppend = 1;
+                            else {
+                                if (*ppend && *pt > 0 &&
+                                    *pt < max - 1)
+                                    sal[(*pt)++] = ' ';
+                                *ppend = 0;
+                                if (*pt < max - 1)
+                                    sal[(*pt)++] = (char)c;
+                            }
+                        }
+                    }
+                    dom_string_unref(ds);
+                }
+            } else if (t == DOM_ELEMENT_NODE) {
+                char nb[16];
+                int id = T_OTRO;
+                if (!nv_nom_el(h, nb)) id = nv_id_nom(nb);
+                if (id != T_SCRIPT && id != T_STYLE &&
+                    id != T_TITLE && id != T_HEAD &&
+                    id != T_META && id != T_LINK)
+                    nv_texto_todo_n(h, sal, max, pt, ppend,
+                                    prof + 1);
+            }
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(h, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(h);
+                break;
+            }
+            dom_node_unref(h);
+            h = s;
+        }
+    }
+}
+
+/* ancho natural del item (texto colapsado, sin limite de columna). */
+static int nv_ancho_sub(dom_node *n) {
+    char b[512];
+    int t = 0, pend = 0;
+    nv_texto_todo_n(n, b, (int)sizeof(b), &t, &pend, 0);
+    if (t < 0) t = 0;
+    if (t > 511) t = 511;
+    b[t] = 0;
+    return ttf_ancho(b, t, NV_PX);
+}
+
+/* pinta un item simple en la fila actual (sin abrir ni cerrarla),
+   con su estilo y enlace propios, como en linea. */
+static void nv_flex_item(dom_node *it, int prof) {
+    char nb[16];
+    int id = T_OTRO, fg0 = NV_fg, bg0 = NV_bg;
+    int es_enl = 0, ienl = -1, ntxt0 = 0;
+    int es_sub = 0, es_bold = 0;
+    if (!nv_nom_el(it, nb)) id = nv_id_nom(nb);
+    nv_estilo_nodo(it);
+    if (NV_last_bold) {
+        es_bold = 1;
+        NV_b++;
+    }
+    if (id == T_A) {
+        char href[256];
+        if (!nv_atributo(it, "href", href, (int)sizeof(href)) &&
+            !nv_resuelve(href, NV_tmpurl) &&
+            NV_nenl < NV_MAXENL) {
+            int q = 0;
+            ienl = NV_nenl++;
+            NV_enl[ienl].f0 = NV_nfilas;
+            NV_enl[ienl].f1 = NV_nfilas;
+            NV_enl[ienl].c0 = NV_ntxt -
+                NV_filas[NV_nfilas].ini;
+            NV_enl[ienl].c1 = -1;
+            while (NV_tmpurl[q] && q < 255) {
+                NV_enl[ienl].url[q] = NV_tmpurl[q];
+                q++;
+            }
+            NV_enl[ienl].url[q] = 0;
+            es_enl = 1;
+            ntxt0 = NV_ntxt;
+        }
+        if (NV_last_dec & CSS_TEXT_DECORATION_UNDERLINE) {
+            es_sub = 1;
+            NV_sub++;
+        }
+    }
+    if ((id == T_H1 || id == T_H2) && !NV_last_fgset)
+        NV_fg = NS_TITULO;
+    nv_recorre(it, prof + 1);
+    if (es_enl && ienl >= 0) {
+        int f1 = NV_nfilas;
+        if (NV_nfilas >= NV_MAXFILAS) f1 = NV_MAXFILAS - 1;
+        if (NV_ntxt == NV_filas[f1].ini &&
+            f1 > NV_enl[ienl].f0)
+            f1--;
+        if (NV_ntxt == ntxt0) {
+            /* vacio: anula el registro */
+            NV_nenl--;
+        } else {
+            NV_enl[ienl].f1 = f1;
+            NV_enl[ienl].c1 = NV_ntxt - NV_filas[f1].ini;
+        }
+    }
+    if (es_sub) NV_sub--;
+    if (es_bold) NV_b--;
+    NV_fg = fg0;
+    NV_bg = bg0;
+}
+
+/* 1 si h es contenedor flex tratable: con hijos elemento simples
+   y sin texto directo (el texto directo cae a flujo normal). */
+static int nv_es_flex_tratable(dom_node *h) {
+    dom_node *c = 0;
+    int n = 0;
+    if (dom_node_get_first_child(h, &c) != DOM_NO_ERR || !c)
+        return 0;
+    for (;;) {
+        dom_node_type t = (dom_node_type)0;
+        if (dom_node_get_node_type(c, &t) == DOM_NO_ERR) {
+            if (t == DOM_TEXT_NODE) {
+                dom_string *ds = 0;
+                if (dom_characterdata_get_data(
+                        (dom_characterdata *)c,
+                        &ds) == DOM_NO_ERR && ds) {
+                    const uint8_t *p = dom_string_data(ds);
+                    uint32_t m = dom_string_length(ds), i;
+                    int sucio = 0;
+                    for (i = 0; p && i < m; i++) {
+                        unsigned char ch = p[i];
+                        if (ch != ' ' && ch != '\t' &&
+                            ch != '\n' && ch != '\r') {
+                            sucio = 1;
+                            break;
+                        }
+                    }
+                    dom_string_unref(ds);
+                    if (sucio) {
+                        dom_node_unref(c);
+                        return 0;
+                    }
+                }
+            } else if (t == DOM_ELEMENT_NODE) {
+                char nb[16];
+                int id = T_OTRO, pres = 600;
+                if (!nv_nom_el(c, nb)) id = nv_id_nom(nb);
+                if (id == T_SCRIPT || id == T_STYLE ||
+                    id == T_TITLE || id == T_HEAD ||
+                    id == T_META || id == T_LINK) {
+                    /* sin contenido: se ignora */
+                } else if (id == T_IMG || id == T_BR ||
+                           id == T_HR || id == T_INPUT ||
+                           id == T_SELECT || id == T_TEXTAREA ||
+                           id == T_BUTTON || id == T_FORM) {
+                    dom_node_unref(c);
+                    return 0;
+                } else {
+                    if (n >= NV_FLEX_MAXITEM) {
+                        dom_node_unref(c);
+                        return 0;
+                    }
+                    if (!nv_simple_n(c, &pres, 0)) {
+                        dom_node_unref(c);
+                        return 0;
+                    }
+                    n++;
+                }
+            }
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(c, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(c);
+                break;
+            }
+            dom_node_unref(c);
+            c = s;
+        }
+    }
+    return n > 0;
+}
+
+/* reparte los hijos elemento en filas por ancho medido. */
+static void nv_flex(dom_node *h, int prof) {
+    int an[NV_FLEX_MAXITEM], n = 0, k = 0;
+    int col = 0, abierta = 0, lim0 = NV_wrap;
+    dom_node *c = 0;
+    /* pasada 1: mide hijos elemento visibles */
+    if (dom_node_get_first_child(h, &c) != DOM_NO_ERR || !c)
+        return;
+    for (;;) {
+        dom_node_type t = (dom_node_type)0;
+        if (dom_node_get_node_type(c, &t) == DOM_NO_ERR &&
+            t == DOM_ELEMENT_NODE && n < NV_FLEX_MAXITEM) {
+            char nb[16];
+            int id = T_OTRO;
+            if (!nv_nom_el(c, nb)) id = nv_id_nom(nb);
+            if (id != T_SCRIPT && id != T_STYLE &&
+                id != T_TITLE && id != T_HEAD &&
+                id != T_META && id != T_LINK)
+                an[n++] = nv_ancho_sub(c);
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(c, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(c);
+                break;
+            }
+            dom_node_unref(c);
+            c = s;
+        }
+    }
+    if (!n) {
+        NV_wrap = lim0;
+        return;
+    }
+    /* pasada 2: coloca en orden; el que no cabe abre otra fila */
+    if (dom_node_get_first_child(h, &c) != DOM_NO_ERR || !c) {
+        NV_wrap = lim0;
+        return;
+    }
+    for (;;) {
+        dom_node_type t = (dom_node_type)0;
+        int es_item = 0;
+        if (dom_node_get_node_type(c, &t) == DOM_NO_ERR &&
+            t == DOM_ELEMENT_NODE && k < n) {
+            char nb[16];
+            int id = T_OTRO;
+            if (!nv_nom_el(c, nb)) id = nv_id_nom(nb);
+            if (id != T_SCRIPT && id != T_STYLE &&
+                id != T_TITLE && id != T_HEAD &&
+                id != T_META && id != T_LINK)
+                es_item = 1;
+        }
+        if (es_item) {
+            int w = an[k++];
+            if (w > NV_MAXW) {
+                /* gigante: bloque propio a ancho completo */
+                if (abierta) {
+                    nv_salto();
+                    abierta = 0;
+                }
+                nv_bloque();
+                NV_wrap = NV_MAXW;
+                nv_flex_item(c, prof);
+                nv_salto();
+                col = 0;
+            } else {
+                if (!abierta) {
+                    nv_bloque();
+                    col = 0;
+                    abierta = 1;
+                }
+                if (col > 0 &&
+                    col + NV_FLEX_HUECO + w > NV_MAXW) {
+                    nv_salto();
+                    nv_bloque();
+                    col = 0;
+                }
+                NV_wrap = NV_MAXW;
+                /* relleno hasta la columna (division entera hacia
+                   abajo: nunca rebasa col; el sobrante discreto
+                   queda como hueco, sin partir el item). */
+                {
+                    int npad = 0, cur, need, ns;
+                    int sp = ttf_avance(32, NV_PX);
+                    if (sp < 1) sp = 1;
+                    cur = nv_ancho_px();
+                    need = col - cur;
+                    ns = 0;
+                    if (need > 0) ns = need / sp;
+                    if (ns > 200) ns = 200;
+                    while (ns-- > 0) {
+                        nv_pon_byte(' ');
+                        npad++;
+                    }
+                    (void)npad;
+                }
+                NV_wrap = col + w;
+                if (NV_wrap < col + 1) NV_wrap = col + 1;
+                nv_flex_item(c, prof);
+                col += w + NV_FLEX_HUECO;
+            }
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(c, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(c);
+                break;
+            }
+            dom_node_unref(c);
+            c = s;
+        }
+    }
+    if (abierta) nv_salto();
+    NV_wrap = lim0;
 }
 
 static void nv_recorre(dom_node *n, int prof) {
@@ -2387,9 +2783,11 @@ static void nv_recorre(dom_node *n, int prof) {
                         int es_enl = 0, ienl = -1, ntxt0 = 0;
                         int es_sub = 0, es_bold = 0, es_h = 0;
                         int es_form = 0, es_salta = 0;
+                        int es_flex = 0, es_flex_hecho = 0;
                         nv_estilo_nodo(h);
                         ebg = NV_last_bgexp;
                         eal = NV_last_al;
+                        if (NV_last_disp == 1) es_flex = 1;
                         if (NV_last_bold) {
                             es_bold = 1;
                             NV_b++;
@@ -2491,7 +2889,16 @@ static void nv_recorre(dom_node *n, int prof) {
                                 }
                             }
                         }
-                        if (id == T_LI) {
+                        if (es_flex && es_bloque &&
+                            nv_es_flex_tratable(h)) {
+                            /* v2.9-flex: items en fila medida */
+                            if ((id == T_H1 || id == T_H2) &&
+                                !NV_last_fgset)
+                                NV_fg = NS_TITULO;
+                            nv_flex(h, prof);
+                            es_salta = 1;
+                            es_flex_hecho = 1;
+                        } else if (id == T_LI) {
                             nv_bloque();
                             nv_pon_texto(
                                 (const unsigned char *)"  * ",
@@ -2532,7 +2939,7 @@ static void nv_recorre(dom_node *n, int prof) {
                            interiores ya quedaron asignados) */
                         if (es_form && NV_npila_form > 0)
                             NV_npila_form--;
-                        if (es_bloque)
+                        if (es_bloque && !es_flex_hecho)
                             nv_salto();
                         if (es_sub)
                             NV_sub--;
@@ -2695,6 +3102,7 @@ static int nv_procesa(const unsigned char *pg, int n) {
     NV_ntab = 0;
     NV_fg = -1;
     NV_bg = -1;
+    NV_wrap = NV_MAXW;
     NV_pend_esp = 0;
     NV_nenl = 0;
     NV_foco_enl = -1;
@@ -3209,6 +3617,24 @@ static int nv_modo_p(const char *resto) {
               NV_campos[1].pos == 1 &&
               !NV_campos[2].marca && NV_campos[3].marca,
               "form2-reset");
+        /* v2.9-flex: fila compartida por red (pagina /flex) */
+        nv_ok(nv_pagina("http://10.0.2.2:18080/flex") == 0,
+              "flex-carga");
+        {
+            int f, k, fa = -1, fb = -1;
+            for (f = 0; f < NV_nfilas; f++) {
+                int m = NV_filas[f].len;
+                for (k = 0; k + 3 <= m; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "Uno", 3))
+                        fa = f;
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "Dos", 3))
+                        fb = f;
+                }
+            }
+            nv_ok(fa >= 0 && fa == fb, "flex-fila-red");
+        }
         /* Hito 5: imagenes BMP + GIF (pagina /img-bmp) */
         nv_navegar("http://10.0.2.2:18080/img-bmp", 1);
         nv_ok(NV_tiene, "img-carga");
@@ -3306,6 +3732,67 @@ static int nv_modo_p(const char *resto) {
             for (k = 0; k < NV_nfilas; k++)
                 if (NV_filas[k].fg == 0xFF0000) ok = 1;
             nv_ok(ok, "ua-clsdiv");
+        }
+        /* v2.9-flex: items en la misma fila por reparto medido */
+        {
+            static const char m1[] =
+                "<html><head><style>.f{display:flex}</style>"
+                "</head><body><div class=\"f\"><div>AAA</div>"
+                "<div>BBB</div></div></body></html>";
+            int f, k, fa = -1, fb = -1, oa = -1, ob = -1;
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            for (f = 0; f < NV_nfilas; f++) {
+                for (k = 0; k + 3 <= NV_filas[f].len; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "AAA", 3)) {
+                        fa = f;
+                        oa = k;
+                    }
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "BBB", 3)) {
+                        fb = f;
+                        ob = k;
+                    }
+                }
+            }
+            nv_ok(fa >= 0 && fa == fb, "flex-fila");
+            nv_ok(oa >= 0 && ob > oa, "flex-orden");
+        }
+        /* control: sin flex los bloques van en filas distintas */
+        {
+            static const char m1[] =
+                "<html><head></head><body><div><div>AAA</div>"
+                "<div>BBB</div></div></body></html>";
+            int f, k, fa = -1, fb = -1;
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            for (f = 0; f < NV_nfilas; f++) {
+                for (k = 0; k + 3 <= NV_filas[f].len; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "AAA", 3))
+                        fa = f;
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "BBB", 3))
+                        fb = f;
+                }
+            }
+            nv_ok(fa >= 0 && fb >= 0 && fa != fb, "flex-bloque");
+        }
+        /* v2.9-flex: el item que no cabe abre otra fila */
+        {
+            static const char m1[] =
+                "<html><head><style>.f{display:flex}</style>"
+                "</head><body><div class=\"f\"><div>"
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                "</div><div>B</div></div></body></html>";
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            nv_ok(NV_nfilas >= 3, "flex-salto");
         }
         u_print("netsurf: ");
         nv_num(NV_pruebas);
