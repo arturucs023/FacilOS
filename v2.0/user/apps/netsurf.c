@@ -1275,8 +1275,11 @@ static int NV_sub = 0, NV_bgexp = 0, NV_al = 0, NV_b = 0;
 static int NV_last_dec = 0, NV_last_bgexp = 0, NV_last_al = -1;
 static int NV_last_bold = 0, NV_last_fgset = 0;
 /* v2.9-flex/grid: display del ultimo nodo (1 = flex en fila,
-   2 = cuadricula). */
+   2 = cuadricula) y hueco entre items (-1 = sin fijar). */
 static int NV_last_disp = 0;
+static int NV_last_gap = -1;
+/* Hueco vigente en el contenedor (16 si el CSS no lo fija). */
+static int NV_gap = 16;
 
 /* enlaces (Hito 4): filas [f0,f1] -> URL navegable.
    Hito 6: columnas [c0,c1] del subrayado (celdas de texto). */
@@ -1844,6 +1847,30 @@ static void nv_imagen(dom_node *h) {
                      u_strlen(alt), 0);
 }
 
+/* v2.9: display y hueco desde el estilo calculado (solo px;
+   el resto de unidades cae al hueco por defecto). */
+static void nv_lee_display(css_computed_style *st) {
+    uint8_t dp;
+    css_fixed glen = 0;
+    css_unit gunit = CSS_UNIT_PX;
+    uint8_t gg;
+    if (!st) return;
+    dp = css_computed_display(st, false);
+    if (dp == CSS_DISPLAY_FLEX ||
+        dp == CSS_DISPLAY_INLINE_FLEX)
+        NV_last_disp = 1;
+    else if (dp == CSS_DISPLAY_GRID ||
+        dp == CSS_DISPLAY_INLINE_GRID)
+        NV_last_disp = 2;
+    gg = css_computed_column_gap(st, &glen, &gunit);
+    if (gg == CSS_COLUMN_GAP_SET && gunit == CSS_UNIT_PX) {
+        int g = FIXTOINT(glen);
+        if (g < 0) g = 0;
+        if (g > 64) g = 64;
+        NV_last_gap = g;
+    }
+}
+
 /* aplica el estilo CSS del nodo; actualiza NV_fg/NV_bg */
 static void nv_estilo_nodo(dom_node *n) {
     css_select_results *res = 0;
@@ -1853,6 +1880,7 @@ static void nv_estilo_nodo(dom_node *n) {
     NV_last_bold = 0;
     NV_last_fgset = 0;
     NV_last_disp = 0;
+    NV_last_gap = -1;
     if (!NV_css_ok || !n) return;
     if (css_select_style(NV_ctx, n, &NV_uctx, &NV_media, 0,
                          &NV_sel, 0, &res) != CSS_OK || !res)
@@ -1894,17 +1922,8 @@ static void nv_estilo_nodo(dom_node *n) {
             (fw >= CSS_FONT_WEIGHT_600 &&
              fw <= CSS_FONT_WEIGHT_900))
             NV_last_bold = 1;
-        /* v2.9-flex/grid: display del nodo (flex = fila por
-           reparto medido; grid = cuadricula alineada). */
-        {
-            uint8_t dp = css_computed_display(st, false);
-            if (dp == CSS_DISPLAY_FLEX ||
-                dp == CSS_DISPLAY_INLINE_FLEX)
-                NV_last_disp = 1;
-            else if (dp == CSS_DISPLAY_GRID ||
-                dp == CSS_DISPLAY_INLINE_GRID)
-                NV_last_disp = 2;
-        }
+        /* v2.9-flex/grid: display del nodo y hueco entre items. */
+        nv_lee_display(st);
     }
     css_select_results_destroy(res);
     /* Hito 5: atributo style= como hoja inline (pesa mas que la
@@ -1957,6 +1976,10 @@ static void nv_estilo_nodo(dom_node *n) {
                                 NV_bg = bg;
                                 NV_ninline++;
                             }
+                            /* v2.9: el estilo en linea tambien
+                               fija display y hueco. */
+                            nv_lee_display(ir->styles[
+                                CSS_PSEUDO_ELEMENT_NONE]);
                         }
                         css_select_results_destroy(ir);
                     }
@@ -2368,9 +2391,9 @@ static void nv_boton(dom_node *h) {
 }
 
 /* v2.9-flex (primeros pasos): fila flexible por reparto medido.
-   Solo display:flex en bloque (inline-flex se ignora); grid cae a
-   bloque. Los items de solo texto/enlaces comparten fila; con
-   controles, imagenes o bloques anidados van en bloque propio.
+   Solo display:flex en bloque (inline-flex se ignora).
+   Los items de texto/enlaces/cajas comparten fila; con listas,
+   imagenes o bloques anidados van en bloque propio.
    Sin grow/shrink: cada item mide su contenido y el que no cabe
    abre otra fila (wrap siempre activo, aun sin flex-wrap). */
 /* v2.9-grid (primeros pasos): cuadricula con columnas alineadas.
@@ -2396,8 +2419,9 @@ static int nv_es_item(dom_node *c) {
 
 static void nv_recorre(dom_node *n, int prof);
 
-/* 1 si el subarbol es texto/enlaces en linea (sin bloques, img,
-   saltos ni controles). Presupuesto de nodos anti-cuelgue. */
+/* 1 si el subarbol es flujo en linea simple (sin bloques, img,
+   saltos ni listas; controles en linea si). Presupuesto de nodos
+   anti-cuelgue. */
 static int nv_simple_n(dom_node *n, int *pres, int prof) {
     dom_node *h = 0;
     if (!n || !pres || prof > 8) return 0;
@@ -2417,8 +2441,7 @@ static int nv_simple_n(dom_node *n, int *pres, int prof) {
                 if (!nv_nom_el(h, nb)) id = nv_id_nom(nb);
                 if (nv_es_bloque(id) || id == T_IMG ||
                     id == T_BR || id == T_HR ||
-                    id == T_INPUT || id == T_SELECT ||
-                    id == T_TEXTAREA || id == T_BUTTON ||
+                    id == T_SELECT || id == T_TEXTAREA ||
                     id == T_FORM) {
                     dom_node_unref(h);
                     return 0;
@@ -2484,9 +2507,12 @@ static void nv_texto_todo_n(dom_node *n, char *sal, int max,
                 char nb[16];
                 int id = T_OTRO;
                 if (!nv_nom_el(h, nb)) id = nv_id_nom(nb);
+                /* el texto del boton va dentro de su caja
+                   (lo mide nv_ancho_caja, no aqui) */
                 if (id != T_SCRIPT && id != T_STYLE &&
                     id != T_TITLE && id != T_HEAD &&
-                    id != T_META && id != T_LINK)
+                    id != T_META && id != T_LINK &&
+                    id != T_BUTTON)
                     nv_texto_todo_n(h, sal, max, pt, ppend,
                                     prof + 1);
             }
@@ -2513,6 +2539,107 @@ static int nv_ancho_sub(dom_node *n) {
     if (t > 511) t = 511;
     b[t] = 0;
     return ttf_ancho(b, t, NV_PX);
+}
+
+/* tipo de control de un <input> (misma tabla que nv_campo). */
+static int nv_tipo_caja(dom_node *h) {
+    char tipo[16];
+    int i;
+    if (nv_atributo(h, "type", tipo, (int)sizeof(tipo)))
+        tipo[0] = 0;
+    for (i = 0; tipo[i]; i++)
+        if (tipo[i] >= 'A' && tipo[i] <= 'Z')
+            tipo[i] += (char)('a' - 'A');
+    if (!u_strcmp(tipo, "password")) return 1;
+    if (!u_strcmp(tipo, "hidden")) return 2;
+    if (!u_strcmp(tipo, "submit")) return 3;
+    if (!u_strcmp(tipo, "checkbox")) return 4;
+    if (!u_strcmp(tipo, "radio")) return 7;
+    if (!u_strcmp(tipo, "reset")) return 8;
+    if (!u_strcmp(tipo, "button")) return 9;
+    if (!u_strcmp(tipo, "image")) return 3;
+    return 0;
+}
+
+/* ancho estimado de la caja de un control en linea, en px.
+   Misma formula que el pintado ((est+1)*NV_CELDA, como nv_campo
+   y nv_boton): si estima de menos, el salto lo parte sin romper. */
+static int nv_ancho_caja(dom_node *h) {
+    char nb[16], valor[NV_CAMPO_TAM + 1];
+    int id = T_OTRO, tp, est, q;
+    if (!nv_nom_el(h, nb)) id = nv_id_nom(nb);
+    if (id == T_BUTTON) {
+        char txt[64];
+        int k = 0;
+        nv_texto_hijo(h, txt, (int)sizeof(txt), 0);
+        if (nv_atributo(h, "value", valor, (int)sizeof(valor)))
+            valor[0] = 0;
+        {
+            const char *et = valor[0] ? valor :
+                (txt[0] ? txt : "Enviar");
+            while (et[k] && k < 56) k++;
+        }
+        est = k + 4;
+        return (est + 1) * NV_CELDA;
+    }
+    if (id != T_INPUT) return 0;
+    tp = nv_tipo_caja(h);
+    if (tp == 2) return 0;   /* oculto: no se pinta */
+    if (tp == 4 || tp == 7)
+        est = 3;
+    else if (tp == 3 || tp == 8 || tp == 9) {
+        if (nv_atributo(h, "value", valor, (int)sizeof(valor)))
+            valor[0] = 0;
+        q = 0;
+        while (valor[q]) q++;
+        est = 4 + (valor[0] ? q : 6);
+    } else
+        est = NV_CAMPO_ANCHO + 2;
+    return (est + 1) * NV_CELDA;
+}
+
+/* suma las cajas en linea del subarbol (el texto lo mide sub). */
+static int nv_ancho_cajas(dom_node *n) {
+    dom_node *h = 0;
+    int w = 0;
+    if (!n) return 0;
+    if (dom_node_get_first_child(n, &h) != DOM_NO_ERR || !h)
+        return 0;
+    for (;;) {
+        dom_node_type t = (dom_node_type)0;
+        if (dom_node_get_node_type(h, &t) == DOM_NO_ERR &&
+            t == DOM_ELEMENT_NODE) {
+            char nb[16];
+            int id = T_OTRO;
+            if (!nv_nom_el(h, nb)) id = nv_id_nom(nb);
+            if (id == T_INPUT || id == T_BUTTON)
+                w += nv_ancho_caja(h);
+            else
+                w += nv_ancho_cajas(h);
+        }
+        {
+            dom_node *s = 0;
+            if (dom_node_get_next_sibling(h, &s) != DOM_NO_ERR ||
+                !s) {
+                dom_node_unref(h);
+                break;
+            }
+            dom_node_unref(h);
+            h = s;
+        }
+    }
+    return w;
+}
+
+/* ancho natural del item: texto medido mas cajas en linea.
+   Si el propio nodo es el control, su caja (no tiene hijos). */
+static int nv_ancho_item(dom_node *n) {
+    char nb[16];
+    int id = T_OTRO;
+    if (!nv_nom_el(n, nb)) id = nv_id_nom(nb);
+    if (id == T_INPUT || id == T_BUTTON)
+        return nv_ancho_caja(n);
+    return nv_ancho_sub(n) + nv_ancho_cajas(n);
 }
 
 /* pinta un item simple en la fila actual (sin abrir ni cerrarla),
@@ -2555,7 +2682,12 @@ static void nv_flex_item(dom_node *it, int prof) {
     }
     if ((id == T_H1 || id == T_H2) && !NV_last_fgset)
         NV_fg = NS_TITULO;
-    nv_recorre(it, prof + 1);
+    if (id == T_INPUT)
+        nv_campo(it);   /* vacio: sin hijos que recorrer */
+    else if (id == T_BUTTON)
+        nv_boton(it);   /* idem */
+    else
+        nv_recorre(it, prof + 1);
     if (es_enl && ienl >= 0) {
         int f1 = NV_nfilas;
         if (NV_nfilas >= NV_MAXFILAS) f1 = NV_MAXFILAS - 1;
@@ -2617,9 +2749,8 @@ static int nv_es_reparto_tratable(dom_node *h) {
                     id == T_META || id == T_LINK) {
                     /* sin contenido: se ignora */
                 } else if (id == T_IMG || id == T_BR ||
-                           id == T_HR || id == T_INPUT ||
-                           id == T_SELECT || id == T_TEXTAREA ||
-                           id == T_BUTTON || id == T_FORM) {
+                           id == T_HR || id == T_SELECT ||
+                           id == T_TEXTAREA || id == T_FORM) {
                     dom_node_unref(c);
                     return 0;
                 } else {
@@ -2667,7 +2798,7 @@ static void nv_flex(dom_node *h, int prof) {
             if (id != T_SCRIPT && id != T_STYLE &&
                 id != T_TITLE && id != T_HEAD &&
                 id != T_META && id != T_LINK)
-                an[n++] = nv_ancho_sub(c);
+                an[n++] = nv_ancho_item(c);
         }
         {
             dom_node *s = 0;
@@ -2722,7 +2853,7 @@ static void nv_flex(dom_node *h, int prof) {
                     abierta = 1;
                 }
                 if (col > 0 &&
-                    col + NV_FLEX_HUECO + w > NV_MAXW) {
+                    col + NV_gap + w > NV_MAXW) {
                     nv_salto();
                     nv_bloque();
                     col = 0;
@@ -2749,7 +2880,7 @@ static void nv_flex(dom_node *h, int prof) {
                 NV_wrap = col + w;
                 if (NV_wrap < col + 1) NV_wrap = col + 1;
                 nv_flex_item(c, prof);
-                col += w + NV_FLEX_HUECO;
+                col += w + NV_gap;
             }
         }
         {
@@ -2793,7 +2924,7 @@ static void nv_grid(dom_node *h, int prof) {
         return;
     for (;;) {
         if (nv_es_item(c) && n < NV_FLEX_MAXITEM)
-            an[n++] = nv_ancho_sub(c);
+            an[n++] = nv_ancho_item(c);
         {
             dom_node *s = 0;
             if (dom_node_get_next_sibling(c, &s) != DOM_NO_ERR ||
@@ -2838,7 +2969,7 @@ static void nv_grid(dom_node *h, int prof) {
         NV_wrap = lim0;
         return;
     }
-    ncol = (NV_MAXW + NV_FLEX_HUECO) / (maxw + NV_FLEX_HUECO);
+    ncol = (NV_MAXW + NV_gap) / (maxw + NV_gap);
     if (ncol < 1) ncol = 1;
     if (ncol > n) ncol = n;
     for (i = 0; i < ncol; i++) cw[i] = 0;
@@ -2846,7 +2977,7 @@ static void nv_grid(dom_node *h, int prof) {
         if (an[i] > cw[i % ncol]) cw[i % ncol] = an[i];
     off[0] = 0;
     for (i = 0; i < ncol; i++)
-        off[i + 1] = off[i] + cw[i] + NV_FLEX_HUECO;
+        off[i + 1] = off[i] + cw[i] + NV_gap;
     /* pasada 2: filas de ncol con columnas alineadas */
     if (dom_node_get_first_child(h, &c) != DOM_NO_ERR || !c) {
         NV_wrap = lim0;
@@ -3029,6 +3160,8 @@ static void nv_recorre(dom_node *n, int prof) {
                             if ((id == T_H1 || id == T_H2) &&
                                 !NV_last_fgset)
                                 NV_fg = NS_TITULO;
+                            NV_gap = NV_last_gap >= 0 ?
+                                NV_last_gap : NV_FLEX_HUECO;
                             nv_flex(h, prof);
                             es_salta = 1;
                             es_reparto_hecho = 1;
@@ -3038,6 +3171,8 @@ static void nv_recorre(dom_node *n, int prof) {
                             if ((id == T_H1 || id == T_H2) &&
                                 !NV_last_fgset)
                                 NV_fg = NS_TITULO;
+                            NV_gap = NV_last_gap >= 0 ?
+                                NV_last_gap : NV_FLEX_HUECO;
                             nv_grid(h, prof);
                             es_salta = 1;
                             es_reparto_hecho = 1;
@@ -3796,6 +3931,24 @@ static int nv_modo_p(const char *resto) {
             }
             nv_ok(fa >= 0 && fb >= 0 && fa != fb, "grid-fila-red");
         }
+        /* v2.9-paso2: cajas en linea por red (pagina /cajas) */
+        nv_ok(nv_pagina("http://10.0.2.2:18080/cajas") == 0,
+              "cajas-carga");
+        {
+            int f, k, fa = -1, fb = -1;
+            for (f = 0; f < NV_nfilas; f++) {
+                int m = NV_filas[f].len;
+                for (k = 0; k + 5 <= m; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "[ A ]", 5))
+                        fa = f;
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "[ B ]", 5))
+                        fb = f;
+                }
+            }
+            nv_ok(fa >= 0 && fa == fb, "cajas-fila-red");
+        }
         /* Hito 5: imagenes BMP + GIF (pagina /img-bmp) */
         nv_navegar("http://10.0.2.2:18080/img-bmp", 1);
         nv_ok(NV_tiene, "img-carga");
@@ -4024,6 +4177,73 @@ static int nv_modo_p(const char *resto) {
             }
             nv_ok(fa >= 0 && fb >= 0 && fa != fb, "grid-columna");
             nv_ok(fc >= 0 && fc == fd, "flex-ancho");
+        }
+        /* v2.9-paso2: cajas en linea comparten fila */
+        {
+            static const char m1[] =
+                "<html><head><style>.f{display:flex}</style>"
+                "</head><body><div class=\"f\">"
+                "<input type=\"submit\" value=\"A\">"
+                "<input type=\"submit\" value=\"B\"></div>"
+                "</body></html>";
+            int f, k, fa = -1, fb = -1;
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            for (f = 0; f < NV_nfilas; f++) {
+                for (k = 0; k + 5 <= NV_filas[f].len; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "[ A ]", 5))
+                        fa = f;
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "[ B ]", 5))
+                        fb = f;
+                }
+            }
+            nv_ok(fa >= 0 && fa == fb, "flex-cajas");
+        }
+        /* v2.9-paso2: column-gap:0px pega los items */
+        {
+            static const char m1[] =
+                "<html><head><style>.g{display:grid;"
+                "column-gap:0px}</style></head><body>"
+                "<div class=\"g\"><div>Uno</div>"
+                "<div>Dos</div></div></body></html>";
+            int f, k, ok = 0;
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            for (f = 0; f < NV_nfilas; f++) {
+                for (k = 0; k + 6 <= NV_filas[f].len; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k,
+                                  "UnoDos", 6))
+                        ok = 1;
+                }
+            }
+            nv_ok(ok, "gap-cero");
+        }
+        /* v2.9-paso2: display en linea tambien reparte */
+        {
+            static const char m1[] =
+                "<html><head></head><body>"
+                "<div style=\"display:flex\"><div>AAA</div>"
+                "<div>BBB</div></div></body></html>";
+            int f, k, fa = -1, fb = -1;
+            nv_procesa((const unsigned char *)m1,
+                       (int)sizeof(m1) - 1);
+            nv_css_fin();
+            for (f = 0; f < NV_nfilas; f++) {
+                for (k = 0; k + 3 <= NV_filas[f].len; k++) {
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "AAA", 3))
+                        fa = f;
+                    if (!u_memcmp((const char *)NV_txt +
+                                  NV_filas[f].ini + k, "BBB", 3))
+                        fb = f;
+                }
+            }
+            nv_ok(fa >= 0 && fa == fb, "flex-inline");
         }
         u_print("netsurf: ");
         nv_num(NV_pruebas);
