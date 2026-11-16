@@ -257,9 +257,9 @@ static const par_t P_SOBRE[] = {
 
 static const cmd_t CMDS[] = {
     { "ayuda", "documentacion",
-      "Muestra los comandos disponibles.",
-      "Lista todos los comandos agrupados por categorias. Con un nombre muestra su ayuda breve.",
-      "ayuda [comando]", "ayuda manual", 0, 1, 0, 0 },
+      "Muestra los comandos.",
+      "Lista todos los comandos agrupados por categorias. Con un nombre muestra su ayuda breve; con una categoria, solo esa seccion.",
+      "ayuda [comando|categoria]", "ayuda red", 0, 1, 0, 0 },
     { "manual", "documentacion",
       "Manual completo de un comando.",
       "Muestra descripcion, sintaxis, opciones, valores, ejemplos y errores de un comando.",
@@ -361,43 +361,43 @@ static const cmd_t CMDS[] = {
       "Ejecuta un programa o un script .f32.",
       "Lanza un programa F32X con sus argumentos. Si el nombre termina en .f32 (o existe con esa extension), lo ejecuta con el interprete F32 Lang.",
       "ejecutar <programa> [args]", "ejecutar hola.f32", 1, 4, 0, 0 },
-    { "red", "sistema",
+    { "red", "red",
       "Informacion y administracion general de la red.",
       "Muestra el estado de la red propia (adaptador, MAC, contadores). Sin adaptador indica arranque sin red.",
       "red [estado]", "red", 0, 1, 0, 0 },
-    { "mostrar_interfaz", "sistema",
+    { "mostrar_interfaz", "red",
       "Informacion del adaptador de red.",
       "Muestra adaptador, estado, direccion MAC y estadisticas de tramas.",
       "mostrar_interfaz", "mostrar_interfaz", 0, 0, 0, 0 },
-    { "configurar_ip", "sistema",
+    { "configurar_ip", "red",
       "Configuracion manual de IPv4.",
       "Muestra o fija IP, mascara, puerta de enlace y DNS.",
       "configurar_ip [ip | mascara|puerta|dns <ip>]", "configurar_ip mascara 255.255.255.0", 0, 2, 0, 0 },
-    { "mostrar_rutas", "sistema",
+    { "mostrar_rutas", "red",
       "Consulta la tabla de rutas.",
       "Muestra destino, mascara y puerta de cada ruta.",
       "mostrar_rutas", "mostrar_rutas", 0, 0, 0, 0 },
-    { "comprovar_conexion", "sistema",
+    { "comprovar_conexion", "red",
       "Comprueba conectividad mediante eco.",
       "Envia ecos y muestra respuestas (seq, ttl, tiempo).",
       "comprovar_conexion [-c N] <ip>", "comprovar_conexion -c 4 10.0.2.2", 1, 3, 0, 0 },
-    { "configurar_dhcp", "sistema",
+    { "configurar_dhcp", "red",
       "Configuracion automatica por DHCP.",
       "Obtiene IP, mascara, puerta y DNS del servidor (renovar y liberar disponibles).",
       "configurar_dhcp [renovar|liberar]", "configurar_dhcp", 0, 1, 0, 0 },
-    { "consultar_dns", "sistema",
+    { "consultar_dns", "red",
       "Resuelve un nombre de dominio a IPv4.",
       "Pregunta al servidor DNS (tipo A) y muestra IP, TTL y tiempo.",
       "consultar_dns <dominio>", "consultar_dns example.com", 1, 1, 0, 0 },
-    { "http", "sistema",
+    { "http", "red",
       "Trae una pagina web (HTTP/1.0, solo GET).",
       "Descarga por HTTP/1.0 y muestra codigo, cabeceras y cuerpo.",
       "http <url>", "http http://example.com/", 1, 1, 0, 0 },
-    { "netsurf", "sistema",
+    { "netsurf", "red",
       "Abre el navegador grafico NetSurf.",
       "Crea una ventana de NetSurf (motor hubbub/dom/css).",
       "netsurf [url]", "netsurf http://10.0.2.2:18080/pagina", 0, 1, 0, 0 },
-    { "mostrar_dns", "sistema",
+    { "mostrar_dns", "red",
       "Muestra el servidor DNS configurado.",
       "Indica el servidor (DHCP o manual) y la ausencia de cache.",
       "mostrar_dns", "mostrar_dns", 0, 0, 0, 0 },
@@ -475,6 +475,7 @@ static int sugiere(const char *nom, char dst[4][32]);
 static void ejecuta(ug_win_t *v, const char *ln);
 static void ejecuta_uno(ug_win_t *v, const char *ln);
 static int pop_construye(void);
+static void hist_guardar(void);
 static void pop_abre_uno(void);
 static void pop_aplica(void);
 static void op_ruta(const cmd_t *c);
@@ -635,16 +636,76 @@ static int es_si(const char *v) { return !u_strcmp(v, "si"); }
 
 /* ---- ayuda y manual (del registro) ---- */
 
+/* imprime una seccion "Categoria:" con sus comandos. */
+static void ayuda_seccion(const char *cat) {
+    char b[96];
+    int e2 = 0, q = 0, i;
+    while (cat[q] && e2 < 90) {
+        char ch = cat[q];
+        if (!q && ch >= 'a' && ch <= 'z') ch -= 32;
+        b[e2++] = ch;
+        q++;
+    }
+    b[e2++] = ':';
+    b[e2] = 0;
+    pon(b);
+    for (i = 0; i < NCMDS; i++) {
+        if (!u_strcmp(CMDS[i].categoria, cat)) {
+            int t2 = 0, t3 = 0;
+            b[t2++] = ' ';
+            b[t2++] = ' ';
+            while (CMDS[i].nombre[t3] && t2 < 60)
+                b[t2++] = CMDS[i].nombre[t3++];
+            {
+                const char *sep = " - ";
+                int s2 = 0, q2 = 0;
+                while (sep[s2] && t2 < 60) b[t2++] = sep[s2++];
+                while (CMDS[i].breve[q2] && t2 < 94)
+                    b[t2++] = CMDS[i].breve[q2++];
+            }
+            b[t2] = 0;
+            pon(b);
+        }
+    }
+}
+
 static void cmd_ayuda(const char *arg) {
     int i;
     if (arg && arg[0]) {
-        int id = busca_cmd(arg);
-        if (id < 0) {
+        /* v2.5-ayuda: la categoria manda (un nombre puede ser
+           comando y categoria a la vez, como "red"); el comando
+           suelto sigue en "manual". */
+        char min[32];
+        int q = 0;
+        while (arg[q] && q < 31) {
+            char ch = arg[q];
+            if (ch >= 'A' && ch <= 'Z') ch += 32;
+            min[q] = ch;
+            q++;
+        }
+        min[q] = 0;
+        for (i = 0; i < NCMDS; i++) {
+            if (!u_strcmp(CMDS[i].categoria, min)) {
+                ayuda_seccion(min);
+                return;
+            }
+        }
+        {
+            int id = busca_cmd(arg);
+            if (id >= 0) {
+                pon(CMDS[id].nombre);
+                pon(CMDS[id].breve);
+                pon("Uso:");
+                pon(CMDS[id].uso);
+                return;
+            }
+        }
+        {
             char sug[4][32];
             int n = sugiere(arg, sug), k;
             char b[96];
             int t = 0;
-            pon("No existe ningun comando con ese nombre.");
+            pon("No existe ningun comando ni categoria con ese nombre.");
             if (n) {
                 pon("Quisiste decir:");
                 for (k = 0; k < n; k++) {
@@ -652,8 +713,8 @@ static void cmd_ayuda(const char *arg) {
                     b[t++] = '-';
                     b[t++] = ' ';
                     {
-                        int q = 0;
-                        while (sug[k][q] && t < 90) b[t++] = sug[k][q++];
+                        int qq = 0;
+                        while (sug[k][qq] && t < 90) b[t++] = sug[k][qq++];
                     }
                     b[t] = 0;
                     pon(b);
@@ -661,11 +722,6 @@ static void cmd_ayuda(const char *arg) {
             }
             return;
         }
-        pon(CMDS[id].nombre);
-        pon(CMDS[id].breve);
-        pon("Uso:");
-        pon(CMDS[id].uso);
-        return;
     }
     pon("FACILOS32 - AYUDA GENERAL");
     /* v2.5-ux: secciones por categoria en orden de registro
@@ -696,37 +752,8 @@ static void cmd_ayuda(const char *arg) {
             }
             if (!hay) ncat++;
         }
-        for (ci = 0; ci < ncat; ci++) {
-            char b[96];
-            int e2 = 0, q = 0;
-            while (cats[ci][q] && e2 < 90) {
-                char ch = cats[ci][q];
-                if (!q && ch >= 'a' && ch <= 'z') ch -= 32;
-                b[e2++] = ch;
-                q++;
-            }
-            b[e2++] = ':';
-            b[e2] = 0;
-            pon(b);
-            for (i = 0; i < NCMDS; i++) {
-                if (!u_strcmp(CMDS[i].categoria, cats[ci])) {
-                    int t2 = 0, t3 = 0;
-                    b[t2++] = ' ';
-                    b[t2++] = ' ';
-                    while (CMDS[i].nombre[t3] && t2 < 60)
-                        b[t2++] = CMDS[i].nombre[t3++];
-                    {
-                        const char *sep = " - ";
-                        int s2 = 0, q2 = 0;
-                        while (sep[s2] && t2 < 60) b[t2++] = sep[s2++];
-                        while (CMDS[i].breve[q2] && t2 < 94)
-                            b[t2++] = CMDS[i].breve[q2++];
-                    }
-                    b[t2] = 0;
-                    pon(b);
-                }
-            }
-        }
+        for (ci = 0; ci < ncat; ci++)
+            ayuda_seccion(cats[ci]);
     }
     pon("Para saber mas: manual nombre_del_comando");
     pon("Teclas: flechas editan, arriba/abajo historial,");
@@ -3406,6 +3433,7 @@ static void hist_guarda_ent(void) {
         for (i = 0; i < NHIST - 1; i++) u_strcpy(hist[i], hist[i + 1]);
         u_strcpy(hist[NHIST - 1], ent);
     }
+    hist_guardar();
     hh = nhist;
 }
 
@@ -3419,6 +3447,54 @@ static void hist_recupera(void) {
         nent = 0;
         pos = 0;
     }
+}
+
+/* v2.5-historial: persiste en /historial.txt (una linea por comando).
+   Sin disco vive solo la sesion, como todo lo demas. */
+#define HIST_RUTA "/historial.txt"
+
+static void hist_guardar(void) {
+    UFILE *f;
+    int i;
+    f = u_fopen(HIST_RUTA, "w");
+    if (!f) return;
+    for (i = 0; i < nhist; i++) {
+        int q = 0;
+        while (hist[i][q]) q++;
+        if (!q) continue;
+        u_fwrite(hist[i], q, f);
+        u_fwrite("\n", 1, f);
+    }
+    u_fclose(f);
+}
+
+static void hist_cargar(void) {
+    static char buf[NHIST * (NENTB + 1)];
+    UFILE *f;
+    int tam, n, p = 0, t;
+    nhist = 0;
+    hh = 0;
+    f = u_fopen(HIST_RUTA, "r");
+    if (!f) return;
+    tam = u_fsize(f);
+    if (tam < 0) {
+        u_fclose(f);
+        return;
+    }
+    if (tam > (int)sizeof(buf) - 1) tam = (int)sizeof(buf) - 1;
+    n = u_fread(buf, tam, f);
+    u_fclose(f);
+    if (n <= 0) return;
+    while (p < n && nhist < NHIST) {
+        t = 0;
+        while (p < n && buf[p] != '\n' && t < NENTB - 1)
+            hist[nhist][t++] = buf[p++];
+        hist[nhist][t] = 0;
+        while (p < n && buf[p] != '\n') p++;
+        if (p < n) p++;
+        if (t) nhist++;
+    }
+    hh = nhist;
 }
 
 static void inserta_cp(unsigned cp) {
@@ -3622,6 +3698,7 @@ int main(void) {
     ent[0] = 0;
     if (ug_abre(&v, srv, 480, 320, "terminal")) return 98;
     ug_edit(&v, 1);   /* TAB y ESC para autocompletar */
+    hist_cargar();
     pon("Terminal FacilOS32 (escribe ayuda)");
     for (;;) {
         int t = ug_evento(&v, &ev, 1);
@@ -3915,13 +3992,33 @@ static int pop_construye(void) {
                     }
                 }
                 if (id < 0) return 0;
-                /* manual/ayuda completan comandos */
+                /* manual/ayuda completan comandos (y ayuda,
+                   ademas, categorias) */
                 if (!u_strcmp(cn, "manual") || !u_strcmp(cn, "ayuda")) {
                     int n = 0;
                     u_strcpy(pop_titulo, "COMANDOS");
                     for (i = 0; i < NCMDS && n < NPOP; i++) {
                         if (empieza_con(CMDS[i].nombre, pref))
                             u_strcpy(pop_items[n++], CMDS[i].nombre);
+                    }
+                    if (!u_strcmp(cn, "ayuda")) {
+                        int j;
+                        u_strcpy(pop_titulo, "AYUDA");
+                        for (i = 0; i < NCMDS && n < NPOP; i++) {
+                            int hay = 0;
+                            for (j = 0; j < n; j++) {
+                                if (!u_strcmp(pop_items[j],
+                                              CMDS[i].categoria)) {
+                                    hay = 1;
+                                    break;
+                                }
+                            }
+                            if (!hay &&
+                                empieza_con(CMDS[i].categoria,
+                                            pref))
+                                u_strcpy(pop_items[n++],
+                                         CMDS[i].categoria);
+                        }
                     }
                     return n;
                 }
