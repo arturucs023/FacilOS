@@ -120,7 +120,9 @@ inicio:
     ; Se leen por EDD (INT 13h AH=42h) aqui, en MODO REAL: desde
     ; 32 bits el int 0x13 del BIOS peta (#UD), y el nucleo no lo
     ; necesita porque se lo copiamos ya en RAM.
-    ;   0x30000 = catalogo + programas, copia baja [cat, 993)
+    ;   0x32000 = catalogo + programas, copia baja [cat, 993)
+    ;   (v2.5-disco: antes 0x30000; el nucleo por encima de 128 KB
+    ;   lo pisaba al crecer KERN_SECS)
     ;   0x1000000 = cola alta [993, fin) (carga directa, sin copyalta)
     ;   0x10000 = nucleo (se copiara a 0x100000)
     ; Sin interrupciones: los IRQ del BIOS pisan la copia (probado).
@@ -134,13 +136,16 @@ inicio:
     mov [p_off], ax
     inc ax
     mov [p_lba], ax
-    mov ax, 256                     ; nucleo hasta 256 sectores logicos
-                                        ; (v2.4-USB: era 240; debe coincidir con KERN_SECS de
-                                        ; build32.py; el assert kb<=256*512 lo
-                                        ; garantiza; si crece, subir ambos)
+    mov ax, 264                     ; nucleo hasta 264 sectores logicos
+                                        ; (v2.4-USB: era 240; v2.5-disco: 256->264;
+                                        ; debe coincidir con KERN_SECS de
+                                        ; build32.py; el assert kb<=264*512 lo
+                                        ; garantiza; si crece, subir ambos.
+                                        ; OJO: 0x10000+264*512 = 0x31000, por
+                                        ; eso la copia baja empieza en 0x32000)
     mov [p_cnt], ax
     call leer
-    mov ax, 0x3000
+    mov ax, 0x3200
     mov [p_seg], ax
     mov ax, [cat_lba]
     mov [p_lba], ax
@@ -155,11 +160,11 @@ inicio:
     jbe .cnt_ok
     mov ax, bx
 .cnt_ok:
-    ; F8: cinturon y tirantes: aunque cat_lba fuese <225, la baja no
-    ; pasa de 768 sectores (0x30000->0x90000, pila/EBDA/VGA).
-    cmp ax, 768
+    ; F8: cinturon y tirantes: la baja no pasa de 736 sectores
+    ; (0x32000->0x90000, pila/EBDA/VGA).
+    cmp ax, 736
     jbe .cnt2_ok
-    mov ax, 768
+    mov ax, 736
 .cnt2_ok:
     mov [p_cnt], ax
     call leer
@@ -198,7 +203,7 @@ pm_entry:
     mov esp, 0x90000
     mov esi, 0x10000
     mov edi, 0x100000
-    mov ecx, 32768
+    mov ecx, 33792           ; 264 sectores (KERN_SECS; subir a la par)
     rep movsd
     jmp 0x08:0x100000
 [BITS 16]
@@ -212,8 +217,9 @@ gdt:
     dd 0x0000FFFF, 0x00CF9300
 gdt_fin:
 ; F7-C: cola alta del catalogo (tras la pila de arranque 0x90000).
-; CORTE_LBA = primer LBA copiado alto (993 = 225 + 768;
-; 768 = (0x90000 - 0x30000) / 512).
+; CORTE_LBA = primer LBA copiado alto (993; con copia baja en 0x32000
+; caben (0x90000 - 0x32000) / 512 = 736 sectores: 993 - cat_lba no
+; debe pasar de ahi; hoy cat=265 -> 728, cabe).
 ; Parametros de "leer" y LBAs parcheados por el constructor (bytes
 ; 496-501 del sector, justo antes de la firma 0x55AA).
 times 496-($-$$) db 0

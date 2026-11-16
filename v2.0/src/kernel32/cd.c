@@ -6,7 +6,9 @@
    F7-C: la pila de arranque (64 KB en [0x90000,0xA0000)) mas EBDA/VGA
    no retienen: la copia baja cubre [base, CORTE); la cola [CORTE, ...)
    vive en CD_ALTO_BASE (copiada por el arranque en irreal). */
-#define CD_CORTE_LBA 993u   /* = 225 + (0x90000 - 0x30000)/512 */
+#define CD_CORTE_LBA 993u   /* primer LBA copiado alto (ver arranque:
+                               la copia baja en 0x32000 admite
+                               (0x90000-0x32000)/512 = 736 sectores) */
 #define CD_ALTO_BASE 0x1000000u
 #define CD_ALTO_MAX 0x800000u /* F8: cola maxima 8 MB (ISO sin tope
                                1,44 MB; el tamano lo dicta el contenido) */

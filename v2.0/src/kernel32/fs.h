@@ -18,6 +18,10 @@ extern int fs_inicializado;
 void fs_init(void);
 int ramfs_init(void);   /* entrada para el registro de drivers (v2.0) */
 int fs_guardar(void);
+/* v2.5-disco: administracion del volumen (syscall 65).
+   op 0 = formatear (volumen FACILOS2 vacio, borra TODO);
+   op 1 = verificar solo lectura (0 ok, <0 motivo). */
+int fs_admin(int op);
 /* resolver ruta -> indice (0..63) o -1. Acepta abs/rel/../. */
 int fs_resuelve(const char *ruta);
 /* buscar hijo por nombre en dir -> indice o -1 */

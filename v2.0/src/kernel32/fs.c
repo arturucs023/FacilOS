@@ -288,6 +288,80 @@ int fs_guardar(void) {
     return 0;
 }
 
+/* v2.5-disco: administracion del volumen (syscall 65).
+   op 0 = formatear (volumen FACILOS2 vacio, borra TODO);
+   op 1 = verificar solo lectura (0 ok, <0 motivo):
+   -1 op malo, -10 sin disco, -11 fallo al escribir,
+   -12 fallo al leer, -2 sin firma, -3 version,
+   -4 checksum, -5 raiz, -6 segmentos. No toca el FS vivo
+   (b├║feres propios); compatible con mkfs del anfitrion. */
+static uint8_t vf_tab[6 * 512];
+static uint8_t vf_sec[512];
+
+int fs_admin(int op) {
+    uint32_t i;
+    if (op != 0 && op != 1) return -1;
+    if (!blk_presente()) return -10;
+    if (op == 0) {
+        fs_limpia();
+        fs_migrar = 0;
+        fs_disco_ok = 1;
+        if (fs_guardar()) {
+            fs_limpia();
+            fs_disco_ok = 0;
+            return -11;
+        }
+        return 0;
+    }
+    {
+        uint8_t cb[512];
+        uint32_t lo, hi, s = 0;
+        if (blk_leer(LBA_CAB, cb, 1)) return -12;
+        if (libc_memcmp(cb, "FACILOS2", 8) != 0) return -2;
+        if (cb[12] != 2) return -3;
+        lo = (uint32_t)cb[8] | ((uint32_t)cb[9] << 8);
+        hi = (uint32_t)cb[10] | ((uint32_t)cb[11] << 8);
+        if (blk_leer(LBA_TAB, vf_tab, 6)) return -12;
+        for (i = 0; i < (uint32_t)(FS_N * FS_TAM_ENT); i++)
+            s += vf_tab[i];
+        for (i = 0; i < FS_N; i++) {
+            uint32_t j;
+            if (blk_leer(LBA_DAT + i, vf_sec, 1)) return -12;
+            for (j = 0; j < 512; j++) s += vf_sec[j];
+        }
+        if ((s & 0xFFFFu) != lo || (s >> 16) != hi) return -4;
+        if (vf_tab[0] != 1) return -5;
+        for (i = 0; i < FS_N; i++) {
+            uint8_t *e = vf_tab + i * FS_TAM_ENT;
+            uint16_t t, sg;
+            uint32_t want, ss = 0, k = 0;
+            if (e[0] != 2) continue;
+            t = (uint16_t)(e[34] | (e[35] << 8));
+            if (!t) continue;
+            sg = (uint16_t)(e[36] | (e[37] << 8));
+            if (!sg) {
+                if (t > FS_MAX_TAM) return -6;
+                continue;
+            }
+            if (sg < FS_SEG_MIN) return -6;
+            if ((uint32_t)sg + nsec_de(t) >
+                (uint32_t)(FS_LBA_MAX - LBA_DAT))
+                return -6;
+            while (k * 512 < t) {
+                uint32_t d = (uint32_t)sg + k, j, n = t - k * 512;
+                if (n > 512) n = 512;
+                if (blk_leer(LBA_DAT + d, vf_sec, 1)) return -12;
+                for (j = 0; j < n; j++) ss += vf_sec[j];
+                k++;
+            }
+            want = (uint32_t)e[38] | ((uint32_t)e[39] << 8) |
+                   ((uint32_t)e[40] << 16) | ((uint32_t)e[41] << 24);
+            if (ss != want) return -6;
+        }
+        return 0;
+    }
+}
+
 int fs_actual(void) { return dir_actual; }
 void fs_pon_actual(int idx) { dir_actual = idx; }
 int fs_tipo(int i) { return (i < 0 || i >= FS_N) ? 0 : ent(i)[0]; }

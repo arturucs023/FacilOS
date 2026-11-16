@@ -166,7 +166,7 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
     uint32_t ver, ent, tam, hc, bss, plano, off, fr;
     if (parte_sys(ruta, &dir, base)) return -100;
     origen_t o;
-    if (abre_origen(base, &o)) return -100;
+    if (abre_origen(base, &o)) return -1;
     fr = origen_tam(&o);
     if (fr < 16) return -101;
     if (lee_origen(&o, 0, hdr, 20) != 20) return -103;
@@ -195,8 +195,7 @@ int kern_crea_proceso(const char *ruta, const char *args, int es_grafico) {
         plano + bss > 0x400000 || hc + plano + bss > 0x420000)
         return -102;
 
-    int di = pag_nuevo_dir();
-    if (di < 0) return -104;
+    int di = pag_nuevo_dir();    if (di < 0) return -104;
     uint32_t usr = PAG_PRESENTE | PAG_ESCRITURA | PAG_USUARIO;
     /* codigo + datos + BSS (las paginas nacen a cero) */
     if (pag_mapa_nuevas(di, 0x200000, plano + bss, usr)) {
@@ -2016,9 +2015,19 @@ __attribute__((optimize("O0"))) static void sc_64(regs_t *r, int di)
         return;
     }
 
+__attribute__((optimize("O0"))) static void sc_65(regs_t *r, int di)
+ {
+        /* v2.5-disco: administracion del volumen (ver fs_admin).
+           ebx=op (0 formatear, 1 verificar). 0 ok, <0 motivo. */
+        extern int fs_admin(int op);
+        (void)di;
+        r->eax = (uint32_t)fs_admin((int)r->ebx);
+        return;
+    }
+
 
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 65
+#define SC_N 66
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -2086,6 +2095,7 @@ static sc_fn_t const sc_tabla[SC_N] = {
     /* 62 reservada */
     [63] = sc_63,
     [64] = sc_64,   /* v2.8-fuentes: mezcla alfa (mascara del proceso) */
+    [65] = sc_65,   /* v2.5-disco: formatear/verificar volumen */
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -2153,6 +2163,7 @@ static const char *const sc_nombre[SC_N] = {
     [62] = "fija_clip",
     [63] = "red_rutas",
     [64] = "mezclar",
+    [65] = "disco_admin",
 };
 static uint32_t sc_count[SC_N];
 

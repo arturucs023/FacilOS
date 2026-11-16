@@ -72,7 +72,7 @@ run([str(pathlib.Path(GCC).parent / "objcopy.exe"), "-O", "binary",
      str(BLD / "kernel32.pe"), str(BLD / "kernel32.bin")])
 kb = (BLD / "kernel32.bin").stat().st_size
 print(f"kernel32.bin: {kb} bytes")
-assert kb <= 131072, "nucleo32 > 256 sectores"
+assert kb <= 135168, "nucleo32 > 264 sectores"
 
 floppy = bytearray(1474560)
 floppy[0:512] = (BLD / "boot32.bin").read_bytes()
@@ -144,7 +144,8 @@ wsec(20, rd)
 # logicos [0..fin): 0 = arranque (sector 1), 1..224 = nucleo,
 # 225 = catalogo F32C (4 sect), 229.. = datos (ver cdcat_build).
 # El tamano final lo dicta el contenido (10/50/100 MB posibles).
-KERN_SECS = 256          # sectores logicos de nucleo (v2.4-USB: era 240)
+KERN_SECS = 264          # sectores logicos de nucleo (v2.4-USB: era 240;
+                             # v2.5-disco: 256->264 por sc_65/fs_admin)
 img = bytearray(225 * 512)
 CAT_LBA = KERN_SECS + 1  # = 225 (0 = arranque, 1.. = nucleo)
 # v1.9: el catalogo ocupa 4 sectores (2048 B) para que quepan 32 programas

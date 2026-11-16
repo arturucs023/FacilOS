@@ -417,6 +417,14 @@ static const cmd_t CMDS[] = {
       "Resume la memoria del sistema.",
       "Muestra marcos totales, libres y usados, RAM util y entradas E820.",
       "memoria", "memoria", 0, 0, 0, 0 },
+    { "formatear", "disco",
+      "Inicializa el disco de datos (lo borra todo).",
+      "Crea un volumen FACILOS2 vacio en el disco. Pide confirmacion: solo actua con 'formatear si'.",
+      "formatear si", "formatear si", 1, 1, 0, 0 },
+    { "verificar_disco", "disco",
+      "Comprueba el disco de datos.",
+      "Verifica firma, version, checksum, raiz y tramos (solo lectura).",
+      "verificar_disco", "verificar_disco", 0, 0, 0, 0 },
     { "repetir", "sistema",
       "Repite un comando N veces.",
       "Ejecuta el comando indicado N veces seguidas (de 1 a 100, sin anidar).",
@@ -2097,6 +2105,47 @@ static void op_esperar(const cmd_t *c) {
         return;
     }
     u_dormir(ms);
+}
+
+/* v2.5-disco: formatear pide "si" explicito (destruye TODO).
+   Tras formatear, la carpeta actual vuelve a /. */
+static void op_formatear(const cmd_t *c) {
+    int rc;
+    (void)c;
+    if (npos < 1 || u_strcmp(pos_arg[0], "si")) {
+        perr(10, "Esto borra TODO el disco. Repite: formatear si");
+        return;
+    }
+    rc = u_formatear_disco();
+    if (rc == -10) {
+        perr(14, "Sin disco de datos.");
+        return;
+    }
+    if (rc) {
+        perr(33, "No se pudo formatear.");
+        return;
+    }
+    prof = 0;
+    cwd_idx = 0;
+    pon("Disco formateado (vacio).");
+}
+
+static void op_verificar(const cmd_t *c) {
+    int rc;
+    (void)c;
+    rc = u_verificar_disco();
+    if (!rc) {
+        pon("Disco verificado: firma, tabla y datos correctos.");
+        return;
+    }
+    if (rc == -10) perr(14, "Sin disco de datos.");
+    else if (rc == -2) perr(14, "Sin firma FACILOS2 (sin formatear).");
+    else if (rc == -3) perr(14, "Version no soportada.");
+    else if (rc == -4) perr(14, "Checksum distinto (disco corrupto).");
+    else if (rc == -5) perr(14, "Raiz danada.");
+    else if (rc == -6) perr(14, "Tramos danados.");
+    else if (rc == -12) perr(33, "Fallo al leer el disco.");
+    else perr(33, "No se pudo verificar.");
 }
 
 static void op_repetir(const cmd_t *c) {
@@ -4358,6 +4407,10 @@ static void ejecuta_uno(ug_win_t *v, const char *ln) {
         op_procesos(&CMDS[id]);
     } else if (!u_strcmp(cmd, "memoria")) {
         op_memoria(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "formatear")) {
+        op_formatear(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "verificar_disco")) {
+        op_verificar(&CMDS[id]);
     } else if (!u_strcmp(cmd, "repetir")) {
         op_repetir(&CMDS[id]);
     } else if (!u_strcmp(cmd, "esperar")) {

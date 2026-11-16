@@ -155,6 +155,12 @@ static inline int sys_fija_clip(int x, int y, int w, int h) {
     return sys_llama5(62, x, y, w, h, 0);
 }
 
+/* v2.5-disco: administracion del volumen (op 0 formatear,
+   1 verificar). 0 ok, <0 motivo (ver fs_admin). */
+static inline int sys_disco_admin(int op) {
+    return sys_llama(65, op, 0, 0);
+}
+
 static inline int sys_truncar(int fd, int tam) {
     return sys_llama(24, fd, tam, 0);
 }

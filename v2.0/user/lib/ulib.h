@@ -54,6 +54,10 @@ int u_fsize(UFILE *f);
 int u_fijar_tam(UFILE *f, int tam);
 int u_fclose(UFILE *f);
 int u_remove(const char *ruta);
+/* v2.5-disco: administracion del volumen (0 formatear, 1 verificar).
+   0 ok, <0 motivo (ver fs_admin del nucleo). */
+int u_formatear_disco(void);
+int u_verificar_disco(void);
 
 /* ---- salida / entrada ---- */
 void u_print(const char *s);

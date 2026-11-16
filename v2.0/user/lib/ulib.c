@@ -359,6 +359,16 @@ int u_fijar_tam(UFILE *f, int tam) {
     return 0;
 }
 
+/* v2.5-disco: formatear (volumen vacio, borra TODO) y verificar
+   (solo lectura) el disco de datos. 0 ok, <0 motivo. */
+int u_formatear_disco(void) {
+    return sys_disco_admin(0);
+}
+
+int u_verificar_disco(void) {
+    return sys_disco_admin(1);
+}
+
 int u_fclose(UFILE *f) {
     if (!f) return -1;
     sys_cerrar(f->fd);
