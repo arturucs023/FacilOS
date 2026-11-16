@@ -74,6 +74,7 @@ for _ in range(40):
         break
 MP = {"\n": "ret", " ": "0x39", "_": "shift-minus", "-": "minus",
       ".": "dot", "/": "slash", ":": "shift-dot", '"': "shift-2",
+      "\\": "backslash",
       # tabla CP437 del BIOS: 0x0B '0'/shift'=', 0x1B '+'/shift'*',
       # 0x0D '='/shift'+', 0x0B..0x0C fila de numeros.
       "=": "shift-0", "*": "shift-equal", "+": "shift-equal",

@@ -259,7 +259,7 @@ void ug_modal(ug_win_t *v, int on) {
 
 void ug_tick(ug_win_t *v, int s) {
     char m[16];
-    int t = 0, q = 0;
+    int t = 0, q = 0, i;
     char nb[12];
     if (!v || !v->vivo) return;
     if (s < 0) s = 0;
@@ -272,7 +272,13 @@ void ug_tick(ug_win_t *v, int s) {
     u_itoa(s, nb);
     while (nb[q] && t < 14) m[t++] = nb[q++];
     m[t] = 0;
-    u_ipc_enviar(v->srv, m, t + 1);
+    /* v2.4-terminal: el registro del refresco no se puede perder
+       (buzon lleno en rafagas): sin el, el reloj quedaba congelado
+       hasta el proximo clic. Reintenta cediendo la CPU. */
+    for (i = 0; i < 100; i++) {
+        if (!u_ipc_enviar(v->srv, m, t + 1)) return;
+        u_ceder();
+    }
 }
 
 void ug_edit(ug_win_t *v, int on) {

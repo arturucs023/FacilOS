@@ -564,6 +564,7 @@ int u_listar(uproc_t *buf, int max) {
 }
 
 int u_esperar(int pid) { return sys_esperar(pid); }
+int u_matar(int pid) { return sys_matar(pid); }
 int u_ceder(void) { return sys_ceder(); }
 int u_info_memoria(unsigned int *v5) { return sys_info_memoria(v5); }
 int u_info_memoria2(unsigned int *v8) { return sys_info_memoria2(v8); }
@@ -578,6 +579,81 @@ int u_ipc_recibir(void *buf, int max, int *emisor) {
 }
 int u_ipc_hay(void) {
     return sys_ipc_hay();
+}
+
+/* ---- consola de hijo GUI (v2.4-terminal) -------------------------------
+   Sin pipes en la ABI: el hijo interactivo (f32/adivina) habla con la
+   terminal por IPC cuando se lanza desde ventana (la terminal le pasa
+   "--gui=PID"). Protocolo (todo <=64 B):
+     hijo->padre "CENT"          pide una linea (equivale a leer)
+     padre->hijo "CLIN+" trozo   continuacion (59 B de texto)
+     padre->hijo "CLIN " final   ultimo trozo (puede ser el unico)
+     hijo->padre "COUT " trozo   salida en vivo (la terminal la pinta)
+   Enviar nunca bloquea: si el buzon esta lleno el trozo se pierde
+   (el fichero de captura guarda el integro). Recibir bloquea. */
+
+int u_consola_out(int padre, const char *s) {
+    char m[64];
+    int i = 0;
+    if (padre <= 0 || !s) return -1;
+    while (s[i]) {
+        int t = 0, n = 0;
+        m[t++] = 'C';
+        m[t++] = 'O';
+        m[t++] = 'U';
+        m[t++] = 'T';
+        m[t++] = ' ';
+        while (s[i] && n < 58) {
+            int av = 0;
+            ut_dec(s + i, 4, &av);
+            if (av <= 0) av = 1;
+            if (n + av > 58) break;   /* sin partir multibyte */
+            {
+                int k;
+                for (k = 0; k < av; k++) m[t++] = s[i + k];
+            }
+            i += av;
+            n += av;
+        }
+        m[t] = 0;
+        if (u_ipc_enviar(padre, m, t + 1) == -1) return -1;
+    }
+    return 0;
+}
+
+int u_consola_linea(int padre, char *buf, int max) {
+    char m[64];
+    char pet[8];
+    int de = 0, n = 0, i;
+    if (padre <= 0 || !buf || max < 1) return -1;
+    buf[0] = 0;
+    pet[0] = 'C';
+    pet[1] = 'E';
+    pet[2] = 'N';
+    pet[3] = 'T';
+    pet[4] = 0;
+    for (i = 0; i < 200; i++) {
+        int r = u_ipc_enviar(padre, pet, 5);
+        if (r == 0) break;
+        if (i == 199) return -1;
+        u_ceder();
+    }
+    for (;;) {
+        int r = u_ipc_recibir(m, 64, &de);
+        int k;
+        if (r < 0) continue;
+        if (de != padre) continue;
+        if (r < 5 || m[0] != 'C' || m[1] != 'L' || m[2] != 'I' ||
+            m[3] != 'N')
+            continue;
+        if (r >= 5 && m[4] != '+' && m[4] != ' ') continue;
+        k = 5;
+        while (k < r && m[k] && n < max - 1) buf[n++] = m[k++];
+        if (m[4] == ' ') {
+            buf[n] = 0;
+            return n;
+        }
+    }
 }
 int u_raton(unsigned int *v4) {
     return sys_raton(v4);

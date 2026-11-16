@@ -161,6 +161,13 @@ static inline int sys_disco_admin(int op) {
     return sys_llama(65, op, 0, 0);
 }
 
+/* v2.4-terminal: matar al hijo (Ctrl+C del padre). Solo el padre
+   directo puede; el hijo termina con rc=-9. 0 ok, -1 sin proceso,
+   -2 sin permiso. */
+static inline int sys_matar(int pid) {
+    return sys_llama(66, pid, 0, 0);
+}
+
 static inline int sys_truncar(int fd, int tam) {
     return sys_llama(24, fd, tam, 0);
 }

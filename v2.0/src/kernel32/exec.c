@@ -2026,8 +2026,32 @@ __attribute__((optimize("O0"))) static void sc_65(regs_t *r, int di)
     }
 
 
+__attribute__((optimize("O0"))) static void sc_66(regs_t *r, int di)
+ {  /* matar(pid): el padre interrumpe a su hijo (Ctrl+C de la
+       terminal). Solo el padre directo (ppid == llamante) puede
+       matar; el hijo termina con rc=-9 y quien lo esperaba se
+       despierta (ver proc_termina). 0 ok, -1 sin proceso,
+       -2 sin permiso. Sin efecto sobre otros procesos. */
+    int pid = (int)r->ebx;
+    proc_t *q;
+    (void)di;
+    r->eax = (uint32_t)-2;
+    if (!proc_actual) return;
+    if (pid <= 0) { r->eax = (uint32_t)-1; return; }
+    q = proc_por_pid(pid);
+    if (!q || !q->usado || q->estado == EST_FIN) {
+        r->eax = (uint32_t)-1;
+        return;
+    }
+    if (q->ppid != proc_actual->pid) return;   /* -2 */
+    proc_termina(q, -9);
+    r->eax = 0;
+    return;
+ }
+
+
 typedef void (*sc_fn_t)(regs_t *r, int di);
-#define SC_N 66
+#define SC_N 67
 static sc_fn_t const sc_tabla[SC_N] = {
     [0] = sc_00,    [1] = sc_01,
     [2] = sc_02,
@@ -2096,6 +2120,7 @@ static sc_fn_t const sc_tabla[SC_N] = {
     [63] = sc_63,
     [64] = sc_64,   /* v2.8-fuentes: mezcla alfa (mascara del proceso) */
     [65] = sc_65,   /* v2.5-disco: formatear/verificar volumen */
+    [66] = sc_66,   /* v2.4-terminal: matar hijo (Ctrl+C del padre) */
 };
 static const char *const sc_nombre[SC_N] = {
     [0] = "salir",
@@ -2164,6 +2189,7 @@ static const char *const sc_nombre[SC_N] = {
     [63] = "red_rutas",
     [64] = "mezclar",
     [65] = "disco_admin",
+    [66] = "matar",
 };
 static uint32_t sc_count[SC_N];
 

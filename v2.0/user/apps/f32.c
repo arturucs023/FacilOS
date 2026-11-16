@@ -58,8 +58,11 @@ static void falla(int cod, int lin) {
    consola (degradado seguro). */
 #define SAL_TMP "/f32sal.tmp"
 static UFILE *FSAL = 0;
+/* v2.4-terminal: pid del padre GUI (0 = consola cruda). */
+static int GUI_PADRE = 0;
 static void emit(const char *s) {
     u_print(s);
+    if (GUI_PADRE > 0) u_consola_out(GUI_PADRE, s);
     if (FSAL) u_fwrite(s, u_strlen(s), FSAL);
 }
 static void emit_num(int v) {
@@ -3081,7 +3084,10 @@ int ex_inst(nodo_t *n) {
     if (n->tipo == N_READ) {
         char buf[256];
         var_t *e = busca_var(n->s);
-        u_lee_linea(buf, 256);
+        /* v2.4-terminal: en ventana la linea viene de la terminal
+           por IPC (visible); en consola se lee la tecla cruda. */
+        if (GUI_PADRE > 0) u_consola_linea(GUI_PADRE, buf, 256);
+        else u_lee_linea(buf, 256);
         if (e && e->v.tipo != V_STR) { falla(54, n->lin); return -1; }
         {
             int l = u_strlen(buf);
@@ -3590,6 +3596,21 @@ int main(void) {
         modo = a[1] == 't' ? 1 : 2;
         a += 3;
         while (*a == ' ') a++;
+    }
+    /* v2.4-terminal: la terminal en ventana pasa "--gui=PID ": la
+       entrada (leer) y la salida viajan por IPC con el padre para
+       que se vean en la ventana; sin esto el hijo leia a ciegas de
+       la cola cruda (el servidor la habia vaciado) y parecia que el
+       script "se acababa sin preguntar". */
+    if (!u_strncmp(a, "--gui=", 6)) {
+        int p = 0;
+        a += 6;
+        while (*a >= '0' && *a <= '9') {
+            p = p * 10 + (*a - '0');
+            a++;
+        }
+        if (*a == ' ') a++;
+        GUI_PADRE = p > 0 ? p : 0;
     }
     while (*a && i < 255) ruta[i++] = *a++;
     ruta[i] = 0;

@@ -2,6 +2,7 @@
 #define F32_ULIB_H
 
 #include "sys.h"
+#include "utext.h"
 
 /* F32 C++: las APIs de ulib son C (sin mangling). */
 #ifdef __cplusplus
@@ -154,6 +155,9 @@ typedef struct {
 
 int u_crear(const char *nombre, const char *args);   /* >0 pid, <0 error */
 int u_mi_pid(void);
+int u_matar(int pid);   /* v2.4: el padre interrumpe al hijo (Ctrl+C) */
+int u_consola_out(int padre, const char *s);   /* v2.4: salida en vivo */
+int u_consola_linea(int padre, char *buf, int max);   /* v2.4: pide linea */
 int u_listar(uproc_t *buf, int max);                  /* devuelve cuantos */
 int u_esperar(int pid);
 int u_ceder(void);

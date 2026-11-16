@@ -273,6 +273,11 @@ static const cmd_t CMDS[] = {
       "Crea un archivo vacio.",
       "Crea un archivo vacio con el nombre indicado.",
       "crear_archivo \"nombre\"", "crear_archivo \"notas.txt\"", 1, 1, 0, 0 },
+    { "escribir_archivo", "archivos",
+      "Escribe texto en un archivo.",
+      "Guarda el texto indicado en el archivo (lo crea o lo reemplaza). Cada argumento es una linea.",
+      "escribir_archivo \"nombre\" \"linea1\" [\"linea2\"...]", "escribir_archivo \"n.txt\" \"hola\" \"mundo\"",
+      2, 8, 0, 0 },
     { "eliminar_archivo", "archivos",
       "Elimina un archivo.",
       "Elimina el archivo indicado. Pide el nombre exacto; no hay papelera.",
@@ -494,6 +499,10 @@ static void pon_ip(const char *tit, unsigned int v);
 static int lee_ip(const char *s, unsigned int *v);
 static ug_win_t *v_term = 0;   /* ventana actual (para modales) */
 static void muestra_sal_fich(const char *ruta);
+static void dibuja_term(ug_win_t *v);
+static int espera_hijo(ug_win_t *v, int pid, int interactivo);
+static void borra_antes(void);
+static void inserta_cp(unsigned cp);
 
 /* ---- parser (v2.2): comillas, posicionales y nombre=valor ---- */
 
@@ -502,7 +511,7 @@ static int ntok = 0;
 static char par_nom[NPAR][32];
 static char par_val[NPAR][96];
 static int npar = 0;
-static char pos_arg[4][96];
+static char pos_arg[8][96];
 static int npos = 0;
 
 static int es_esp(char c) { return c == ' ' || c == '\t'; }
@@ -545,7 +554,7 @@ static int separa(int *bad) {
         int e = 0, j;
         while (tok_buf[i][e] && tok_buf[i][e] != '=') e++;
         if (!tok_buf[i][e]) {
-            if (npos >= 4) return 3;
+            if (npos >= 8) return 3;
             u_strcpy(pos_arg[npos++], tok_buf[i]);
             continue;
         }
@@ -767,7 +776,8 @@ static void cmd_ayuda(const char *arg) {
     pon("Teclas: flechas editan, arriba/abajo historial,");
     pon("  repag/avpag y rueda desplazan la pantalla,");
     pon("  TAB completa (sigue a lo escrito), Ctrl+A/E inicio/fin,");
-    pon("  Ctrl+W palabra, Ctrl+U/K borra atras/adelante.");
+    pon("  Ctrl+W palabra, Ctrl+U/K borra atras/adelante,");
+    pon("  Ctrl+C cancela la linea o interrumpe el programa.");
 }
 
 static void cmd_manual(const char *arg) {
@@ -1009,6 +1019,42 @@ static void op_crear_archivo(const cmd_t *c) {
             pon("Archivo creado.");
         }
     }
+}
+
+static void op_escribir_archivo(const cmd_t *c) {
+    char ruta[128];
+    char sal[1024];
+    int a, i, o = 0;
+    UFILE *f;
+    (void)c;
+    if (npos < 2) {
+        perr(10, "Uso: escribir_archivo \"nombre\" \"linea\" [\"linea\"...].");
+        return;
+    }
+    a_absoluta(pos_arg[0], ruta);
+    /* Cada argumento es una linea (los espacios dentro de "..." se
+       conservan); ademas \n dentro de un argumento salta de linea. */
+    for (a = 1; a < npos && o < 1000; a++) {
+        i = 0;
+        while (pos_arg[a][i] && o < 1000) {
+            if (pos_arg[a][i] == '\\' && pos_arg[a][i + 1] == 'n') {
+                sal[o++] = '\n';
+                i += 2;
+            } else {
+                sal[o++] = pos_arg[a][i++];
+            }
+        }
+        if (o < 1000) sal[o++] = '\n';
+    }
+    sal[o] = 0;
+    f = u_fopen(ruta, "w");
+    if (!f) {
+        perr(17, "No se pudo escribir (nombre o disco lleno).");
+        return;
+    }
+    u_fwrite(sal, o, f);
+    u_fclose(f);
+    pon("Archivo escrito.");
 }
 
 static void op_eliminar(const cmd_t *c, int quiere_dir) {
@@ -3059,7 +3105,7 @@ static void op_comprovar_conexion(const cmd_t *c) {
 
 static void op_configurar_dhcp(const cmd_t *c) {
     char args[32];
-    int t = 0, rc;
+    int t = 0, rc, pid;
     char rb[32];
     (void)c;
     if (npos > 1) {
@@ -3080,9 +3126,9 @@ static void op_configurar_dhcp(const cmd_t *c) {
     } else {
         args[0] = 0;
     }
-    ug_modal(v_term, 1);
-    rc = u_ejecutar("dhcp", args);
-    ug_modal(v_term, 0);
+    pid = u_crear("dhcp", args);
+    if (pid <= 0) rc = pid;
+    else rc = espera_hijo(v_term, pid, 0);
     muestra_sal_fich("/dhcsal.txt");
     {
         char nb[12];
@@ -3096,13 +3142,14 @@ static void op_configurar_dhcp(const cmd_t *c) {
     }
     pon(rb);
     if (rc == 0) pon("DHCP aplicado correctamente.");
+    else if (rc == -9) pon("Interrumpido (Ctrl+C).");
     else if (rc < -100) perr(33, "No se pudo lanzar (nombre o formato).");
     else perr(33, "DHCP sin respuesta (revisa la red).");
 }
 
 static void op_consultar_dns(const cmd_t *c) {
     char args[256];
-    int t = 0, i, rc;
+    int t = 0, i, rc, pid;
     char rb[32];
     (void)c;
     if (npos != 1) {
@@ -3111,9 +3158,9 @@ static void op_consultar_dns(const cmd_t *c) {
     }
     for (i = 0; pos_arg[0][i] && t < 254; i++) args[t++] = pos_arg[0][i];
     args[t] = 0;
-    ug_modal(v_term, 1);
-    rc = u_ejecutar("dns", args);
-    ug_modal(v_term, 0);
+    pid = u_crear("dns", args);
+    if (pid <= 0) rc = pid;
+    else rc = espera_hijo(v_term, pid, 0);
     muestra_sal_fich("/dnssal.txt");
     {
         char nb[12];
@@ -3127,6 +3174,7 @@ static void op_consultar_dns(const cmd_t *c) {
     }
     pon(rb);
     if (rc == 0) pon("DNS resuelta correctamente.");
+    else if (rc == -9) pon("Interrumpido (Ctrl+C).");
     else if (rc == 1) perr(33, "DNS sin respuesta (revisa la red).");
     else if (rc == 3) perr(33, "DNS: el nombre no existe (NXDOMAIN).");
     else if (rc == 4) perr(33, "DNS: error del servidor o sin registros.");
@@ -3136,7 +3184,7 @@ static void op_consultar_dns(const cmd_t *c) {
 
 static void op_http(const cmd_t *c) {
     char args[256];
-    int t = 0, i, rc;
+    int t = 0, i, rc, pid;
     char rb[32];
     (void)c;
     if (npos != 1) {
@@ -3145,9 +3193,9 @@ static void op_http(const cmd_t *c) {
     }
     for (i = 0; pos_arg[0][i] && t < 254; i++) args[t++] = pos_arg[0][i];
     args[t] = 0;
-    ug_modal(v_term, 1);
-    rc = u_ejecutar("http", args);
-    ug_modal(v_term, 0);
+    pid = u_crear("http", args);
+    if (pid <= 0) rc = pid;
+    else rc = espera_hijo(v_term, pid, 0);
     muestra_sal_fich("/httpsal.txt");
     {
         char nb[12];
@@ -3161,6 +3209,7 @@ static void op_http(const cmd_t *c) {
     }
     pon(rb);
     if (rc == 0) pon("HTTP traido correctamente.");
+    else if (rc == -9) pon("Interrumpido (Ctrl+C).");
     else if (rc == 1) perr(33, "HTTP sin respuesta (revisa la red).");
     else if (rc == 2) perr(33, "HTTP: URL invalida (solo http://).");
     else if (rc == 3) perr(33, "HTTP: el nombre no existe (NXDOMAIN).");
@@ -3237,6 +3286,233 @@ static int tiene_punto(const char *r) {
     return 0;
 }
 
+/* Espera interrumpible del hijo (v2.4-terminal): sustituye al
+   modal+u_ejecutar bloqueante. Sin modal (el escritorio sigue vivo
+   y la ventana se repinta), bombea mensajes: DRAW repinta, Ctrl+C
+   mata al hijo (syscall 66, misma funcion que en cualquier SO),
+   la rueda desplaza, y el hijo interactivo (f32/adivina, con
+   "--gui=PID") recibe su linea por IPC y manda salida en vivo.
+   Devuelve el rc del hijo (-9 = interrumpido por Ctrl+C). */
+static int hijo_pide = 0;        /* el hijo espera linea (CENT) */
+static unsigned ultima_sync = 0; /* ultimo SYNC de salida en vivo */
+static char cout_pend[256];      /* cola de salida sin \n final */
+static int cout_n = 0;
+
+static int lee_num_m(const char *b, int r, int *k) {
+    int neg = 0, v = 0;
+    while (*k < r && b[*k] != '-' &&
+           (b[*k] < '0' || b[*k] > '9'))
+        (*k)++;
+    if (*k < r && b[*k] == '-') {
+        neg = 1;
+        (*k)++;
+    }
+    while (*k < r && b[*k] >= '0' && b[*k] <= '9') {
+        v = v * 10 + (b[*k] - '0');
+        (*k)++;
+    }
+    return neg ? -v : v;
+}
+
+/* Vuelca el texto del hijo: lo completo hasta el ultimo \n va a la
+   ventana; el resto espera (los trozos COUT parten por bytes). */
+static void vuelca_hijo(const char *s) {
+    int i = 0, ult = -1, j;
+    char b[512];
+    while (s[i] && cout_n < 250) {
+        cout_pend[cout_n++] = s[i++];
+    }
+    cout_pend[cout_n] = 0;
+    for (j = 0; j < cout_n; j++) {
+        if (cout_pend[j] == '\n') ult = j;
+    }
+    if (ult < 0) return;
+    for (j = 0; j <= ult && j < 511; j++) b[j] = cout_pend[j];
+    b[ult + 1] = 0;
+    pon(b);
+    {
+        int q = 0;
+        for (j = ult + 1; j < cout_n; j++) cout_pend[q++] = cout_pend[j];
+        cout_n = q;
+        cout_pend[cout_n] = 0;
+    }
+}
+
+/* Envia una linea al hijo en trozos CLIN+/CLIN (sin partir UTF-8).
+   Si el buzon esta lleno espera cediendo; si el hijo murio, vuelve. */
+static void manda_linea(int pid, const char *s) {
+    int i = 0, n = u_strlen(s);
+    unsigned int st[5];
+    for (;;) {
+        char m[64];
+        int t = 0, resto = n - i, trozo = resto > 58 ? 58 : resto;
+        int fin;
+        while (trozo > 0 && (s[i + trozo] & 0xC0) == 0x80) trozo--;
+        fin = (i + trozo >= n);
+        m[t++] = 'C';
+        m[t++] = 'L';
+        m[t++] = 'I';
+        m[t++] = 'N';
+        m[t++] = fin ? ' ' : '+';
+        {
+            int k;
+            for (k = 0; k < trozo; k++) m[t++] = s[i + k];
+        }
+        m[t] = 0;
+        for (;;) {
+            int r = u_ipc_enviar(pid, m, t + 1);
+            if (r == 0) break;
+            if (u_proc_stat(pid, st) || st[0] == 4) return;
+            u_ceder();
+        }
+        i += trozo;
+        if (fin) return;
+    }
+}
+
+static int espera_hijo(ug_win_t *v, int pid, int interactivo) {
+    hijo_pide = 0;
+    cout_n = 0;
+    cout_pend[0] = 0;
+    for (;;) {
+        unsigned int st[5];
+        int pinto = 0;
+        if (u_proc_stat(pid, st)) {
+            ug_sync(v);   /* el estado final se tiene que ver */
+            return u_esperar(pid);
+        }
+        if (st[0] == 4) {
+            if (cout_n > 0) {
+                cout_pend[cout_n] = 0;
+                pon(cout_pend);
+                cout_n = 0;
+            }
+            ug_sync(v);   /* sin esto la ventana quedaba rancia */
+            return u_esperar(pid);
+        }
+        while (u_ipc_hay()) {
+            char b[64];
+            int de = 0, r = u_ipc_recibir(b, 64, &de);
+            int k;
+            if (r < 0) break;
+            if (de == v->srv) {
+                if (r >= 4 && b[0] == 'D' && b[1] == 'R' &&
+                    b[2] == 'A') {
+                    int w, h;
+                    k = 4;
+                    v->x = lee_num_m(b, r, &k);
+                    v->y = lee_num_m(b, r, &k);
+                    if (k < r) {
+                        w = lee_num_m(b, r, &k);
+                        h = k < r ? lee_num_m(b, r, &k) : -1;
+                        if (w > 0) v->w = w;
+                        if (h > 0) v->h = h;
+                    }
+                    dibuja_term(v);
+                    pinto = 0;
+                } else if (r >= 3 && b[0] == 'K' && b[1] == 'E' &&
+                           b[2] == 'Y') {
+                    int code;
+                    k = 3;
+                    code = lee_num_m(b, r, &k);
+                    if (code == 0xE102 || code == 0xE202) {
+                        /* Ctrl+C: senal de interrupcion al hijo en
+                           primer plano (igual que en otros SO). */
+                        if (u_matar(pid) == 0) {
+                            pon("^C");
+                            pinto = 1;
+                        }
+                        hijo_pide = 0;
+                    } else if (interactivo && hijo_pide) {
+                        /* Intro con linea vacia justo al pedirla: es
+                           espurio (llega solo, sin teclear); se ignora.
+                           Con texto se manda al hijo. */
+                        if (code == 13 && nent > 0) {
+                            manda_linea(pid, ent);
+                            pon(ent);
+                            ent[0] = 0;
+                            nent = 0;
+                            pos = 0;
+                            hijo_pide = 0;
+                            pinto = 1;
+                        } else if (code == 8) {
+                            borra_antes();
+                            pinto = 1;
+                        } else if (code == TEC_IZQ_U) {
+                            pos = ut_anterior(ent, pos);
+                            pinto = 1;
+                        } else if (code == TEC_DER_U) {
+                            pos = ut_siguiente(ent, pos);
+                            if (pos > nent) pos = nent;
+                            pinto = 1;
+                        } else if (code >= 32 && code != 0x7F &&
+                                   !(code >= 0x101 &&
+                                     code <= 0x10A) &&
+                                   !(code >= 0xE000 &&
+                                     code <= 0xE004) &&
+                                   !(code >= 0xE100 &&
+                                     code <= 0xE219) &&
+                                   !(code >= 0x300 &&
+                                     code <= 0x7FF)) {
+                            inserta_cp((unsigned)code);
+                            pinto = 1;
+                        }
+                    }
+                } else if (r >= 3 && b[0] == 'M' && b[1] == 'O' &&
+                           b[2] == 'U') {
+                    int giro;
+                    k = 3;
+                    lee_num_m(b, r, &k);
+                    lee_num_m(b, r, &k);
+                    lee_num_m(b, r, &k);
+                    giro = k < r ? lee_num_m(b, r, &k) : 0;
+                    if (giro > 0) desplaza += giro * 3;
+                    else if (giro < 0) {
+                        desplaza += giro * 3;
+                        if (desplaza < 0) desplaza = 0;
+                    }
+                    if (giro) {
+                        dibuja_term(v);
+                        pinto = 0;
+                    }
+                } else if (r >= 5 && b[0] == 'F' && b[1] == 'O' &&
+                           b[2] == 'C') {
+                    k = 5;
+                    v->foco = lee_num_m(b, r, &k) ? 1 : 0;
+                } else if (r >= 4 && b[0] == 'Q' && b[1] == 'U') {
+                    v->vivo = 0;
+                    u_matar(pid);
+                    u_ipc_enviar(v->srv, "BYE", 4);
+                    return u_esperar(pid);
+                }
+            } else if (interactivo && de == pid) {
+                if (r >= 5 && b[0] == 'C' && b[1] == 'O' &&
+                    b[2] == 'U' && b[3] == 'T' && b[4] == ' ') {
+                    vuelca_hijo(b + 5);
+                    pinto = 1;
+                } else if (r >= 4 && b[0] == 'C' && b[1] == 'E' &&
+                           b[2] == 'N' && b[3] == 'T') {
+                    ent[0] = 0;
+                    nent = 0;
+                    pos = 0;
+                    hijo_pide = 1;
+                    pinto = 1;
+                }
+            }
+        }
+        /* Salida en vivo sin DRAW propio: se pide SYNC (el
+           servidor repinta con DRAW y la terminal dibuja por el
+           camino normal). Como mucho cada ~150 ms. */
+        if (pinto &&
+            (unsigned)u_ticks() - ultima_sync > 15) {
+            ug_sync(v);
+            ultima_sync = (unsigned)u_ticks();
+            pinto = 0;
+        }
+        u_dormir(10);
+    }
+}
+
 /* Captura Ring3 (sin pipes en ABI): el hijo modal duplica su
    salida a un fichero temporal; la terminal la vuelca en la
    ventana tras el hijo. Sin este volcado, en escritorio solo se
@@ -3257,10 +3533,15 @@ static void muestra_sal_fich(const char *ruta) {
 
 static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
     char args[256];
-    int t = 0, i, rc;
+    int t = 0, i, rc, pid;
     char rb[32];
     char ruta[128];
     int es_f32 = 0;
+    /* Hijo interactivo (consola por IPC con la ventana): entrada y
+       salida visibles + Ctrl+C. El resto corre igual pero sin
+       entrada (Ctrl+C tambien lo interrumpe). */
+    int interactivo = 0;
+    char ag[300];
     (void)c;
     if (npos < 1) {
         perr(10, "Falta indicar el programa o archivo .f32.");
@@ -3298,9 +3579,30 @@ static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
             perr(10, "ejecutar archivo.f32 no admite argumentos.");
             return;
         }
-        ug_modal(v, 1);
-        rc = u_ejecutar("f32", ruta);
-        ug_modal(v, 0);
+        /* --gui=PID: el hijo pide la entrada a esta ventana por IPC
+           (visible); sin esto leia a ciegas de la cola cruda. */
+        {
+            char nb[12];
+            int w = 0, q = 0;
+            ag[w++] = '-';
+            ag[w++] = '-';
+            ag[w++] = 'g';
+            ag[w++] = 'u';
+            ag[w++] = 'i';
+            ag[w++] = '=';
+            u_itoa(u_mi_pid(), nb);
+            while (nb[q] && w < 290) ag[w++] = nb[q++];
+            if (w < 299) ag[w++] = ' ';
+            q = 0;
+            while (ruta[q] && w < 299) ag[w++] = ruta[q++];
+            ag[w] = 0;
+        }
+        pid = u_crear("f32", ag);
+        if (pid <= 0) {
+            perr(33, "No se pudo lanzar (nombre o formato).");
+            return;
+        }
+        rc = espera_hijo(v, pid, 1);
         muestra_sal_fich("/f32sal.tmp");
         {
             char nb[12];
@@ -3314,6 +3616,7 @@ static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
         }
         pon(rb);
         if (rc == 0) pon("Programa finalizado correctamente.");
+        else if (rc == -9) pon("Interrumpido (Ctrl+C).");
         else if (rc < -100) perr(33, "No se pudo lanzar (nombre o formato).");
         return;
     }
@@ -3323,9 +3626,34 @@ static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
         while (pos_arg[i][q] && t < 250) args[t++] = pos_arg[i][q++];
     }
     args[t] = 0;
-    ug_modal(v, 1);
-    rc = u_ejecutar(pos_arg[0], args);
-    ug_modal(v, 0);
+    interactivo = !u_strcmp(pos_arg[0], "f32") ||
+                 !u_strcmp(pos_arg[0], "adivina");
+    if (interactivo) {
+        char nb[12];
+        int w = 0, q = 0;
+        ag[w++] = '-';
+        ag[w++] = '-';
+        ag[w++] = 'g';
+        ag[w++] = 'u';
+        ag[w++] = 'i';
+        ag[w++] = '=';
+        u_itoa(u_mi_pid(), nb);
+        while (nb[q] && w < 290) ag[w++] = nb[q++];
+        if (t && w < 299) {
+            ag[w++] = ' ';
+            q = 0;
+            while (args[q] && w < 299) ag[w++] = args[q++];
+        }
+        ag[w] = 0;
+        pid = u_crear(pos_arg[0], ag);
+    } else {
+        pid = u_crear(pos_arg[0], args);
+    }
+    if (pid <= 0) {
+        perr(33, "No se pudo lanzar (nombre o formato).");
+        return;
+    }
+    rc = espera_hijo(v, pid, interactivo);
     if (!u_strcmp(pos_arg[0], "f32")) muestra_sal_fich("/f32sal.tmp");
     {
         char nb[12];
@@ -3338,7 +3666,9 @@ static void op_ejecutar(ug_win_t *v, const cmd_t *c) {
         rb[w] = 0;
     }
     pon(rb);
-    if (rc < -100) {
+    if (rc == -9) {
+        pon("Interrumpido (Ctrl+C).");
+    } else if (rc < -100) {
         perr(33, "No se pudo lanzar (nombre o formato).");
     }
 }
@@ -3653,78 +3983,200 @@ static int cuenta_hasta(const char *s, int pos) {
     return n;
 }
 
-/* Lineas de historial que caben en la ventana. */
+/* Lineas de historial que caben en la ventana (filas de pantalla). */
 static int vis_lineas(ug_win_t *v) {
     int vis = (v->h - UG_CHROME - 24) / UG_FH;
     return vis < 1 ? 1 : vis;
 }
 
+/* Columnas de texto que caben por fila (margenes de 4 px). */
+static int ancho_cols(ug_win_t *v) {
+    int c = (v->w - 8) / UG_FW;
+    return c < 8 ? 8 : c;
+}
+
+/* Columnas (caracteres, no bytes) de s. */
+static int cuenta_cols(const char *s) {
+    int n = 0, p = 0;
+    while (s[p]) {
+        p = ut_siguiente(s, p);
+        n++;
+    }
+    return n;
+}
+
+/* Filas de pantalla que ocupa s envuelta a cols columnas. */
+static int filas_de(const char *s, int cols) {
+    int n = cuenta_cols(s);
+    int f = (n + cols - 1) / cols;
+    return f < 1 ? 1 : f;
+}
+
+/* Pinta s envuelta a cols columnas desde (x0, *py); avanza *py por
+   fila. Como en bash: la continuacion empieza en x0. Sin partir
+   multibyte ni superar el tope de ug_texto. */
+static void pinta_envuelto(ug_win_t *v, const char *s, int x0, int *py,
+                           int cols, int color) {
+    int bi = 0;
+    if (!s[0]) {
+        *py += UG_FH;
+        return;
+    }
+    while (s[bi]) {
+        char fila[208];
+        int t = 0, c = 0;
+        while (s[bi] && c < cols && t < 200) {
+            int av = 0;
+            ut_dec(s + bi, 4, &av);
+            if (av <= 0) av = 1;
+            if (c + 1 > cols || t + av > 200) break;
+            {
+                int k;
+                for (k = 0; k < av; k++) fila[t++] = s[bi + k];
+            }
+            bi += av;
+            c++;
+        }
+        fila[t] = 0;
+        ug_texto(v, x0, *py, fila, color);
+        *py += UG_FH;
+    }
+}
+
 static void dibuja_term(ug_win_t *v) {
-    int vis = vis_lineas(v), ini, li, i;
+    int vis = vis_lineas(v), li;
+    int cols = ancho_cols(v);
+    /* linea de edicion = prompt + entrada (una sola cadena) */
+    char pli[NENTB + 64];
+    int plen, q = 0, tot_cols, fil_ent, hist_rows, ini;
     ug_comienza(v);
     ug_limpia(v, T_VENT_FONDO);
     if (vis < 1) vis = 1;
+    plen = prompt(pli, (int)sizeof(pli));
+    while (ent[q] && plen < (int)sizeof(pli) - 1) pli[plen++] = ent[q++];
+    pli[plen] = 0;
+    tot_cols = cuenta_cols(pli);
+    fil_ent = (tot_cols + cols - 1) / cols;
+    if (fil_ent < 1) fil_ent = 1;
+    hist_rows = vis - fil_ent + 1;
+    if (hist_rows < 0) hist_rows = 0;
     {
-        /* Ventana de historial: del fondo hacia arriba segun desplaza. */
-        int maxdes = nlin > vis ? nlin - vis : 0;
-        if (desplaza > maxdes) desplaza = maxdes;
-        if (desplaza < 0) desplaza = 0;
-        ini = nlin > vis ? nlin - vis - desplaza : 0;
-    }
-    for (li = 0; li < vis && ini + li < nlin; li++)
-        ug_texto(v, 4, 4 + li * UG_FH, pant[ini + li], C_GRIS);
-    {
-        char pr[64];
-        int plen;
-        int maxc, st = 0;
-        int yb = 4 + li * UG_FH;
-        plen = prompt(pr, (int)sizeof(pr));
-        maxc = (v->w - 12 - plen * UG_FW) / UG_FW;
-        if (maxc > NENTB) maxc = NENTB;
-        if (maxc < 1) maxc = 1;
-        ug_texto(v, 4, yb, pr, C_VERDE_CLARO);
-        if (maxc > NENTB) maxc = NENTB;
-        if (maxc < 1) maxc = 1;
+        /* Ventana de historial por FILAS de pantalla: retrocede desde
+           el fondo hasta llenar hist_rows (antes eran lineas
+           completas y el prompt se salia por abajo). */
+        int tot = 0, k;
+        for (k = 0; k < nlin; k++) tot += filas_de(pant[k], cols);
         {
-            /* La ventana sigue al cursor de edicion (antes se quedaba
-               fija al final y las flechas parecian no hacer nada). */
-            int col_cur = cuenta_hasta(ent, pos);
-            if (col_cur < st) st = col_cur;
-            else if (col_cur >= st + maxc) st = col_cur - maxc + 1;
+            int maxdes = tot > hist_rows ? tot - hist_rows : 0;
+            if (desplaza > maxdes) desplaza = maxdes;
+            if (desplaza < 0) desplaza = 0;
         }
-        /* dibuja con desplazamiento por caracteres */
+        /* salta lineas enteras desde el fondo hasta el desplazamiento */
+        ini = nlin;
+        tot = 0;
+        while (ini > 0 && tot + filas_de(pant[ini - 1], cols) <=
+               hist_rows + desplaza) {
+            tot += filas_de(pant[ini - 1], cols);
+            ini--;
+        }
+        /* si el hueco no cuadra por lineas enteras, avanza una mas */
+        if (ini > 0 && tot < hist_rows + desplaza) {
+            ini--;
+        }
+    }
+    {
+        int y = 4, usado = 0;
+        /* salta las filas desplazadas dentro de la primera linea:
+           la seleccion cubre las ultimas (hist_rows+desplaza) filas;
+           se ocultan las desplaza del fondo y se dibujan hist_rows. */
+        int salto = 0, k;
         {
-            int bi = 0, ci = 0;
-            while (ent[bi] && ci < st) {
-                bi = ut_siguiente(ent, bi);
-                ci++;
+            int tot = 0;
+            for (k = ini; k < nlin; k++) tot += filas_de(pant[k], cols);
+            if (tot > hist_rows + desplaza)
+                salto = tot - (hist_rows + desplaza);
+        }
+        for (li = ini; li < nlin && usado < hist_rows; li++) {
+            int f = filas_de(pant[li], cols);
+            if (salto >= f) {
+                salto -= f;
+                continue;
+            }
+            if (salto > 0) {
+                /* empieza a mitad de linea: pinta desde esa fila */
+                const char *s = pant[li];
+                int bi = 0, omite = salto;
+                while (omite > 0 && s[bi]) {
+                    int cc = 0;
+                    while (s[bi] && cc < cols) {
+                        int av = 0;
+                        ut_dec(s + bi, 4, &av);
+                        if (av <= 0) av = 1;
+                        bi += av;
+                        cc++;
+                    }
+                    omite--;
+                }
+                {
+                    int yy = y;
+                    pinta_envuelto(v, s + bi, 4, &yy, cols, C_GRIS);
+                    usado += yy - y ? (yy - y) / UG_FH : 0;
+                    y = yy;
+                }
+                salto = 0;
+                continue;
             }
             {
-                char vv[NENTB + 2];
-                int t = 0;
-                while (ent[bi] && t < maxc && t < NENTB) {
-                    int av = 0;
-                    ut_dec(ent + bi, 4, &av);
-                    if (av <= 0) av = 1;
-                    {
-                        int k;
-                        for (k = 0; k < av && t < maxc; k++)
-                            vv[t++] = ent[bi + k];
-                    }
-                    bi += av;
-                }
-                vv[t] = 0;
-                ug_texto(v, 4 + plen * UG_FW, yb, vv, C_BLANCO);
+                int yy = y;
+                pinta_envuelto(v, pant[li], 4, &yy, cols, C_GRIS);
+                usado += (yy - y) / UG_FH;
+                y = yy;
             }
         }
-        if (v->foco && !pop_abierto) {
-            int col = cuenta_hasta(ent, pos) - st;
-            if (col < 0) col = 0;
-            if (col >= maxc) col = maxc - 1;
-            ug_relleno(v, 4 + plen * UG_FW + col * UG_FW, yb, 2, UG_FH,
-                       C_BLANCO);
+        /* linea de edicion (prompt + entrada, con ajuste) */
+        {
+            int yb = y;
+            pinta_envuelto(v, pli, 4, &yb, cols, C_BLANCO);
+            /* el prompt hereda su verde: se repinta encima
+               (puede ocupar varias filas si es largo) */
+            {
+                char pr[64];
+                int c = 0, bi = 0, yy = y;
+                prompt(pr, (int)sizeof(pr));
+                while (pr[bi]) {
+                    char fila[68];
+                    int t = 0, cc = 0;
+                    while (pr[bi] && cc < cols - c && t < 60) {
+                        fila[t++] = pr[bi++];
+                        cc++;
+                    }
+                    fila[t] = 0;
+                    if (t > 0)
+                        ug_texto(v, 4 + c * UG_FW, yy, fila,
+                                 C_VERDE_CLARO);
+                    c += cc;
+                    if (pr[bi]) {
+                        yy += UG_FH;
+                        c = 0;
+                    }
+                }
+            }
+            if (v->foco && !pop_abierto) {
+                /* columna absoluta del cursor: prompt + edicion */
+                char pr[64];
+                int plc, ce, ab, fr, fc;
+                prompt(pr, (int)sizeof(pr));
+                plc = cuenta_cols(pr);
+                ce = cuenta_hasta(ent, pos);
+                ab = plc + ce;
+                fr = cols ? ab / cols : 0;
+                fc = cols ? ab % cols : 0;
+                ug_relleno(v, 4 + fc * UG_FW, y + fr * UG_FH, 2,
+                           UG_FH, C_BLANCO);
+            }
         }
     }
+
     /* selector TAB */
     if (pop_abierto) {
         int filas = (v->h - 60) / UG_FH - 2;
@@ -3754,7 +4206,6 @@ static void dibuja_term(ug_win_t *v) {
                 ug_texto(v, x0 + w0 - 40, yb + 2, "...", C_GRIS);
         }
     }
-    (void)i;
     ug_fin(v);
 }
 
@@ -3784,13 +4235,22 @@ int main(void) {
                 (k >= 0xE200 && k <= 0xE219)) {
                 int idx = k >= 0xE200 ? k - 0xE200 : k - 0xE100;
                 if (idx == 0 || idx == 4 || idx == 22 ||
-                    idx == 20 || idx == 10)
+                    idx == 20 || idx == 10 || idx == 2)
                     pop_abierto = 0;
                 if (idx == 0) pos = 0;          /* Ctrl+A inicio */
                 else if (idx == 4) pos = nent;  /* Ctrl+E fin */
                 else if (idx == 22) borra_palabra_antes();
                 else if (idx == 20) borra_hasta_ini();
                 else if (idx == 10) borra_hasta_fin();
+                else if (idx == 2) {
+                    /* Ctrl+C sin hijo: cancela la linea (como en
+                       cualquier SO: ^C y linea nueva). */
+                    ent[0] = 0;
+                    nent = 0;
+                    pos = 0;
+                    pop_reabre = 0;
+                    pon("^C");
+                }
             }
             /* v2.2-editor: teclas con modificador del driver:
                ctrl+letra y ctrl+retroceso se ignoran aqui
@@ -3855,6 +4315,7 @@ int main(void) {
                     char ln[NENTB + 1];
                     for (i = 0; i <= nent; i++) ln[i] = ent[i];
                     ejecuta(&v, ln);
+                    if (!v.vivo) return 0;
                 }
                 ent[0] = 0;
                 nent = 0;
@@ -4339,6 +4800,8 @@ static void ejecuta_uno(ug_win_t *v, const char *ln) {
         op_crear_carpeta(&CMDS[id]);
     } else if (!u_strcmp(cmd, "crear_archivo")) {
         op_crear_archivo(&CMDS[id]);
+    } else if (!u_strcmp(cmd, "escribir_archivo")) {
+        op_escribir_archivo(&CMDS[id]);
     } else if (!u_strcmp(cmd, "eliminar_archivo")) {
         op_eliminar(&CMDS[id], 0);
     } else if (!u_strcmp(cmd, "eliminar_carpeta")) {
