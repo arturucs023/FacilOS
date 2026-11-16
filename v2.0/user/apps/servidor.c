@@ -1609,6 +1609,45 @@ static void clic_izquierdo(void) {
     }
 }
 
+/* Pantalla de arranque (todo propio, sin libs): logo + barra de
+   progreso por pasos. Se compone en el dorso y se presenta una vez
+   por paso (~2 s en total); el primer frame() la tapa. */
+static void splash(int paso, int npasos, const char *txt) {
+    int pw = 380, ph = 150;
+    int px = (PANT_W - pw) / 2, py = (PANT_H - ph) / 2;
+    int bw = pw - 60, bx = px + 30, by = py + 100, bh = 14;
+    int lleno, i = 0;
+    if (px < 0) px = 0;
+    if (py < 0) py = 0;
+    if (paso < 0) paso = 0;
+    if (paso > npasos) paso = npasos;
+    lleno = npasos > 0 ? (bw * paso) / npasos : bw;
+    u_destino(1);
+    u_rectangulo(0, 0, PANT_W, PANT_H, T_FONDO_ABAJO);
+    u_rectangulo(px, py, pw, ph, T_PANEL);
+    u_rectangulo(px, py, pw, 1, T_PANEL_BORDE);
+    u_rectangulo(px, py + ph - 1, pw, 1, T_PANEL_BORDE);
+    u_rectangulo(px, py, 1, ph, T_PANEL_BORDE);
+    u_rectangulo(px + pw - 1, py, 1, ph, T_PANEL_BORDE);
+    u_rectangulo(px + 30, py + 20, 26, 26, T_ACENTO);
+    u_rectangulo(px + 34, py + 24, 18, 4, T_PANEL_TEXTO);
+    u_rectangulo(px + 34, py + 32, 12, 4, T_PANEL_TEXTO);
+    u_rectangulo(px + 34, py + 40, 6, 3, T_PANEL_TEXTO);
+    u_texto(px + 66, py + 24, "FacilOS32", T_PANEL_TEXTO);
+    u_rectangulo(px + 30, py + 52, 120, 2, T_FONDO_LINEA);
+    u_texto(px + 30, py + 62, "Iniciando el escritorio...",
+            T_PANEL_TEXTO);
+    while (txt[i] && i < 38) i++;
+    u_texto(px + 30, py + 78, txt, T_PANEL_TEXTO);
+    u_rectangulo(bx, by, bw, bh, T_VENT_FONDO);
+    if (lleno > 0) u_rectangulo(bx, by, lleno, bh, T_ACENTO);
+    u_rectangulo(bx, by, bw, 1, T_BORDE);
+    u_rectangulo(bx, by + bh - 1, bw, 1, T_BORDE);
+    u_rectangulo(bx, by, 1, bh, T_BORDE);
+    u_rectangulo(bx + bw - 1, by, 1, bh, T_BORDE);
+    u_presentar(0, 0, PANT_W, PANT_H);
+}
+
 int main(void) {
     char b[64];
     int de = 0;
@@ -1637,6 +1676,16 @@ int main(void) {
     }
     carga_fondo();
     asegura_propiedad();
+    /* v2.5-arranque: splash con progreso (~2 s); el primer
+       frame() lo tapa al entrar al escritorio. */
+    splash(0, 3, "Iniciando escritorio...");
+    u_dormir(600);
+    splash(1, 3, "Cargando fondo...");
+    u_dormir(500);
+    splash(2, 3, "Preparando ventanas...");
+    u_dormir(500);
+    splash(3, 3, "Listo");
+    u_dormir(300);
     frame();
     for (;;) {
         if (u_ipc_hay() > 0) {

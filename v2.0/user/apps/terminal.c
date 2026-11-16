@@ -1388,17 +1388,37 @@ static void op_salir(const cmd_t *c) {
     adopta_dir(dir);
 }
 
-static void op_arbol_rec(int dir, int nivel, int *nd, int *nf) {
+/* arbol estilo tree(1): trazos CP437 en bruto (el nucleo los
+   pinta directos; UTF-8 valido nunca los combina porque tras un
+   trazo solo vienen ' ', otro trazo o texto ASCII de nombre).
+   "mask" marca con un bit los niveles con barra viva. */
+static void op_arbol_rec(int dir, int nivel, unsigned mask,
+                          int *nd, int *nf) {
     udir_t d;
-    int n = 0;
+    int n = 0, tot = 0;
     char b[96];
     int k;
     if (nivel > 8) return;
-    while (lista_hijo(dir, n, &d) >= 0) {
-        int t = 0, j;
-        if (n >= 200) break;
+    while (tot < 200 && lista_hijo(dir, tot, &d) >= 0) tot++;
+    while (n < tot && lista_hijo(dir, n, &d) >= 0) {
+        int t = 0, j, ultimo = (n == tot - 1);
         for (k = 0; k < nivel && t < 60; k++) {
-            b[t++] = ' ';
+            if (mask & (1u << k)) {
+                b[t++] = (char)0xB3;   /* │ */
+                b[t++] = ' ';
+                b[t++] = ' ';
+                b[t++] = ' ';
+            } else {
+                b[t++] = ' ';
+                b[t++] = ' ';
+                b[t++] = ' ';
+                b[t++] = ' ';
+            }
+        }
+        if (t + 4 < 90) {
+            b[t++] = ultimo ? (char)0xC0 : (char)0xC3;  /* └ ├ */
+            b[t++] = (char)0xC4;   /* ─ */
+            b[t++] = (char)0xC4;   /* ─ */
             b[t++] = ' ';
         }
         if (d.tipo == 1) {
@@ -1408,7 +1428,9 @@ static void op_arbol_rec(int dir, int nivel, int *nd, int *nf) {
             b[t] = 0;
             pon(b);
             (*nd)++;
-            op_arbol_rec(d.idx, nivel + 1, nd, nf);
+            op_arbol_rec(d.idx, nivel + 1,
+                         ultimo ? mask : mask | (1u << nivel),
+                         nd, nf);
         } else {
             for (j = 0; d.nombre[j] && t < 92; j++)
                 b[t++] = d.nombre[j];
@@ -1443,7 +1465,7 @@ static void op_arbol(const cmd_t *c) {
             dir = idx;
         }
     }
-    op_arbol_rec(dir, 0, &nd, &nf);
+    op_arbol_rec(dir, 0, 0, &nd, &nf);
     u_itoa(nd, nb);
     while (nb[q] && t < 40) b[t++] = nb[q++];
     {
