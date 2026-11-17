@@ -137,6 +137,13 @@ static void prueba_base(void) {
             "    escribir x\n"
             "fin\n",
             0, "42\n");
+    t_corre("base-numero", "/t.f32",
+            "programa\n"
+            "    variable e = \"  -25abc\"\n"
+            "    escribir numero(e)\n"
+            "    escribir numero(\"sin digitos\")\n"
+            "fin\n",
+            0, "-25\n0\n");
     t_corre("base-si", "/t.f32",
             "programa\n"
             "    variable x = 0\n"

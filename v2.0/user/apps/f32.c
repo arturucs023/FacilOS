@@ -1651,6 +1651,7 @@ static int FHA_USO[8];
 #define BI_LONGITUD 6
 #define BI_BUSCAR 7
 #define BI_SUBCADENA 8
+#define BI_NUMERO 9   /* v2.4-terminal: texto->entero (para comparar leer) */
 
 static int builtin_id(const char *s) {
     if (!u_strcmp(s, "abrir")) return BI_ABRIR;
@@ -1661,6 +1662,7 @@ static int builtin_id(const char *s) {
     if (!u_strcmp(s, "longitud")) return BI_LONGITUD;
     if (!u_strcmp(s, "buscar")) return BI_BUSCAR;
     if (!u_strcmp(s, "subcadena")) return BI_SUBCADENA;
+    if (!u_strcmp(s, "numero")) return BI_NUMERO;
     return -1;
 }
 
@@ -1675,6 +1677,7 @@ static int builtin_forma(int id, int *mn, int *mx, int *ret) {
     case BI_LONGITUD: *mn = *mx = 1; *ret = V_INT; return 0;
     case BI_BUSCAR: *mn = *mx = 2; *ret = V_INT; return 0;
     case BI_SUBCADENA: *mn = 2; *mx = 3; *ret = V_STR; return 0;
+    case BI_NUMERO: *mn = *mx = 1; *ret = V_INT; return 0;
     default: return -1;
     }
 }
@@ -1835,6 +1838,27 @@ static val_t ev_builtin(int id, val_t *av, int na, int lin) {
         for (k = 0; k < n; k++) s[k] = t[ini + k];
         s[n] = 0;
         return mk_str(s);
+    }
+    if (id == BI_NUMERO) {
+        /* numero(texto): entero inicial (espacios y signo; sin
+           digitos = 0). Para comparar lo leido con leer. */
+        const char *t;
+        int i = 0, neg = 0;
+        unsigned v = 0;
+        if (av[0].tipo != V_STR) { falla(43, lin); return r; }
+        t = av[0].txt;
+        while (t[i] == ' ' || t[i] == '\t') i++;
+        if (t[i] == '+' || t[i] == '-') {
+            if (t[i] == '-') neg = 1;
+            i++;
+        }
+        while (t[i] >= '0' && t[i] <= '9') {
+            v = v * 10 + (unsigned)(t[i] - '0');
+            if (v > 0x7FFFFFFFu) { v = 0x7FFFFFFFu; break; }
+            i++;
+        }
+        if (neg && v) v = 0u - v;
+        return mk_int((int)v);
     }
     falla(91, lin);
     return r;
