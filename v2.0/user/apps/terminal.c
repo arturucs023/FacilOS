@@ -24,6 +24,9 @@ static int nlin = 0;
 static int desplaza = 0;
 static char ent[NENTB];
 static int nent = 0, pos = 0;
+/* Linea cruda del comando en curso (para escribir_archivo: texto
+   libre con =, comillas y escapes sin trocear). */
+static char ln_cruda[NENTB + 1];
 static char hist[NHIST][NENTB];
 static int nhist = 0, hh = 0;
 static char borrador[NENTB];
@@ -1022,30 +1025,88 @@ static void op_crear_archivo(const cmd_t *c) {
 }
 
 static void op_escribir_archivo(const cmd_t *c) {
+    /* Lee la linea cruda: "escribir_archivo <ruta> <texto...>" donde
+       el texto va tal cual (con espacios, =, comillas). Secuencias:
+       \n salta, \\ es \, \" es ", \xHH es el byte HH. */
     char ruta[128];
-    char sal[1024];
-    int a, i, o = 0;
+    char sal[2048];
+    int p = 0, o = 0;
     UFILE *f;
     (void)c;
-    if (npos < 2) {
-        perr(10, "Uso: escribir_archivo \"nombre\" \"linea\" [\"linea\"...].");
+    while (ln_cruda[p] == ' ' || ln_cruda[p] == '\t') p++;
+    if (ln_cruda[p] == '"') {
+        p++;
+        while (ln_cruda[p] && ln_cruda[p] != '"') p++;
+        if (ln_cruda[p] == '"') p++;
+    } else {
+        while (ln_cruda[p] && ln_cruda[p] != ' ' && ln_cruda[p] != '\t')
+            p++;
+    }
+    while (ln_cruda[p] == ' ' || ln_cruda[p] == '\t') p++;
+    {
+        int q = 0;
+        if (ln_cruda[p] == '"') {
+            p++;
+            while (ln_cruda[p] && ln_cruda[p] != '"' && q < 120) {
+                if (ln_cruda[p] == '\\' && ln_cruda[p + 1] == '"') {
+                    ruta[q++] = '"';
+                    p += 2;
+                } else {
+                    ruta[q++] = ln_cruda[p++];
+                }
+            }
+            if (ln_cruda[p] == '"') p++;
+        } else {
+            while (ln_cruda[p] && ln_cruda[p] != ' ' &&
+                   ln_cruda[p] != '\t' && q < 120)
+                ruta[q++] = ln_cruda[p++];
+        }
+        ruta[q] = 0;
+    }
+    while (ln_cruda[p] == ' ' || ln_cruda[p] == '\t') p++;
+    if (!ruta[0] || !ln_cruda[p]) {
+        perr(10, "Uso: escribir_archivo <ruta> <texto...> (\\n salta).");
         return;
     }
-    a_absoluta(pos_arg[0], ruta);
-    /* Cada argumento es una linea (los espacios dentro de "..." se
-       conservan); ademas \n dentro de un argumento salta de linea. */
-    for (a = 1; a < npos && o < 1000; a++) {
-        i = 0;
-        while (pos_arg[a][i] && o < 1000) {
-            if (pos_arg[a][i] == '\\' && pos_arg[a][i + 1] == 'n') {
-                sal[o++] = '\n';
-                i += 2;
-            } else {
-                sal[o++] = pos_arg[a][i++];
-            }
-        }
-        if (o < 1000) sal[o++] = '\n';
+    {
+        char nruta[128];
+        int q;
+        a_absoluta(ruta, nruta);
+        for (q = 0; q < 128; q++) ruta[q] = nruta[q];
     }
+    /* resto literal con escapes: \n salta, \\ es \, \" es ",
+       \xHH es el byte HH. */
+    while (ln_cruda[p] && o < 2000) {
+        if (ln_cruda[p] == '\\' && ln_cruda[p + 1] == 'n') {
+            sal[o++] = '\n';
+            p += 2;
+        } else if (ln_cruda[p] == '\\' && ln_cruda[p + 1] == '\\') {
+            sal[o++] = '\\';
+            p += 2;
+        } else if (ln_cruda[p] == '\\' && ln_cruda[p + 1] == '"') {
+            sal[o++] = '"';
+            p += 2;
+        } else if (ln_cruda[p] == '\\' &&
+                   (ln_cruda[p + 1] == 'x' ||
+                    ln_cruda[p + 1] == 'X')) {
+            int h1 = ln_cruda[p + 2], h2 = ln_cruda[p + 3];
+            int d1 = h1 >= '0' && h1 <= '9' ? h1 - '0'
+                     : h1 >= 'a' && h1 <= 'f' ? h1 - 'a' + 10
+                     : h1 >= 'A' && h1 <= 'F' ? h1 - 'A' + 10 : -1;
+            int d2 = h2 >= '0' && h2 <= '9' ? h2 - '0'
+                     : h2 >= 'a' && h2 <= 'f' ? h2 - 'a' + 10
+                     : h2 >= 'A' && h2 <= 'F' ? h2 - 'A' + 10 : -1;
+            if (d1 < 0 || d2 < 0) {
+                sal[o++] = ln_cruda[p++];
+            } else {
+                sal[o++] = (char)(d1 * 16 + d2);
+                p += 4;
+            }
+        } else {
+            sal[o++] = ln_cruda[p++];
+        }
+    }
+    if (o > 0 && sal[o - 1] != '\n' && o < 2000) sal[o++] = '\n';
     sal[o] = 0;
     f = u_fopen(ruta, "w");
     if (!f) {
@@ -3348,6 +3409,9 @@ static void manda_linea(int pid, const char *s) {
         int t = 0, resto = n - i, trozo = resto > 58 ? 58 : resto;
         int fin;
         while (trozo > 0 && (s[i + trozo] & 0xC0) == 0x80) trozo--;
+        /* UTF-8 roto (no deberia pasar: el editor solo inserta
+           valido): no atascarse; manda el resto tal cual. */
+        if (trozo <= 0) trozo = resto > 58 ? 58 : resto;
         fin = (i + trozo >= n);
         m[t++] = 'C';
         m[t++] = 'L';
@@ -4709,6 +4773,18 @@ static void ejecuta_uno(ug_win_t *v, const char *ln) {
     }
     if (!cmd[0]) return;
     id = busca_cmd(cmd);
+    if (id >= 0 && !u_strcmp(CMDS[id].nombre, "escribir_archivo")) {
+        /* Texto libre (puede llevar =, comillas y \n): se deriva en
+           crudo sin trocear ni validar parametros. */
+        int q = 0;
+        while (ln[q] && q < NENTB) {
+            ln_cruda[q] = ln[q];
+            q++;
+        }
+        ln_cruda[q] = 0;
+        op_escribir_archivo(&CMDS[id]);
+        return;
+    }
     if (id < 0) {
         char sug[4][32];
         int n = sugiere(cmd, sug), k;
